@@ -1,4 +1,5 @@
 import re
+
 from ste_compiler.diagnostics import Diagnostic, Severity
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 

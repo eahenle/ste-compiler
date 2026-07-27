@@ -2,10 +2,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from ste_compiler.ir.models import Document, Quantity
+from ste_compiler.frontend.llm import LLMFrontend
+from ste_compiler.ir.models import Document, EntityRef, Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document, loads_document
 from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
@@ -25,8 +27,10 @@ ROOT = Path(__file__).parents[2]
         ("sequence", "Disconnect the access panel before the test after the check."),
         (
             "warning_pressure",
-            "Warning: injury can occur when hydraulic pressure is more than 20 MPa.\n"
-            "Stop the hydraulic pressure to more than 20 MPa.",
+            (
+                "Warning: injury can occur when hydraulic pressure is more than 20 MPa.\n"
+                "Stop the hydraulic pressure to more than 20 MPa."
+            ),
         ),
     ],
 )
@@ -81,6 +85,32 @@ def test_semantic_corruption_detected(vocab, terms):
     )
     bad = replace(result, text=bad_mapping.text, mappings=(bad_mapping,))
     assert "NEGATION_NOT_PRESERVED" in {x.code for x in SemanticValidator().validate(document, bad)}
+
+
+def test_actor_instruction_preserves_negation(vocab, terms):
+    document = load_document(ROOT / "data/examples/negative.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={"actor": EntityRef(id="technician", name="technician")}
+    )
+    result = DeterministicRealizer().realize(document, vocab, terms)
+    assert result.text == "Technician must not open the shutoff valve."
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_llm_frontend_rejects_statements_without_source_spans():
+    document = load_document(ROOT / "data/examples/installation.yaml").model_dump(mode="json")
+    document["sections"][0]["statements"][0]["source_spans"] = []
+
+    class Provider:
+        model_id = "test"
+
+        def extract_ir(self, source, schema, feedback):
+            del source, schema, feedback
+            return document
+
+    with pytest.raises(ValueError, match="quoted source spans"):
+        LLMFrontend(Provider(), retries=0).parse("Install the access panel.")
 
 
 @given(st.integers(min_value=0, max_value=1_000_000))

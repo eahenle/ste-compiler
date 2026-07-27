@@ -4,7 +4,7 @@ The manual frontend safely loads YAML/JSON into strict Pydantic models. The opti
 
 The IR explicitly represents actors, actions, referents, conditions/exceptions, negation, before/after relations, quantities/units/tolerances, hazards, provenance, references, causal links, and unresolved ambiguity. Section kinds distinguish procedure, description, warning, caution, and note.
 
-The deterministic realizer composes clauses and records the complete source-node feature snapshot for every sentence. Lexical validation classifies canonical terminology before individual words, then accepts general words, units, numbers, and punctuation. Structural checks are deliberately small STE-inspired heuristics. Semantic checks use mappings plus independent text checks for high-risk features. Metadata is not enough for an untrusted neural backend: it must create a mapping that an independent aligner verifies.
+The deterministic realizer composes clauses and records the complete source-node feature snapshot for every sentence. Lexical validation classifies canonical terminology before individual words, then accepts general words, units, numbers, and punctuation. Structural checks are deliberately small STE-inspired heuristics. Semantic checks use mappings plus independent text checks for high-risk features. Metadata is not enough for an untrusted neural backend: it must create a mapping that an independent aligner verifies. The parser-free CLI aligner grants mappings only to position-preserving exact matches of deterministic controlled sentences; changed, omitted, reordered, and extra sentences remain unmapped and are rejected.
 
 ## Constrained neural design
 
@@ -16,4 +16,3 @@ Both must emit from a grammar of symbolic word/term IDs. A prefix trie or charac
 ## Trust and reproducibility
 
 Source, YAML, glossary data, and model output are untrusted. There is no template execution or shell interpolation. Version metadata travels with every realization. Tests make no network calls. Current limitations include heuristic POS/voice analysis, no full discourse planner, and metadata-assisted rather than parser-backed semantic alignment.
-

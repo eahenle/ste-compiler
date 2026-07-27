@@ -1,7 +1,9 @@
 """Provider-neutral, schema-validating semantic extraction (never final prose)."""
 
 from typing import Protocol
+
 from pydantic import ValidationError
+
 from ste_compiler.ir.models import Document
 
 
@@ -26,11 +28,13 @@ class LLMFrontend:
                 doc = Document.model_validate(
                     self.provider.extract_ir(source, Document.model_json_schema(), feedback)
                 )
+                statements = [statement for sec in doc.sections for statement in sec.statements]
                 if any(
-                    not span.quote
-                    for sec in doc.sections
-                    for statement in sec.statements
-                    for span in statement.source_spans
+                    not statement.source_spans
+                    or any(
+                        not span.quote or not span.quote.strip() for span in statement.source_spans
+                    )
+                    for statement in statements
                 ):
                     raise ValueError("all extracted claims must include quoted source spans")
                 return doc

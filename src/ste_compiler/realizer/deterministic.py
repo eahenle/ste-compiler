@@ -7,7 +7,12 @@ from ste_compiler.ir.models import (
     StateAssertion,
     TermReference,
 )
-from ste_compiler.realizer.base import RealizationConstraints, RealizationResult, SentenceMapping
+from ste_compiler.realizer.base import (
+    DEFAULT_CONSTRAINTS,
+    RealizationConstraints,
+    RealizationResult,
+    SentenceMapping,
+)
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
 
@@ -56,7 +61,8 @@ class DeterministicRealizer:
         if item.purpose:
             command += " to " + item.purpose
         if item.actor:
-            command = self._ref(item.actor, terms) + " must " + command
+            modal = " must not " if item.negated else " must "
+            command = self._ref(item.actor, terms) + modal + command
         elif item.negated:
             command = "do not " + command
         for relation in item.temporal_relations:
@@ -75,7 +81,7 @@ class DeterministicRealizer:
         document: Document,
         vocabulary: Vocabulary,
         terminology: TerminologyRegistry,
-        constraints: RealizationConstraints = RealizationConstraints(),
+        constraints: RealizationConstraints = DEFAULT_CONSTRAINTS,
     ) -> RealizationResult:
         del vocabulary, constraints
         mappings: list[SentenceMapping] = []

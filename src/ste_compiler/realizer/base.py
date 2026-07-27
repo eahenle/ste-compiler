@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Protocol
+
 from ste_compiler.ir.models import Document
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
@@ -7,6 +8,9 @@ from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 @dataclass(frozen=True)
 class RealizationConstraints:
     max_sentence_words: int = 25
+
+
+DEFAULT_CONSTRAINTS = RealizationConstraints()
 
 
 @dataclass(frozen=True)
@@ -30,5 +34,5 @@ class Realizer(Protocol):
         document: Document,
         vocabulary: Vocabulary,
         terminology: TerminologyRegistry,
-        constraints: RealizationConstraints = RealizationConstraints(),
+        constraints: RealizationConstraints = DEFAULT_CONSTRAINTS,
     ) -> RealizationResult: ...

@@ -1,17 +1,20 @@
 from __future__ import annotations
+
+import json
+import re
+import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
-import json
-import statistics
-import re
+
 import yaml
+
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.realizer.base import RealizationResult
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.validators.lexical import LexicalValidator
-from ste_compiler.validators.structural import StructuralValidator
 from ste_compiler.validators.semantic import SemanticValidator
+from ste_compiler.validators.structural import StructuralValidator
 
 
 @dataclass

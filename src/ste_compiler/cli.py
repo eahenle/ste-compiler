@@ -1,27 +1,32 @@
-from pathlib import Path
 import json
+from pathlib import Path
+from typing import Annotated
+
 import typer
 from pydantic import ValidationError
+
 from ste_compiler.diagnostics import ValidationReport
-from ste_compiler.evaluation import evaluate as run_evaluation, write_reports
+from ste_compiler.evaluation import evaluate as run_evaluation
+from ste_compiler.evaluation import write_reports
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
-from ste_compiler.realizer.base import RealizationResult, SentenceMapping
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
-from ste_compiler.validators import LexicalValidator, ValidationPipeline
+from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
 app = typer.Typer(help="Compile semantic IR to auditable STE-inspired controlled English.")
 glossary_app = typer.Typer()
 app.add_typer(glossary_app, name="glossary")
 ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_DATA = Path(__file__).with_name("data")
+DATA_ROOT = PACKAGE_DATA if PACKAGE_DATA.is_dir() else ROOT / "data"
 
 
 def resources(
     vocabulary: Path | None = None, terminology: Path | None = None
 ) -> tuple[Vocabulary, TerminologyRegistry]:
     return (
-        Vocabulary.load(vocabulary or ROOT / "data/demo_vocabulary.yaml"),
-        TerminologyRegistry.load(terminology or ROOT / "data/demo_terminology.yaml"),
+        Vocabulary.load(vocabulary or DATA_ROOT / "demo_vocabulary.yaml"),
+        TerminologyRegistry.load(terminology or DATA_ROOT / "demo_terminology.yaml"),
     )
 
 
@@ -70,14 +75,7 @@ def validate_text(
     realization = None
     if document:
         expected = DeterministicRealizer().realize(document, vocab, terms)
-        sentences = [s.strip() + "." for s in text.split(".") if s.strip()]
-        mappings = tuple(
-            SentenceMapping(
-                m.sentence, sentences[i] if i < len(sentences) else "", m.ir_node_ids, m.features
-            )
-            for i, m in enumerate(expected.mappings)
-        )
-        realization = RealizationResult(text, mappings, expected.metadata)
+        realization = align_controlled_text(text, expected)
     report = ValidationPipeline(LexicalValidator(vocab, terms)).validate(
         text, document, realization
     )
@@ -117,8 +115,8 @@ def compile(
 
 @app.command()
 def evaluate(
-    corpus: Path = typer.Argument(ROOT / "data/evaluation"),
-    output: Path = typer.Option(ROOT / "reports"),
+    corpus: Annotated[Path, typer.Argument()] = DATA_ROOT / "evaluation",
+    output: Annotated[Path, typer.Option()] = Path("reports"),
 ) -> None:
     vocab, terms = resources()
     results = run_evaluation(corpus, vocab, terms)

@@ -1,4 +1,5 @@
 import re
+
 from ste_compiler.diagnostics import Diagnostic, Severity
 
 
@@ -19,7 +20,7 @@ class StructuralValidator:
                         message=f"Sentence {number} exceeds {self.max_sentence_words} words.",
                     )
                 )
-            if re.search(r"\b(it|they|this|that)\b", sentence, re.I):
+            if re.search(r"\b(it|they|this|that)\b", sentence, re.IGNORECASE):
                 out.append(
                     Diagnostic(
                         code="AMBIGUOUS_PRONOUN",
@@ -27,7 +28,7 @@ class StructuralValidator:
                         message=f"Sentence {number} can contain an ambiguous pronoun.",
                     )
                 )
-            if re.search(r"\b(is|are|was|were|be|been)\s+\w+ed\b", sentence, re.I):
+            if re.search(r"\b(is|are|was|were|be|been)\s+\w+ed\b", sentence, re.IGNORECASE):
                 out.append(
                     Diagnostic(
                         code="PASSIVE_VOICE",

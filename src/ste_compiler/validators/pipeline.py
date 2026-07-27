@@ -1,6 +1,7 @@
 from ste_compiler.diagnostics import ValidationReport
 from ste_compiler.ir.models import Document
 from ste_compiler.realizer.base import RealizationResult
+
 from .lexical import LexicalValidator
 from .semantic import SemanticValidator
 from .structural import StructuralValidator

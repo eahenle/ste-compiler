@@ -1,5 +1,7 @@
 from pathlib import Path
+
 import yaml
+
 from ste_compiler.terminology.models import Term, TerminologyData, VocabularyData
 
 

@@ -1,6 +1,7 @@
 """Symbolic output avoids the false assumption that BPE tokens equal approved words."""
 
 import re
+
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
 

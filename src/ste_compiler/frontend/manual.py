@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import loads_document
 

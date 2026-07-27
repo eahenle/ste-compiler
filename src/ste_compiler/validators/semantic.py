@@ -8,6 +8,17 @@ class SemanticValidator:
 
     def validate(self, document: Document, result: RealizationResult) -> list[Diagnostic]:
         out: list[Diagnostic] = []
+        for unmatched_mapping in result.mappings:
+            if not unmatched_mapping.ir_node_ids:
+                out.append(
+                    Diagnostic(
+                        code="UNSUPPORTED_SEMANTIC_CHANGE",
+                        severity=Severity.CRITICAL,
+                        message=(
+                            f"Sentence {unmatched_mapping.sentence} does not match the supplied IR."
+                        ),
+                    )
+                )
         mappings = {node: m for m in result.mappings for node in m.ir_node_ids}
         for section in document.sections:
             for item in section.statements:

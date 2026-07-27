@@ -1,6 +1,8 @@
-from pathlib import Path
 import json
+from pathlib import Path
+
 import yaml
+
 from ste_compiler.ir.models import Document
 
 
