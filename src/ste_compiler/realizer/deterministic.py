@@ -1,0 +1,111 @@
+from ste_compiler.ir.models import (
+    Condition,
+    Document,
+    EntityRef,
+    Instruction,
+    Quantity,
+    StateAssertion,
+    TermReference,
+)
+from ste_compiler.realizer.base import RealizationConstraints, RealizationResult, SentenceMapping
+from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+
+
+class DeterministicRealizer:
+    version = "0.1.0"
+
+    def _ref(self, ref: EntityRef | TermReference, terms: TerminologyRegistry) -> str:
+        return ref.name if isinstance(ref, EntityRef) else terms.get(ref.term_id).canonical_form
+
+    @staticmethod
+    def _number(value: float) -> str:
+        return str(int(value)) if value.is_integer() else str(value)
+
+    def _quantity(self, q: Quantity) -> str:
+        operators = {
+            "less_than": "less than",
+            "more_than": "more than",
+            "at_most": "not more than",
+            "at_least": "not less than",
+            "equal": "",
+        }
+        parts = [operators[q.comparator], self._number(q.value), q.unit]
+        if q.tolerance is not None:
+            parts += ["with a tolerance of", self._number(q.tolerance), q.unit]
+        return " ".join(x for x in parts if x)
+
+    def _condition(self, condition: Condition, terms: TerminologyRegistry) -> str:
+        value = (
+            self._quantity(condition.value)
+            if isinstance(condition.value, Quantity)
+            else condition.value
+        )
+        prefix = "except when" if condition.exception else "if"
+        return f"{prefix} {self._ref(condition.subject, terms)} {condition.predicate} {value}"
+
+    def _instruction(self, item: Instruction, terms: TerminologyRegistry) -> str:
+        command = item.action.lemma
+        if item.object:
+            command += " the " + self._ref(item.object, terms)
+        if item.indirect_object:
+            command += " to the " + self._ref(item.indirect_object, terms)
+        for constraint in item.quantity_constraints:
+            command += f" to {self._quantity(constraint.quantity)}"
+        if item.manner:
+            command += " " + item.manner
+        if item.purpose:
+            command += " to " + item.purpose
+        if item.actor:
+            command = self._ref(item.actor, terms) + " must " + command
+        elif item.negated:
+            command = "do not " + command
+        for relation in item.temporal_relations:
+            command += f" {relation.relation} {relation.event}"
+        for condition in reversed(item.conditions):
+            command = self._condition(condition, terms) + ", " + command
+        return command[:1].upper() + command[1:] + "."
+
+    def _state(self, item: StateAssertion, terms: TerminologyRegistry) -> str:
+        value = self._quantity(item.value) if isinstance(item.value, Quantity) else item.value
+        text = f"{self._ref(item.subject, terms)} {item.predicate} {value}."
+        return text[:1].upper() + text[1:]
+
+    def realize(
+        self,
+        document: Document,
+        vocabulary: Vocabulary,
+        terminology: TerminologyRegistry,
+        constraints: RealizationConstraints = RealizationConstraints(),
+    ) -> RealizationResult:
+        del vocabulary, constraints
+        mappings: list[SentenceMapping] = []
+        for section in document.sections:
+            for item in section.statements:
+                if isinstance(item, Instruction):
+                    for hazard in item.hazards:
+                        threshold = (
+                            f" when hydraulic pressure is {self._quantity(hazard.threshold)}"
+                            if hazard.threshold
+                            else ""
+                        )
+                        hazard_text = (
+                            f"{hazard.severity}: {hazard.consequence} can occur{threshold}."
+                        )
+                        hazard_text = hazard_text[:1].upper() + hazard_text[1:]
+                        mappings.append(
+                            SentenceMapping(
+                                len(mappings) + 1,
+                                hazard_text,
+                                (item.id, hazard.id),
+                                item.model_dump(mode="json"),
+                            )
+                        )
+                text = (
+                    self._instruction(item, terminology)
+                    if isinstance(item, Instruction)
+                    else self._state(item, terminology)
+                )
+                features = item.model_dump(mode="json")
+                mappings.append(SentenceMapping(len(mappings) + 1, text, (item.id,), features))
+        metadata = {k: str(v) for k, v in document.metadata.model_dump().items()}
+        return RealizationResult("\n".join(m.text for m in mappings), tuple(mappings), metadata)

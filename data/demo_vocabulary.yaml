@@ -1,0 +1,1084 @@
+version: demo-1
+license: MIT; original demonstration vocabulary, not ASD-STE100 vocabulary
+units:
+- Pa
+- kPa
+- MPa
+- V
+- A
+- mm
+- cm
+- m
+- s
+- min
+- degree
+- degrees
+structural_tokens:
+- .
+- ','
+- ':'
+entries:
+- lemma: a
+  parts_of_speech:
+  - demo
+  meaning_id: demo.a
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: after
+  parts_of_speech:
+  - demo
+  meaning_id: demo.after
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: and
+  parts_of_speech:
+  - demo
+  meaning_id: demo.and
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: are
+  parts_of_speech:
+  - demo
+  meaning_id: demo.are
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: at
+  parts_of_speech:
+  - demo
+  meaning_id: demo.at
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: before
+  parts_of_speech:
+  - demo
+  meaning_id: demo.before
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: bolt
+  parts_of_speech:
+  - demo
+  meaning_id: demo.bolt
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: cable
+  parts_of_speech:
+  - demo
+  meaning_id: demo.cable
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: caution
+  parts_of_speech:
+  - demo
+  meaning_id: demo.caution
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: check
+  parts_of_speech:
+  - demo
+  meaning_id: demo.check
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: clean
+  parts_of_speech:
+  - demo
+  meaning_id: demo.clean
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: close
+  parts_of_speech:
+  - demo
+  meaning_id: demo.close
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: connect
+  parts_of_speech:
+  - demo
+  meaning_id: demo.connect
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: continue
+  parts_of_speech:
+  - demo
+  meaning_id: demo.continue
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: cover
+  parts_of_speech:
+  - demo
+  meaning_id: demo.cover
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: damage
+  parts_of_speech:
+  - demo
+  meaning_id: demo.damage
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: disconnect
+  parts_of_speech:
+  - demo
+  meaning_id: demo.disconnect
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: do
+  parts_of_speech:
+  - demo
+  meaning_id: demo.do
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: door
+  parts_of_speech:
+  - demo
+  meaning_id: demo.door
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: electrical
+  parts_of_speech:
+  - demo
+  meaning_id: demo.electrical
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: engine
+  parts_of_speech:
+  - demo
+  meaning_id: demo.engine
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: equipment
+  parts_of_speech:
+  - demo
+  meaning_id: demo.equipment
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: except
+  parts_of_speech:
+  - demo
+  meaning_id: demo.except
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: fire
+  parts_of_speech:
+  - demo
+  meaning_id: demo.fire
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: fluid
+  parts_of_speech:
+  - demo
+  meaning_id: demo.fluid
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: for
+  parts_of_speech:
+  - demo
+  meaning_id: demo.for
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: from
+  parts_of_speech:
+  - demo
+  meaning_id: demo.from
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: fully
+  parts_of_speech:
+  - demo
+  meaning_id: demo.fully
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: ground
+  parts_of_speech:
+  - demo
+  meaning_id: demo.ground
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: guard
+  parts_of_speech:
+  - demo
+  meaning_id: demo.guard
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: has
+  parts_of_speech:
+  - demo
+  meaning_id: demo.has
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: have
+  parts_of_speech:
+  - demo
+  meaning_id: demo.have
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: hydraulic
+  parts_of_speech:
+  - demo
+  meaning_id: demo.hydraulic
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: if
+  parts_of_speech:
+  - demo
+  meaning_id: demo.if
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: in
+  parts_of_speech:
+  - demo
+  meaning_id: demo.in
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: install
+  parts_of_speech:
+  - demo
+  meaning_id: demo.install
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: is
+  parts_of_speech:
+  - demo
+  meaning_id: demo.is
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: keep
+  parts_of_speech:
+  - demo
+  meaning_id: demo.keep
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: less
+  parts_of_speech:
+  - demo
+  meaning_id: demo.less
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: make
+  parts_of_speech:
+  - demo
+  meaning_id: demo.make
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: maximum
+  parts_of_speech:
+  - demo
+  meaning_id: demo.maximum
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: minimum
+  parts_of_speech:
+  - demo
+  meaning_id: demo.minimum
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: more
+  parts_of_speech:
+  - demo
+  meaning_id: demo.more
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: must
+  parts_of_speech:
+  - demo
+  meaning_id: demo.must
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: 'no'
+  parts_of_speech:
+  - demo
+  meaning_id: demo.no
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: not
+  parts_of_speech:
+  - demo
+  meaning_id: demo.not
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: note
+  parts_of_speech:
+  - demo
+  meaning_id: demo.note
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: of
+  parts_of_speech:
+  - demo
+  meaning_id: demo.of
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: 'off'
+  parts_of_speech:
+  - demo
+  meaning_id: demo.off
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: 'on'
+  parts_of_speech:
+  - demo
+  meaning_id: demo.on
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: open
+  parts_of_speech:
+  - demo
+  meaning_id: demo.open
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: operate
+  parts_of_speech:
+  - demo
+  meaning_id: demo.operate
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: operator
+  parts_of_speech:
+  - demo
+  meaning_id: demo.operator
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: panel
+  parts_of_speech:
+  - demo
+  meaning_id: demo.panel
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: pressure
+  parts_of_speech:
+  - demo
+  meaning_id: demo.pressure
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: prevent
+  parts_of_speech:
+  - demo
+  meaning_id: demo.prevent
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: pump
+  parts_of_speech:
+  - demo
+  meaning_id: demo.pump
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: remove
+  parts_of_speech:
+  - demo
+  meaning_id: demo.remove
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: replace
+  parts_of_speech:
+  - demo
+  meaning_id: demo.replace
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: set
+  parts_of_speech:
+  - demo
+  meaning_id: demo.set
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: start
+  parts_of_speech:
+  - demo
+  meaning_id: demo.start
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: stop
+  parts_of_speech:
+  - demo
+  meaning_id: demo.stop
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: sure
+  parts_of_speech:
+  - demo
+  meaning_id: demo.sure
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: system
+  parts_of_speech:
+  - demo
+  meaning_id: demo.system
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: than
+  parts_of_speech:
+  - demo
+  meaning_id: demo.than
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: that
+  parts_of_speech:
+  - demo
+  meaning_id: demo.that
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: the
+  parts_of_speech:
+  - demo
+  meaning_id: demo.the
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: then
+  parts_of_speech:
+  - demo
+  meaning_id: demo.then
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: tight
+  parts_of_speech:
+  - demo
+  meaning_id: demo.tight
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: tighten
+  parts_of_speech:
+  - demo
+  meaning_id: demo.tighten
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: to
+  parts_of_speech:
+  - demo
+  meaning_id: demo.to
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: tool
+  parts_of_speech:
+  - demo
+  meaning_id: demo.tool
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: unit
+  parts_of_speech:
+  - demo
+  meaning_id: demo.unit
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: until
+  parts_of_speech:
+  - demo
+  meaning_id: demo.until
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: use
+  parts_of_speech:
+  - demo
+  meaning_id: demo.use
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: valve
+  parts_of_speech:
+  - demo
+  meaning_id: demo.valve
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: warning
+  parts_of_speech:
+  - demo
+  meaning_id: demo.warning
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: when
+  parts_of_speech:
+  - demo
+  meaning_id: demo.when
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: with
+  parts_of_speech:
+  - demo
+  meaning_id: demo.with
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: zero
+  parts_of_speech:
+  - demo
+  meaning_id: demo.zero
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: attach
+  parts_of_speech:
+  - demo
+  meaning_id: demo.attach
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: can
+  parts_of_speech:
+  - demo
+  meaning_id: demo.can
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: contains
+  parts_of_speech:
+  - demo
+  meaning_id: demo.contains
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: cool
+  parts_of_speech:
+  - demo
+  meaning_id: demo.cool
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: hot
+  parts_of_speech:
+  - demo
+  meaning_id: demo.hot
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: injury
+  parts_of_speech:
+  - demo
+  meaning_id: demo.injury
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: occurs
+  parts_of_speech:
+  - demo
+  meaning_id: demo.occurs
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: oil
+  parts_of_speech:
+  - demo
+  meaning_id: demo.oil
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: power
+  parts_of_speech:
+  - demo
+  meaning_id: demo.power
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: release
+  parts_of_speech:
+  - demo
+  meaning_id: demo.release
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: remains
+  parts_of_speech:
+  - demo
+  meaning_id: demo.remains
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: safe
+  parts_of_speech:
+  - demo
+  meaning_id: demo.safe
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: switch
+  parts_of_speech:
+  - demo
+  meaning_id: demo.switch
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: temperature
+  parts_of_speech:
+  - demo
+  meaning_id: demo.temperature
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: wait
+  parts_of_speech:
+  - demo
+  meaning_id: demo.wait
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: wear
+  parts_of_speech:
+  - demo
+  meaning_id: demo.wear
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: air
+  parts_of_speech:
+  - demo
+  meaning_id: demo.air
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: apply
+  parts_of_speech:
+  - demo
+  meaning_id: demo.apply
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: area
+  parts_of_speech:
+  - demo
+  meaning_id: demo.area
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: assembly
+  parts_of_speech:
+  - demo
+  meaning_id: demo.assembly
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: automatic
+  parts_of_speech:
+  - demo
+  meaning_id: demo.automatic
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: away
+  parts_of_speech:
+  - demo
+  meaning_id: demo.away
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: cause
+  parts_of_speech:
+  - demo
+  meaning_id: demo.cause
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: component
+  parts_of_speech:
+  - demo
+  meaning_id: demo.component
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: control
+  parts_of_speech:
+  - demo
+  meaning_id: demo.control
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: correct
+  parts_of_speech:
+  - demo
+  meaning_id: demo.correct
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: decrease
+  parts_of_speech:
+  - demo
+  meaning_id: demo.decrease
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: drain
+  parts_of_speech:
+  - demo
+  meaning_id: demo.drain
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: during
+  parts_of_speech:
+  - demo
+  meaning_id: demo.during
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: each
+  parts_of_speech:
+  - demo
+  meaning_id: demo.each
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: end
+  parts_of_speech:
+  - demo
+  meaning_id: demo.end
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: ensure
+  parts_of_speech:
+  - demo
+  meaning_id: demo.ensure
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: enter
+  parts_of_speech:
+  - demo
+  meaning_id: demo.enter
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: equal
+  parts_of_speech:
+  - demo
+  meaning_id: demo.equal
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: examine
+  parts_of_speech:
+  - demo
+  meaning_id: demo.examine
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: failure
+  parts_of_speech:
+  - demo
+  meaning_id: demo.failure
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: fastener
+  parts_of_speech:
+  - demo
+  meaning_id: demo.fastener
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: filter
+  parts_of_speech:
+  - demo
+  meaning_id: demo.filter
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: first
+  parts_of_speech:
+  - demo
+  meaning_id: demo.first
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: fuel
+  parts_of_speech:
+  - demo
+  meaning_id: demo.fuel
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: give
+  parts_of_speech:
+  - demo
+  meaning_id: demo.give
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: high
+  parts_of_speech:
+  - demo
+  meaning_id: demo.high
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: hold
+  parts_of_speech:
+  - demo
+  meaning_id: demo.hold
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: increase
+  parts_of_speech:
+  - demo
+  meaning_id: demo.increase
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: indicator
+  parts_of_speech:
+  - demo
+  meaning_id: demo.indicator
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: inspect
+  parts_of_speech:
+  - demo
+  meaning_id: demo.inspect
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: left
+  parts_of_speech:
+  - demo
+  meaning_id: demo.left
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: level
+  parts_of_speech:
+  - demo
+  meaning_id: demo.level
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: limit
+  parts_of_speech:
+  - demo
+  meaning_id: demo.limit
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: lock
+  parts_of_speech:
+  - demo
+  meaning_id: demo.lock
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: low
+  parts_of_speech:
+  - demo
+  meaning_id: demo.low
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: manual
+  parts_of_speech:
+  - demo
+  meaning_id: demo.manual
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: measure
+  parts_of_speech:
+  - demo
+  meaning_id: demo.measure
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: motor
+  parts_of_speech:
+  - demo
+  meaning_id: demo.motor
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: move
+  parts_of_speech:
+  - demo
+  meaning_id: demo.move
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: necessary
+  parts_of_speech:
+  - demo
+  meaning_id: demo.necessary
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: normal
+  parts_of_speech:
+  - demo
+  meaning_id: demo.normal
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: only
+  parts_of_speech:
+  - demo
+  meaning_id: demo.only
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: position
+  parts_of_speech:
+  - demo
+  meaning_id: demo.position
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: pull
+  parts_of_speech:
+  - demo
+  meaning_id: demo.pull
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: push
+  parts_of_speech:
+  - demo
+  meaning_id: demo.push
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: right
+  parts_of_speech:
+  - demo
+  meaning_id: demo.right
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: seal
+  parts_of_speech:
+  - demo
+  meaning_id: demo.seal
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: second
+  parts_of_speech:
+  - demo
+  meaning_id: demo.second
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: slowly
+  parts_of_speech:
+  - demo
+  meaning_id: demo.slowly
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: specified
+  parts_of_speech:
+  - demo
+  meaning_id: demo.specified
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: supply
+  parts_of_speech:
+  - demo
+  meaning_id: demo.supply
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: test
+  parts_of_speech:
+  - demo
+  meaning_id: demo.test
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: turn
+  parts_of_speech:
+  - demo
+  meaning_id: demo.turn
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: unlock
+  parts_of_speech:
+  - demo
+  meaning_id: demo.unlock
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: verify
+  parts_of_speech:
+  - demo
+  meaning_id: demo.verify
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: water
+  parts_of_speech:
+  - demo
+  meaning_id: demo.water
+  inflections: []
+  example: null
+  forbidden_confusions: []

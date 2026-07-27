@@ -1,0 +1,32 @@
+id: warning_pressure
+title: warning pressure
+sections:
+- id: sec_1
+  kind: warning
+  statements:
+  - kind: instruction
+    id: inst_005
+    action:
+      id: stop
+      lemma: stop
+    object:
+      term_id: hydraulic_pressure
+    source_spans:
+    - source_id: inst_005.txt
+      start: 0
+      end: 10
+      quote: demonstration source
+    quantity_constraints:
+    - property: pressure
+      quantity:
+        value: 20
+        unit: MPa
+        comparator: more_than
+    hazards:
+    - id: haz_1
+      severity: warning
+      consequence: injury
+      threshold:
+        value: 20
+        unit: MPa
+        comparator: more_than

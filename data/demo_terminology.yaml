@@ -1,0 +1,40 @@
+version: hydraulic-demo-1
+license: MIT; original demonstration terminology
+terms:
+  - id: hydraulic_pressure
+    canonical_form: hydraulic pressure
+    definition: Pressure in the demonstration hydraulic system.
+    domain: hydraulic
+    allowed_roles: [technical_noun]
+    aliases: [system pressure]
+    source: {type: glossary, reference: demo-glossary-v1}
+    status: approved
+    version: 1
+  - id: shutoff_valve
+    canonical_form: shutoff valve
+    definition: A valve that stops fluid flow.
+    domain: hydraulic
+    allowed_roles: [technical_noun]
+    aliases: [stop valve]
+    source: {type: glossary, reference: demo-glossary-v1}
+    status: approved
+    version: 1
+  - id: access_panel
+    canonical_form: access panel
+    definition: A removable panel for equipment access.
+    domain: general
+    allowed_roles: [technical_noun]
+    aliases: [service panel]
+    source: {type: glossary, reference: demo-glossary-v1}
+    status: approved
+    version: 1
+  - id: old_pressure
+    canonical_form: fluid pressure
+    definition: Deprecated pressure term.
+    domain: hydraulic
+    allowed_roles: [technical_noun]
+    aliases: []
+    source: {type: glossary, reference: demo-glossary-v1}
+    status: deprecated
+    version: 1
+    replacement_term_id: hydraulic_pressure

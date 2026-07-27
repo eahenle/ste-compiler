@@ -1,0 +1,19 @@
+id: negative
+title: negative
+sections:
+- id: sec_1
+  kind: procedure
+  statements:
+  - kind: instruction
+    id: inst_002
+    action:
+      id: open
+      lemma: open
+    object:
+      term_id: shutoff_valve
+    source_spans:
+    - source_id: inst_002.txt
+      start: 0
+      end: 10
+      quote: demonstration source
+    negated: true
