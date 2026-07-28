@@ -1,6 +1,7 @@
 """Symbolic output avoids the false assumption that BPE tokens equal approved words."""
 
 import re
+from urllib.parse import quote, unquote
 
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
@@ -15,6 +16,10 @@ PUNCTUATION = {
     "EXCLAMATION": "!",
 }
 TEXT_PUNCTUATION = {value: key for key, value in PUNCTUATION.items()}
+
+
+def _unit_symbol(unit: str) -> str:
+    return f"UNIT_{quote(unit, safe='')}"
 
 
 class SymbolicLexicalizer:
@@ -67,7 +72,7 @@ class SymbolicLexicalizer:
                     raise ValueError(f"unauthorized term symbol: {symbol}") from error
                 output += ("" if not output or output.endswith(("\n", " ")) else " ") + term
             elif symbol.startswith("UNIT_"):
-                unit = self.vocabulary.unit_forms.get(symbol[5:].casefold())
+                unit = self.vocabulary.unit_forms.get(unquote(symbol[5:]).casefold())
                 if unit is None:
                     raise ValueError(f"unauthorized unit symbol: {symbol}")
                 output += ("" if not output or output.endswith(("\n", " ")) else " ") + unit
@@ -119,7 +124,7 @@ class SymbolicLexicalizer:
                 matched_unit = unit_form
                 break
             if matched_unit is not None:
-                symbols.append(f"UNIT_{matched_unit}")
+                symbols.append(_unit_symbol(matched_unit))
                 position += len(matched_unit)
                 continue
 
@@ -141,7 +146,7 @@ class SymbolicLexicalizer:
             token = word.group()
             canonical_unit = self.vocabulary.unit_forms.get(token.casefold())
             if canonical_unit is not None:
-                symbols.append(f"UNIT_{canonical_unit}")
+                symbols.append(_unit_symbol(canonical_unit))
             elif self.vocabulary.contains(token):
                 symbols.append(f"WORD_{token.casefold()}")
             else:

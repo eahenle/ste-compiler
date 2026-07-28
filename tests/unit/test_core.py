@@ -97,12 +97,17 @@ def test_symbolic_plan_allowlist_blocks_invented_quantity(vocab, terms):
 
 def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
     custom_vocab = Vocabulary(
-        vocab.data.model_copy(update={"units": [*vocab.data.units, "%", "°C", "m/s"]})
+        vocab.data.model_copy(
+            update={"units": [*vocab.data.units, "%", "°C", "m/s", "degrees Celsius"]}
+        )
     )
     lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
-    text = "20 % 5 °C 3 m/s."
+    text = "20 % 5 °C 3 m/s 2 degrees Celsius."
     symbols = lexicalizer.symbolize(text)
-    assert symbols == "NUMBER_20 UNIT_% NUMBER_5 UNIT_°C NUMBER_3 UNIT_m/s PERIOD"
+    assert symbols == (
+        "NUMBER_20 UNIT_%25 NUMBER_5 UNIT_%C2%B0C NUMBER_3 UNIT_m%2Fs "
+        "NUMBER_2 UNIT_degrees%20Celsius PERIOD"
+    )
     assert lexicalizer.lexicalize(symbols) == text
 
 
