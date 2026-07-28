@@ -556,6 +556,7 @@ def test_atomic_publication_cleans_temporary_files_when_replace_fails(
     assert not (output / "manifest.json").exists()
     assert not list(output.glob(".ste-compiler-*.tmp"))
     assert not list(output.glob(".ste-compiler-*.bak"))
+    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
     assert (output / corpus_module.OUTPUT_LOCK).is_file()
 
 
@@ -586,6 +587,7 @@ def test_atomic_publication_restores_previous_pair_when_second_replace_fails(
     } == before
     assert not list(output.glob(".ste-compiler-*.tmp"))
     assert not list(output.glob(".ste-compiler-*.bak"))
+    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
 
 
 def test_backup_cleanup_failure_keeps_committed_pair(tmp_path, monkeypatch, vocab, terms):
@@ -614,6 +616,119 @@ def test_backup_cleanup_failure_keeps_committed_pair(tmp_path, monkeypatch, voca
     assert injected
     assert manifest["source_files"] == ["sequence.yaml"]
     assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+    assert not list(output.glob(".ste-compiler-*.bak"))
+    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
+
+
+@pytest.mark.parametrize(
+    ("interrupted_state", "expected_recovery"),
+    [
+        ("after_first_backup", "old"),
+        ("after_both_backups", "old"),
+        ("after_first_install", "old"),
+        ("after_both_installs", "new"),
+        ("no_prior_after_first_install", "none"),
+    ],
+)
+def test_next_export_recovers_interrupted_publication(
+    tmp_path,
+    monkeypatch,
+    vocab,
+    terms,
+    interrupted_state,
+    expected_recovery,
+):
+    old_output = tmp_path / "old"
+    new_output = tmp_path / "new"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", old_output, vocab, terms)
+    export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", new_output, vocab, terms)
+    old_pair = {
+        artifact_name: (old_output / artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    }
+    new_pair = {
+        artifact_name: (new_output / artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    }
+
+    output = tmp_path / "output"
+    output.mkdir()
+    had_previous_pair = interrupted_state != "no_prior_after_first_install"
+    if had_previous_pair:
+        for artifact_name, data in old_pair.items():
+            (output / artifact_name).write_bytes(data)
+    (output / corpus_module.TRANSACTION_JOURNAL).write_text(
+        json.dumps({"had_previous_pair": had_previous_pair, "version": 1}) + "\n",
+        encoding="utf-8",
+    )
+    stale_temporary = output / f".ste-compiler-{'a' * 32}.tmp"
+    stale_temporary.write_bytes(b"stale temporary bytes")
+
+    if interrupted_state in {
+        "after_first_backup",
+        "after_both_backups",
+        "after_first_install",
+        "after_both_installs",
+    }:
+        (output / "corpus.jsonl").replace(
+            output / corpus_module.TRANSACTION_BACKUPS["corpus.jsonl"]
+        )
+    if interrupted_state in {
+        "after_both_backups",
+        "after_first_install",
+        "after_both_installs",
+    }:
+        (output / "manifest.json").replace(
+            output / corpus_module.TRANSACTION_BACKUPS["manifest.json"]
+        )
+    if interrupted_state in {"after_first_install", "after_both_installs"}:
+        (output / "corpus.jsonl").write_bytes(new_pair["corpus.jsonl"])
+    if interrupted_state == "after_both_installs":
+        (output / "manifest.json").write_bytes(new_pair["manifest.json"])
+    if interrupted_state == "no_prior_after_first_install":
+        (output / "corpus.jsonl").write_bytes(new_pair["corpus.jsonl"])
+
+    original_writer = corpus_module._write_temporary_artifact
+    recovery_observed = False
+
+    def inspect_recovery_before_staging(directory_fd, data):
+        nonlocal recovery_observed
+        if not recovery_observed:
+            if expected_recovery == "none":
+                assert not (output / "corpus.jsonl").exists()
+                assert not (output / "manifest.json").exists()
+            else:
+                expected_pair = old_pair if expected_recovery == "old" else new_pair
+                assert {
+                    artifact_name: (output / artifact_name).read_bytes()
+                    for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+                } == expected_pair
+            assert not stale_temporary.exists()
+            assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
+            assert not list(output.glob(".ste-compiler-*.bak"))
+            recovery_observed = True
+        return original_writer(directory_fd, data)
+
+    monkeypatch.setattr(
+        corpus_module,
+        "_write_temporary_artifact",
+        inspect_recovery_before_staging,
+    )
+
+    manifest = export_symbolic_corpus(
+        ROOT / "data/examples/warning_pressure.yaml",
+        output,
+        vocab,
+        terms,
+    )
+
+    corpus_bytes = (output / "corpus.jsonl").read_bytes()
+    assert recovery_observed
+    assert manifest["source_files"] == ["warning_pressure.yaml"]
+    assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
+    assert json.loads((output / "manifest.json").read_text()) == manifest
+    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
     assert not list(output.glob(".ste-compiler-*.tmp"))
     assert not list(output.glob(".ste-compiler-*.bak"))
 
@@ -672,6 +787,29 @@ def test_concurrent_publishers_leave_one_coherent_generation(tmp_path, monkeypat
     assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
     assert not list(output.glob(".ste-compiler-*.tmp"))
     assert not list(output.glob(".ste-compiler-*.bak"))
+    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
+
+
+def test_corpus_export_reports_missing_posix_lock_support(tmp_path, monkeypatch, vocab, terms):
+    original_import_module = corpus_module.importlib.import_module
+
+    def import_without_fcntl(name, package=None):
+        if name == "fcntl":
+            raise ModuleNotFoundError("No module named 'fcntl'", name="fcntl")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(corpus_module.importlib, "import_module", import_without_fcntl)
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="requires POSIX fcntl file locking"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
