@@ -13,12 +13,14 @@ from typing import Any, Protocol, cast
 _COMMIT_REVISION = re.compile(r"[0-9a-f]{40}", re.ASCII)
 _HUB_COMPONENT = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?", re.ASCII)
 _SAFE_SNAPSHOT_PATTERNS = [
+    "*.codes",
     "*.json",
     "*.merges",
     "*.model",
     "*.safetensors",
     "*.spm",
     "*.tiktoken",
+    "*.tokenizer",
     "*.txt",
     "*.vocab",
 ]

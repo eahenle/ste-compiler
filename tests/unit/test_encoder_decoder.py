@@ -1,3 +1,4 @@
+from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -160,12 +161,14 @@ def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, t
                 "revision": MODEL_REVISION,
                 "local_files_only": True,
                 "allow_patterns": [
+                    "*.codes",
                     "*.json",
                     "*.merges",
                     "*.model",
                     "*.safetensors",
                     "*.spm",
                     "*.tiktoken",
+                    "*.tokenizer",
                     "*.txt",
                     "*.vocab",
                 ],
@@ -189,6 +192,18 @@ def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, t
             },
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("resource", "pattern"),
+    [
+        ("prophetnet.tokenizer", "*.tokenizer"),
+        ("bpe.codes", "*.codes"),
+    ],
+)
+def test_encoder_decoder_snapshot_filter_keeps_safe_tokenizer_resources(resource, pattern):
+    assert pattern in encoder_decoder._SAFE_SNAPSHOT_PATTERNS
+    assert fnmatchcase(resource, pattern)
 
 
 @pytest.mark.parametrize(
