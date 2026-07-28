@@ -12,4 +12,5 @@
 1. Export canonical IR-to-symbol training records from the deterministic realizer.
 2. Define the provider-neutral `SymbolGenerator` inference boundary and enforce a document-specific symbol allowlist.
 3. Independently align lexicalized model output before granting IR mappings.
-4. Add a concrete pinned model adapter, reproducible synthetic corpus construction, constrained decoding, and offline evaluation as separate follow-up slices.
+4. Export deterministic bulk JSONL with duplicate-ID checks and a SHA-256 reproducibility manifest.
+5. Add a concrete pinned model adapter, synthetic source construction, constrained decoding, and offline evaluation as separate follow-up slices.

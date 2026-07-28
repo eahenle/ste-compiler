@@ -46,6 +46,34 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
 
     clean_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     clean_env["PYTHONPATH"] = str(installed)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import builtins
+
+original_import = builtins.__import__
+
+def import_without_fcntl(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "fcntl":
+        raise ModuleNotFoundError("No module named 'fcntl'", name="fcntl")
+    return original_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = import_without_fcntl
+from ste_compiler.cli import app
+from typer.testing import CliRunner
+
+result = CliRunner().invoke(app, ["--help"])
+assert result.exit_code == 0, result.output
+""",
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     command = [sys.executable, "-m", "ste_compiler.cli"]
     realized = subprocess.run(
         [*command, "realize", str(ROOT / "data/examples/negative.yaml")],
@@ -68,6 +96,24 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
     training_record = json.loads(planned.stdout)
     assert "WORD_occur" in training_record["allowed_symbols"]
     assert "TERM_hydraulic_pressure|hydraulic%20pressure" in training_record["symbols"]
+
+    corpus = tmp_path / "training"
+    subprocess.run(
+        [
+            *command,
+            "export-symbolic-corpus",
+            str(ROOT / "data/examples"),
+            "--output",
+            str(corpus),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads((corpus / "current" / "manifest.json").read_text())["record_count"] == 5
+    assert len((corpus / "current" / "corpus.jsonl").read_text().splitlines()) == 5
 
     reports = tmp_path / "reports"
     subprocess.run(

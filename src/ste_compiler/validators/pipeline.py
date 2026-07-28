@@ -8,6 +8,8 @@ from .structural import StructuralValidator
 
 
 class ValidationPipeline:
+    profile = "strict-demo-1"
+
     def __init__(self, lexical: LexicalValidator, structural: StructuralValidator | None = None):
         self.lexical = lexical
         self.structural = structural or StructuralValidator()
