@@ -85,6 +85,13 @@ def _reject_output_aliases(paths: list[Path], output: Path) -> None:
     first, second = artifacts
     if _paths_alias(first, second):
         raise ValueError(f"symbolic corpus output artifacts {first} and {second} alias each other")
+    for artifact in artifacts:
+        if artifact.is_symlink():
+            raise ValueError(f"symbolic corpus output artifact must not be a symlink: {artifact}")
+        if artifact.exists() and (not artifact.is_file() or artifact.stat().st_nlink > 1):
+            raise ValueError(
+                f"symbolic corpus output artifact must be a regular single-link file: {artifact}"
+            )
 
 
 def export_symbolic_corpus(

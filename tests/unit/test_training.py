@@ -284,6 +284,70 @@ def test_corpus_export_rejects_output_artifact_aliases_without_writes(
         assert linked.samefile(target)
 
 
+@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
+@pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
+def test_corpus_export_rejects_artifact_linked_to_unrelated_file_without_writes(
+    tmp_path, vocab, terms, artifact_name, link_type
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_bytes(b"unrelated bytes must remain unchanged")
+    original_bytes = unrelated.read_bytes()
+    output = tmp_path / "output"
+    output.mkdir()
+    artifact = output / artifact_name
+    if link_type == "symlink":
+        artifact.symlink_to(unrelated)
+    else:
+        artifact.hardlink_to(unrelated)
+    other_artifact = output / (
+        "manifest.json" if artifact_name == "corpus.jsonl" else "corpus.jsonl"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="output artifact must not be a symlink|regular single-link file",
+    ):
+        export_symbolic_corpus(source, output, vocab, terms)
+
+    assert unrelated.read_bytes() == original_bytes
+    assert artifact.read_bytes() == original_bytes
+    if link_type == "symlink":
+        assert artifact.is_symlink()
+    else:
+        assert artifact.samefile(unrelated)
+    assert not other_artifact.exists()
+
+
+@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
+def test_corpus_export_rejects_broken_artifact_symlink_without_partial_write(
+    tmp_path, vocab, terms, artifact_name
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    output = tmp_path / "output"
+    output.mkdir()
+    artifact = output / artifact_name
+    missing_target = tmp_path / "missing-target"
+    artifact.symlink_to(missing_target)
+    other_artifact = output / (
+        "manifest.json" if artifact_name == "corpus.jsonl" else "corpus.jsonl"
+    )
+
+    with pytest.raises(ValueError, match="output artifact must not be a symlink"):
+        export_symbolic_corpus(source, output, vocab, terms)
+
+    assert artifact.is_symlink()
+    assert not artifact.exists()
+    assert not missing_target.exists()
+    assert not other_artifact.exists()
+
+
 def test_corpus_export_rejects_symlinked_source_root(tmp_path, vocab, terms):
     actual_source = tmp_path / "actual-source"
     actual_source.mkdir()
