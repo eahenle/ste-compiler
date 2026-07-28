@@ -100,6 +100,7 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["do_sample"] is False
     assert model.kwargs["num_beams"] == 1
     assert model.kwargs["return_dict_in_generate"] is False
+    assert "forced_decoder_ids" not in model.kwargs
     assert model.kwargs["input_ids"]
 
 
@@ -116,10 +117,31 @@ def test_encoder_decoder_overrides_inherited_generation_strategy():
         dola_layers="high",
         constraints=[object()],
         force_words_ids=[[123]],
+        forced_decoder_ids=[[1, 123]],
+        forced_bos_token_id=123,
+        forced_eos_token_id=124,
+        suppress_tokens=[125],
+        begin_suppress_tokens=[126],
+        bad_words_ids=[[127]],
+        sequence_bias={(128,): 10.0},
+        no_repeat_ngram_size=4,
+        encoder_no_repeat_ngram_size=4,
+        repetition_penalty=2.0,
+        encoder_repetition_penalty=2.0,
+        diversity_penalty=1.0,
+        length_penalty=2.0,
+        early_stopping=True,
+        exponential_decay_length_penalty=(4, 1.5),
+        renormalize_logits=True,
+        remove_invalid_values=True,
         assistant_model=object(),
         prompt_lookup_num_tokens=8,
         min_length=256,
         min_new_tokens=128,
+        max_time=0.001,
+        stop_strings=["stop"],
+        watermarking_config=object(),
+        guidance_scale=2.0,
     )
     generator = TransformersEncoderDecoderSymbolGenerator(
         EncoderDecoderConfig(
@@ -138,30 +160,74 @@ def test_encoder_decoder_overrides_inherited_generation_strategy():
             "num_beams",
             "num_beam_groups",
             "num_return_sequences",
+            "decoder_start_token_id",
             "return_dict_in_generate",
             "penalty_alpha",
             "dola_layers",
             "constraints",
             "force_words_ids",
+            "forced_decoder_ids",
+            "forced_bos_token_id",
+            "forced_eos_token_id",
+            "suppress_tokens",
+            "begin_suppress_tokens",
+            "bad_words_ids",
+            "sequence_bias",
+            "no_repeat_ngram_size",
+            "encoder_no_repeat_ngram_size",
+            "repetition_penalty",
+            "encoder_repetition_penalty",
+            "diversity_penalty",
+            "length_penalty",
+            "early_stopping",
+            "exponential_decay_length_penalty",
+            "renormalize_logits",
+            "remove_invalid_values",
             "assistant_model",
             "prompt_lookup_num_tokens",
             "min_length",
             "min_new_tokens",
+            "max_time",
+            "stop_strings",
+            "watermarking_config",
+            "guidance_scale",
         )
     } == {
         "do_sample": False,
         "num_beams": 2,
         "num_beam_groups": 1,
         "num_return_sequences": 1,
+        "decoder_start_token_id": 0,
         "return_dict_in_generate": False,
         "penalty_alpha": None,
         "dola_layers": None,
         "constraints": None,
         "force_words_ids": None,
+        "forced_decoder_ids": None,
+        "forced_bos_token_id": None,
+        "forced_eos_token_id": None,
+        "suppress_tokens": None,
+        "begin_suppress_tokens": None,
+        "bad_words_ids": None,
+        "sequence_bias": None,
+        "no_repeat_ngram_size": 0,
+        "encoder_no_repeat_ngram_size": 0,
+        "repetition_penalty": 1.0,
+        "encoder_repetition_penalty": 1.0,
+        "diversity_penalty": 0.0,
+        "length_penalty": 1.0,
+        "early_stopping": False,
+        "exponential_decay_length_penalty": None,
+        "renormalize_logits": False,
+        "remove_invalid_values": False,
         "assistant_model": None,
         "prompt_lookup_num_tokens": None,
         "min_length": 0,
         "min_new_tokens": 0,
+        "max_time": None,
+        "stop_strings": None,
+        "watermarking_config": None,
+        "guidance_scale": None,
     }
 
 
@@ -480,6 +546,24 @@ def test_adapter_handles_structured_transformers_output_defensively():
     )
 
     assert generator.generate_symbols("{}", frozenset({"WORD_do", "PERIOD"})) == "WORD_do PERIOD"
+
+
+def test_adapter_rejects_multiple_sequences_before_selecting_first():
+    valid_first = [0, 1, 2]
+    malformed_second = ["not", "token", "ids"]
+
+    class TensorLikeOutput:
+        def tolist(self):
+            return [valid_first, malformed_second]
+
+    for generated in (
+        [valid_first, malformed_second],
+        SimpleNamespace(sequences=[valid_first, malformed_second]),
+        TensorLikeOutput(),
+        SimpleNamespace(sequences=TensorLikeOutput()),
+    ):
+        with pytest.raises(InvalidSymbolGeneration, match="multiple generated sequences"):
+            TransformersEncoderDecoderSymbolGenerator._first_sequence(generated)
 
 
 @pytest.mark.parametrize(

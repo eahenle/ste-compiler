@@ -298,26 +298,50 @@ class TransformersEncoderDecoderSymbolGenerator:
             truncation=True,
             max_length=self.config.max_source_tokens,
         )
-        generated = model.generate(
-            **encoded_source,
-            do_sample=False,
-            eos_token_id=int(eos_token_id),
-            pad_token_id=tokenizer.pad_token_id,
-            max_new_tokens=self.config.max_new_tokens,
-            num_beams=self.config.num_beams,
-            num_beam_groups=1,
-            num_return_sequences=1,
-            penalty_alpha=None,
-            dola_layers=None,
-            constraints=None,
-            force_words_ids=None,
-            assistant_model=None,
-            prompt_lookup_num_tokens=None,
-            min_length=0,
-            min_new_tokens=0,
-            prefix_allowed_tokens_fn=constraint,
-            return_dict_in_generate=False,
-        )
+        generation_kwargs: dict[str, Any] = {
+            "do_sample": False,
+            "eos_token_id": int(eos_token_id),
+            "pad_token_id": tokenizer.pad_token_id,
+            "max_new_tokens": self.config.max_new_tokens,
+            "num_beams": self.config.num_beams,
+            "num_beam_groups": 1,
+            "num_return_sequences": 1,
+            "decoder_start_token_id": int(decoder_start_token_id),
+            "penalty_alpha": None,
+            "dola_layers": None,
+            "constraints": None,
+            "force_words_ids": None,
+            "forced_bos_token_id": None,
+            "forced_eos_token_id": None,
+            "suppress_tokens": None,
+            "begin_suppress_tokens": None,
+            "bad_words_ids": None,
+            "sequence_bias": None,
+            "no_repeat_ngram_size": 0,
+            "encoder_no_repeat_ngram_size": 0,
+            "repetition_penalty": 1.0,
+            "encoder_repetition_penalty": 1.0,
+            "diversity_penalty": 0.0,
+            "length_penalty": 1.0,
+            "early_stopping": False,
+            "exponential_decay_length_penalty": None,
+            "renormalize_logits": False,
+            "remove_invalid_values": False,
+            "assistant_model": None,
+            "prompt_lookup_num_tokens": None,
+            "min_length": 0,
+            "min_new_tokens": 0,
+            "max_time": None,
+            "stop_strings": None,
+            "watermarking_config": None,
+            "guidance_scale": None,
+            "prefix_allowed_tokens_fn": constraint,
+            "return_dict_in_generate": False,
+        }
+        generation_config = getattr(model, "generation_config", None)
+        if generation_config is not None and hasattr(generation_config, "forced_decoder_ids"):
+            generation_kwargs["forced_decoder_ids"] = None
+        generated = model.generate(**encoded_source, **generation_kwargs)
         token_ids = self._first_sequence(generated)
         if token_ids and token_ids[0] == int(decoder_start_token_id):
             token_ids = token_ids[1:]
@@ -351,10 +375,28 @@ class TransformersEncoderDecoderSymbolGenerator:
     @staticmethod
     def _first_sequence(generated: Any) -> list[int]:
         sequences = getattr(generated, "sequences", generated)
+        if hasattr(sequences, "tolist"):
+            sequences = sequences.tolist()
+        try:
+            if isinstance(sequences, (str, bytes)):
+                raise TypeError
+            sequence_count = len(sequences)
+        except TypeError as error:
+            raise InvalidSymbolGeneration(
+                "model returned an invalid generated sequence container"
+            ) from error
+        if sequence_count == 0:
+            raise InvalidSymbolGeneration("model returned no generated sequence")
+        if sequence_count != 1:
+            raise InvalidSymbolGeneration(
+                "model returned multiple generated sequences; exactly one is required"
+            )
         try:
             sequence = sequences[0]
         except (IndexError, KeyError, TypeError) as error:
-            raise InvalidSymbolGeneration("model returned no generated sequence") from error
+            raise InvalidSymbolGeneration(
+                "model returned an invalid generated sequence container"
+            ) from error
         if hasattr(sequence, "tolist"):
             sequence = sequence.tolist()
         try:

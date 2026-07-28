@@ -43,7 +43,8 @@ including for omissions and reordered sentences.
 - Source truncation and the output-token cap are explicit configuration choices and can reduce
   quality; truncated, incomplete, or unterminated output is rejected.
 - Inherited checkpoint generation modes are neutralized; beam count and output length come only
-  from `EncoderDecoderConfig`, with one return sequence and no minimum-length or forced-token mode.
+  from `EncoderDecoderConfig`, with one return sequence and no inherited minimum-length,
+  forced-token, suppression, repetition, logits-processing, or stopping mode.
 - Generation explicitly requests tensor output and also validates that any returned sequence is a
   one-dimensional series of integer token IDs.
 - The adapter does not download or initialize a model until its first generation request. Tests use

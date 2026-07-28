@@ -261,6 +261,15 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         prompt_lookup_num_tokens=8,
         min_length=256,
         min_new_tokens=128,
+        forced_bos_token_id=11,
+        forced_eos_token_id=12,
+        suppress_tokens=[13],
+        begin_suppress_tokens=[14],
+        bad_words_ids=[[15]],
+        no_repeat_ngram_size=3,
+        encoder_no_repeat_ngram_size=4,
+        max_time=0.001,
+        stop_strings=["WORD_open"],
     )
     generator = DecoderOnlyLoRASymbolGenerator(
         _config(),
@@ -291,6 +300,15 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
             "prompt_lookup_num_tokens",
             "min_length",
             "min_new_tokens",
+            "forced_bos_token_id",
+            "forced_eos_token_id",
+            "suppress_tokens",
+            "begin_suppress_tokens",
+            "bad_words_ids",
+            "no_repeat_ngram_size",
+            "encoder_no_repeat_ngram_size",
+            "max_time",
+            "stop_strings",
         )
     } == {
         "do_sample": False,
@@ -306,6 +324,15 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         "prompt_lookup_num_tokens": None,
         "min_length": 0,
         "min_new_tokens": 0,
+        "forced_bos_token_id": None,
+        "forced_eos_token_id": None,
+        "suppress_tokens": None,
+        "begin_suppress_tokens": None,
+        "bad_words_ids": None,
+        "no_repeat_ngram_size": 0,
+        "encoder_no_repeat_ngram_size": 0,
+        "max_time": None,
+        "stop_strings": None,
     }
 
 

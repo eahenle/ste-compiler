@@ -20,13 +20,16 @@ and commit.
 The prompt is a versioned canonical JSON envelope containing the serialized IR. Generation is
 greedy and batch size one; inference explicitly neutralizes inherited sampling, beam,
 contrastive, DoLa, constrained-beam, assisted, return-count, return-shape, and minimum-length
-settings. Resetting both `min_length` and `min_new_tokens` keeps EOS available whenever the symbol
-grammar reaches a valid boundary, including at `max_symbols`. A token grammar constructs lossless
-tokenizer encodings for only the document-specific allowed symbols. The model can continue with
-one of those encodings or terminate with EOS; a post-generation check requires exactly one batch
-dimension containing only integer token IDs, replays the raw pre-EOS token path through the same
-grammar, and independently rejects multiple sequences, malformed token shapes, hidden special
-tokens, missing termination, noncanonical spacing, too many symbols, and any escaped symbol.
+settings. It also clears inherited forced BOS/EOS IDs, token suppression and bad-word lists,
+decoder and encoder no-repeat n-gram processors, time and stop-string criteria, and both
+`min_length` and `min_new_tokens`. These overrides prevent inherited processors from masking a
+grammar-permitted token or terminating before explicit EOS, including when the plan reaches
+`max_symbols`. A token grammar constructs lossless tokenizer encodings for only the
+document-specific allowed symbols. The model can continue with one of those encodings or terminate
+with EOS; a post-generation check requires exactly one batch dimension containing only integer
+token IDs, replays the raw pre-EOS token path through the same grammar, and independently rejects
+multiple sequences, malformed token shapes, hidden special tokens, missing termination,
+noncanonical spacing, too many symbols, and any escaped symbol.
 
 ## Trust boundary
 
