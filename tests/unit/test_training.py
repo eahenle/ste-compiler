@@ -157,6 +157,78 @@ def test_corpus_export_rejects_symlinked_ir_file(tmp_path, vocab, terms):
     assert not output.exists()
 
 
+@pytest.mark.parametrize("target_placement", ["inside", "outside"])
+def test_corpus_export_rejects_symlinked_ir_directory_before_writes(
+    tmp_path, vocab, terms, target_placement
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    target = source / "documents" if target_placement == "inside" else tmp_path / "documents"
+    target.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (target / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    (source / "linked").symlink_to(target, target_is_directory=True)
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "corpus.jsonl").write_bytes(b"stale corpus")
+    (output / "manifest.json").write_bytes(b"stale manifest")
+    before = {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in ("manifest.json", "corpus.jsonl")
+    }
+
+    with pytest.raises(ValueError, match="symlinked directory: linked"):
+        export_symbolic_corpus(source, output, vocab, terms)
+
+    assert {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in ("manifest.json", "corpus.jsonl")
+    } == before
+
+
+def test_corpus_export_rejects_broken_directory_symlink_before_writes(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    source.mkdir()
+    linked = source / "linked"
+    linked.symlink_to(tmp_path / "missing-directory", target_is_directory=True)
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "corpus.jsonl").write_bytes(b"stale corpus")
+    (output / "manifest.json").write_bytes(b"stale manifest")
+    before = {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in ("manifest.json", "corpus.jsonl")
+    }
+
+    with pytest.raises(ValueError, match="symlinked directory: linked"):
+        export_symbolic_corpus(source, output, vocab, terms)
+
+    assert linked.is_symlink()
+    assert not linked.exists()
+    assert {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in ("manifest.json", "corpus.jsonl")
+    } == before
+
+
+def test_nested_output_subtree_is_pruned_before_symlink_inspection(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    output = source / "generated"
+    output.mkdir()
+    internal_link = output / "linked"
+    internal_link.symlink_to(tmp_path / "missing-directory", target_is_directory=True)
+
+    manifest = export_symbolic_corpus(source, output, vocab, terms)
+
+    assert manifest["record_count"] == 1
+    assert manifest["source_files"] == ["installation.yaml"]
+    assert internal_link.is_symlink()
+    assert not internal_link.exists()
+
+
 def test_corpus_export_rejects_direct_symlinked_ir_source(tmp_path, vocab, terms):
     document = load_document(ROOT / "data/examples/installation.yaml")
     actual_source = tmp_path / "installation.yaml"

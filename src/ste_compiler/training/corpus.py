@@ -39,26 +39,39 @@ def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
         source_root
     )
     artifact_locations = {output_root / artifact_name for artifact_name in OUTPUT_ARTIFACTS}
-    candidates = sorted(
-        (path for path in source.rglob("*") if path.suffix.casefold() in IR_SUFFIXES),
-        key=lambda path: path.relative_to(source).as_posix(),
-    )
     paths: list[Path] = []
-    for path in candidates:
-        source_path = path.relative_to(source).as_posix()
-        path_location = path.parent.resolve() / path.name
-        if path_location in artifact_locations or (
-            output_is_nested_in_source and path_location.is_relative_to(output_root)
-        ):
-            continue
-        if path.is_symlink():
-            raise ValueError(f"symbolic corpus source contains a symlinked IR file: {source_path}")
-        if not path.is_file():
-            continue
-        resolved_path = path.resolve()
-        if not resolved_path.is_relative_to(source_root):
-            raise ValueError(f"IR file resolves outside the corpus source: {source_path}")
-        paths.append(path)
+    pending_directories = [source]
+    while pending_directories:
+        directory = pending_directories.pop()
+        child_directories: list[Path] = []
+        for path in sorted(directory.iterdir(), key=lambda child: child.name):
+            source_path = path.relative_to(source).as_posix()
+            path_location = path.parent.resolve() / path.name
+            if path_location in artifact_locations or (
+                output_is_nested_in_source and path_location.is_relative_to(output_root)
+            ):
+                continue
+            if path.is_symlink():
+                if not path.exists() or path.is_dir():
+                    raise ValueError(
+                        f"symbolic corpus source contains a symlinked directory: {source_path}"
+                    )
+                if path.suffix.casefold() in IR_SUFFIXES:
+                    raise ValueError(
+                        f"symbolic corpus source contains a symlinked IR file: {source_path}"
+                    )
+                continue
+            if path.is_dir():
+                child_directories.append(path)
+                continue
+            if not path.is_file() or path.suffix.casefold() not in IR_SUFFIXES:
+                continue
+            resolved_path = path.resolve()
+            if not resolved_path.is_relative_to(source_root):
+                raise ValueError(f"IR file resolves outside the corpus source: {source_path}")
+            paths.append(path)
+        pending_directories.extend(reversed(child_directories))
+    paths.sort(key=lambda path: path.relative_to(source).as_posix())
     if not paths:
         raise ValueError(f"no YAML or JSON IR documents found in {source}")
     return source, paths
