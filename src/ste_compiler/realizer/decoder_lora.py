@@ -200,6 +200,21 @@ class _SymbolTokenGrammar:
                 allowed.update(tokens[0] for tokens in self._continued)
         return sorted(allowed)
 
+    def validate_complete(self, token_ids: Sequence[int]) -> None:
+        """Reject any pre-EOS token path that the prefix grammar could not generate."""
+
+        generated: list[int] = []
+        for token_id in token_ids:
+            if token_id not in self.allowed_next(generated):
+                raise DecoderOnlyLoRAError(
+                    "model output contains a token path outside the symbolic grammar before EOS"
+                )
+            generated.append(token_id)
+        if self.eos_token_id not in self.allowed_next(generated):
+            raise DecoderOnlyLoRAError(
+                "model output does not end at a complete symbolic boundary before EOS"
+            )
+
 
 def _integer_sequence(value: object, *, batched: bool = False) -> list[int]:
     if hasattr(value, "tolist"):
@@ -452,6 +467,7 @@ class DecoderOnlyLoRASymbolGenerator:
             raise DecoderOnlyLoRAError("generation did not terminate with EOS")
         if grammar.eos_token_id in continuation[:-1]:
             raise DecoderOnlyLoRAError("generation returned tokens after EOS")
+        grammar.validate_complete(continuation[:-1])
 
         symbols = self._tokenizer.decode(
             continuation[:-1],

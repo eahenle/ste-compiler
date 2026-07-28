@@ -25,7 +25,8 @@ separately in metadata alongside the revision-qualified model ID. Generation is 
 sanitized, greedy, and single-example; inherited minimum-length settings are reset so EOS remains
 available at every valid symbol boundary. Output is accepted only as one batch of integer token IDs
 with explicit EOS termination and a lossless tokenizer round-trip check for every allowed symbol
-form.
+form. The complete raw pre-EOS path is replayed through the token grammar before special-token
+skipping or text-level allowlist checks.
 The loader requires safetensors, resolves and reuses one checked adapter snapshot, validates the
 pinned adapter as LoRA for the exact configured causal LM commit, and lazy-loads Transformers and
 PEFT only when the adapter is constructed without injected test doubles. See

@@ -147,11 +147,58 @@ def test_decoder_lora_postcondition_rejects_a_model_that_ignores_the_grammar():
         model=UnconstrainedFakeModel("WORD_close"),
     )
 
-    with pytest.raises(DecoderOnlyLoRAError, match="escaped the symbol allowlist"):
+    with pytest.raises(DecoderOnlyLoRAError, match="outside the symbolic grammar"):
         generator.generate_symbols(
             '{"id":"negative"}',
             frozenset({"WORD_do", "WORD_not", "WORD_open"}),
         )
+
+
+@pytest.mark.parametrize("special_token_id", [1, 2], ids=["PAD", "BOS"])
+def test_decoder_lora_rejects_hidden_special_tokens_before_eos(special_token_id):
+    plan = "WORD_open"
+
+    class SpecialTokenHidingTokenizer(CharacterTokenizer):
+        pad_token_id = 1
+        bos_token_id = 2
+
+        def decode(self, token_ids, **kwargs):
+            hidden = {self.eos_token_id, self.pad_token_id, self.bos_token_id}
+            return super().decode(
+                [token_id for token_id in token_ids if token_id not in hidden],
+                **kwargs,
+            )
+
+    tokenizer = SpecialTokenHidingTokenizer()
+    encoded_plan = tokenizer.encode(plan, add_special_tokens=False)
+    injected = [*encoded_plan[:4], special_token_id, *encoded_plan[4:]]
+    assert (
+        tokenizer.decode(
+            injected,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        == plan
+    )
+
+    class InjectingModel:
+        device = None
+
+        def generate(self, **kwargs):
+            prefix = list(kwargs["input_ids"][0])
+            return [[*prefix, *injected, tokenizer.eos_token_id]]
+
+    generator = DecoderOnlyLoRASymbolGenerator(
+        _config(),
+        tokenizer=tokenizer,
+        model=InjectingModel(),
+    )
+
+    with pytest.raises(
+        DecoderOnlyLoRAError,
+        match="token path outside the symbolic grammar before EOS",
+    ):
+        generator.generate_symbols('{"id":"test"}', frozenset({plan}))
 
 
 def test_decoder_lora_rejects_multiple_returned_sequences():
