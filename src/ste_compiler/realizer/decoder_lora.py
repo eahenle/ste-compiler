@@ -200,6 +200,21 @@ class _SymbolTokenGrammar:
                 allowed.update(tokens[0] for tokens in self._continued)
         return sorted(allowed)
 
+    def validate_complete(self, token_ids: Sequence[int]) -> None:
+        """Reject any pre-EOS token path that the prefix grammar could not generate."""
+
+        generated: list[int] = []
+        for token_id in token_ids:
+            if token_id not in self.allowed_next(generated):
+                raise DecoderOnlyLoRAError(
+                    "model output contains a token path outside the symbolic grammar before EOS"
+                )
+            generated.append(token_id)
+        if self.eos_token_id not in self.allowed_next(generated):
+            raise DecoderOnlyLoRAError(
+                "model output does not end at a complete symbolic boundary before EOS"
+            )
+
 
 def _integer_sequence(value: object, *, batched: bool = False) -> list[int]:
     if hasattr(value, "tolist"):
@@ -424,6 +439,11 @@ class DecoderOnlyLoRASymbolGenerator:
 
         generate = cast(Callable[..., object], cast(Any, self._model).generate)
         pad_token_id = self._tokenizer.pad_token_id
+        token_healing_override = (
+            {"token_healing": False}
+            if hasattr(getattr(self._model, "generation_config", None), "token_healing")
+            else {}
+        )
         output = generate(
             **encoded,
             do_sample=False,
@@ -439,10 +459,20 @@ class DecoderOnlyLoRASymbolGenerator:
             prompt_lookup_num_tokens=None,
             min_length=0,
             min_new_tokens=0,
+            forced_bos_token_id=None,
+            forced_eos_token_id=None,
+            suppress_tokens=None,
+            begin_suppress_tokens=None,
+            bad_words_ids=None,
+            no_repeat_ngram_size=0,
+            encoder_no_repeat_ngram_size=0,
+            max_time=None,
+            stop_strings=None,
             max_new_tokens=self.config.max_new_tokens,
             pad_token_id=grammar.eos_token_id if pad_token_id is None else pad_token_id,
             eos_token_id=grammar.eos_token_id,
             prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
+            **token_healing_override,
         )
         output_ids = _integer_sequence(output, batched=True)
         if output_ids[: len(prompt_ids)] != prompt_ids:
@@ -452,6 +482,7 @@ class DecoderOnlyLoRASymbolGenerator:
             raise DecoderOnlyLoRAError("generation did not terminate with EOS")
         if grammar.eos_token_id in continuation[:-1]:
             raise DecoderOnlyLoRAError("generation returned tokens after EOS")
+        grammar.validate_complete(continuation[:-1])
 
         symbols = self._tokenizer.decode(
             continuation[:-1],

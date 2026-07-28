@@ -9,6 +9,13 @@ if TYPE_CHECKING:
         DecoderOnlyLoRAError,
         DecoderOnlyLoRASymbolGenerator,
     )
+    from .encoder_decoder import (
+        EncoderDecoderConfig,
+        EncoderDecoderError,
+        EncoderDecoderUnavailable,
+        InvalidSymbolGeneration,
+        TransformersEncoderDecoderSymbolGenerator,
+    )
     from .neural import NeuralRealizer, SymbolGenerator
 
 __all__ = [
@@ -16,9 +23,14 @@ __all__ = [
     "DecoderOnlyLoRAError",
     "DecoderOnlyLoRASymbolGenerator",
     "DeterministicRealizer",
+    "EncoderDecoderConfig",
+    "EncoderDecoderError",
+    "EncoderDecoderUnavailable",
+    "InvalidSymbolGeneration",
     "NeuralRealizer",
     "RealizationResult",
     "SymbolGenerator",
+    "TransformersEncoderDecoderSymbolGenerator",
 ]
 
 
@@ -31,6 +43,16 @@ def __getattr__(name: str) -> object:
         from . import decoder_lora
 
         return getattr(decoder_lora, name)
+    if name in {
+        "EncoderDecoderConfig",
+        "EncoderDecoderError",
+        "EncoderDecoderUnavailable",
+        "InvalidSymbolGeneration",
+        "TransformersEncoderDecoderSymbolGenerator",
+    }:
+        from . import encoder_decoder
+
+        return getattr(encoder_decoder, name)
     if name == "NeuralRealizer":
         from .neural import NeuralRealizer
 

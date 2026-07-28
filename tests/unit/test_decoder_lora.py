@@ -147,11 +147,58 @@ def test_decoder_lora_postcondition_rejects_a_model_that_ignores_the_grammar():
         model=UnconstrainedFakeModel("WORD_close"),
     )
 
-    with pytest.raises(DecoderOnlyLoRAError, match="escaped the symbol allowlist"):
+    with pytest.raises(DecoderOnlyLoRAError, match="outside the symbolic grammar"):
         generator.generate_symbols(
             '{"id":"negative"}',
             frozenset({"WORD_do", "WORD_not", "WORD_open"}),
         )
+
+
+@pytest.mark.parametrize("special_token_id", [1, 2], ids=["PAD", "BOS"])
+def test_decoder_lora_rejects_hidden_special_tokens_before_eos(special_token_id):
+    plan = "WORD_open"
+
+    class SpecialTokenHidingTokenizer(CharacterTokenizer):
+        pad_token_id = 1
+        bos_token_id = 2
+
+        def decode(self, token_ids, **kwargs):
+            hidden = {self.eos_token_id, self.pad_token_id, self.bos_token_id}
+            return super().decode(
+                [token_id for token_id in token_ids if token_id not in hidden],
+                **kwargs,
+            )
+
+    tokenizer = SpecialTokenHidingTokenizer()
+    encoded_plan = tokenizer.encode(plan, add_special_tokens=False)
+    injected = [*encoded_plan[:4], special_token_id, *encoded_plan[4:]]
+    assert (
+        tokenizer.decode(
+            injected,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        == plan
+    )
+
+    class InjectingModel:
+        device = None
+
+        def generate(self, **kwargs):
+            prefix = list(kwargs["input_ids"][0])
+            return [[*prefix, *injected, tokenizer.eos_token_id]]
+
+    generator = DecoderOnlyLoRASymbolGenerator(
+        _config(),
+        tokenizer=tokenizer,
+        model=InjectingModel(),
+    )
+
+    with pytest.raises(
+        DecoderOnlyLoRAError,
+        match="token path outside the symbolic grammar before EOS",
+    ):
+        generator.generate_symbols('{"id":"test"}', frozenset({plan}))
 
 
 def test_decoder_lora_rejects_multiple_returned_sequences():
@@ -214,6 +261,16 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         prompt_lookup_num_tokens=8,
         min_length=256,
         min_new_tokens=128,
+        forced_bos_token_id=11,
+        forced_eos_token_id=12,
+        suppress_tokens=[13],
+        begin_suppress_tokens=[14],
+        bad_words_ids=[[15]],
+        no_repeat_ngram_size=3,
+        encoder_no_repeat_ngram_size=4,
+        max_time=0.001,
+        stop_strings=["WORD_open"],
+        token_healing=True,
     )
     generator = DecoderOnlyLoRASymbolGenerator(
         _config(),
@@ -244,6 +301,16 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
             "prompt_lookup_num_tokens",
             "min_length",
             "min_new_tokens",
+            "forced_bos_token_id",
+            "forced_eos_token_id",
+            "suppress_tokens",
+            "begin_suppress_tokens",
+            "bad_words_ids",
+            "no_repeat_ngram_size",
+            "encoder_no_repeat_ngram_size",
+            "max_time",
+            "stop_strings",
+            "token_healing",
         )
     } == {
         "do_sample": False,
@@ -259,7 +326,36 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         "prompt_lookup_num_tokens": None,
         "min_length": 0,
         "min_new_tokens": 0,
+        "forced_bos_token_id": None,
+        "forced_eos_token_id": None,
+        "suppress_tokens": None,
+        "begin_suppress_tokens": None,
+        "bad_words_ids": None,
+        "no_repeat_ngram_size": 0,
+        "encoder_no_repeat_ngram_size": 0,
+        "max_time": None,
+        "stop_strings": None,
+        "token_healing": False,
     }
+
+
+def test_decoder_lora_omits_unsupported_token_healing_override():
+    model = ConstrainedFakeModel("WORD_open")
+    model.generation_config = SimpleNamespace()
+    generator = DecoderOnlyLoRASymbolGenerator(
+        _config(),
+        tokenizer=CharacterTokenizer(),
+        model=model,
+    )
+
+    assert (
+        generator.generate_symbols(
+            '{"id":"test"}',
+            frozenset({"WORD_open"}),
+        )
+        == "WORD_open"
+    )
+    assert "token_healing" not in model.generate_arguments
 
 
 @pytest.mark.parametrize(
