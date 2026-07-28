@@ -11,6 +11,12 @@ def _whole_form(form: str) -> str:
     return rf"(?<!\w){re.escape(form)}(?!\w)"
 
 
+def _whole_unit(unit: str) -> str:
+    """Allow numeric adjacency while excluding letters and underscores."""
+
+    return rf"(?<![^\W\d]){re.escape(unit)}(?![^\W\d])"
+
+
 class LexicalValidator:
     def __init__(self, vocabulary: Vocabulary, terminology: TerminologyRegistry):
         self.vocabulary, self.terminology = vocabulary, terminology
@@ -33,7 +39,7 @@ class LexicalValidator:
         ):
             masked = re.sub(_whole_form(form), " ", masked, flags=re.IGNORECASE)
         for unit in sorted(self.vocabulary.units, key=len, reverse=True):
-            masked = re.sub(_whole_form(unit), " ", masked)
+            masked = re.sub(_whole_unit(unit), " ", masked)
         sentence = 1
         for match in TOKEN.finditer(masked):
             token = match.group()

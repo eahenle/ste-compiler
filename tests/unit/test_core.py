@@ -140,6 +140,51 @@ def test_symbolic_plan_round_trips_parentheses_semicolon_and_word_case(vocab, te
     assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
 
 
+def test_exact_symbolic_plan_preserves_first_word_and_internal_sentence_case(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    text = "Safe? slowly"
+
+    symbols = lexicalizer.symbolize(text)
+
+    assert symbols == ("PLAN_EXACT_WHITESPACE_V1 WORD_Safe QUESTION SPACE WORD_slowly")
+    assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
+
+
+def test_exact_symbolic_plan_preserves_acronym_and_mixed_case(vocab, terms):
+    template = vocab.data.entries[0]
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(
+            update={
+                "entries": [
+                    *vocab.data.entries,
+                    template.model_copy(update={"lemma": "APU", "inflections": []}),
+                    template.model_copy(update={"lemma": "eBay", "inflections": []}),
+                ]
+            }
+        )
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
+    text = "APU eBay safe? slowly"
+
+    symbols = lexicalizer.symbolize(text)
+
+    assert "WORD_APU" in symbols.split()
+    assert "WORD_eBay" in symbols.split()
+    assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
+
+
+def test_markerless_symbolic_plan_retains_legacy_capitalization(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+
+    assert (
+        lexicalizer.lexicalize(
+            "WORD_safe QUESTION WORD_slowly",
+            capitalize_sentences=True,
+        )
+        == "Safe? Slowly"
+    )
+
+
 @pytest.mark.parametrize(
     ("text", "expected_symbols"),
     [
@@ -285,6 +330,50 @@ def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     assert result.metadata["model_id"] == "offline-test-generator"
     assert result.metadata["alignment"] == "deterministic-surface-v1"
     assert result.metadata["whitespace_alignment"] == "exact-layout-v1"
+    assert result.metadata["whitespace_layout_preserved"] == "true"
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_preserves_exact_word_case_across_internal_punctuation(vocab, terms):
+    template = vocab.data.entries[0]
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(
+            update={
+                "entries": [
+                    *vocab.data.entries,
+                    template.model_copy(update={"lemma": "APU", "inflections": []}),
+                    template.model_copy(update={"lemma": "eBay", "inflections": []}),
+                ]
+            }
+        )
+    )
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={"manner": "APU eBay safe? slowly"}
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
+    expected = DeterministicRealizer().realize(document, custom_vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert expected_plan.startswith("PLAN_EXACT_WHITESPACE_V1 WORD_Install SPACE")
+    assert {
+        "WORD_APU",
+        "WORD_eBay",
+        "WORD_slowly",
+    } <= set(expected_plan.split())
+
+    class Generator:
+        model_id = "offline-exact-case-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert set(expected_plan.split()) <= allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, custom_vocab, terms)
+
+    assert result.text == "Install the access panel APU eBay safe? slowly."
+    assert result.mappings == expected.mappings
     assert result.metadata["whitespace_layout_preserved"] == "true"
     assert not SemanticValidator().validate(document, result)
 
@@ -612,7 +701,7 @@ def test_neural_realizer_does_not_trust_reordered_allowed_symbols(vocab, terms):
         def generate_symbols(self, serialized_ir, allowed_symbols):
             del serialized_ir
             assert "WORD_not" in allowed_symbols
-            return "WORD_open WORD_do WORD_not WORD_the TERM_shutoff_valve PERIOD"
+            return "WORD_open WORD_Do WORD_not WORD_the TERM_shutoff_valve PERIOD"
 
     result = NeuralRealizer(Generator()).realize(document, vocab, terms)
     diagnostics = SemanticValidator().validate(document, result)
@@ -780,6 +869,26 @@ def test_lexical_validator_detects_punctuation_delimited_aliases(alias, vocab, t
     diagnostics = LexicalValidator(vocab, registry).validate(alias)
 
     assert [diagnostic.code for diagnostic in diagnostics] == ["TERMINOLOGY_ALIAS"]
+
+
+@pytest.mark.parametrize("text", ["20°C.", "20m/s."])
+def test_lexical_validator_accepts_units_adjacent_to_numbers(text, vocab, terms):
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(update={"units": [*vocab.data.units, "°C", "m/s"]})
+    )
+
+    assert not LexicalValidator(custom_vocab, terms).validate(text)
+
+
+@pytest.mark.parametrize("text", ["safe°Cslowly.", "am/safe."])
+def test_lexical_validator_does_not_mask_units_inside_alphabetic_words(text, vocab, terms):
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(update={"units": [*vocab.data.units, "°C", "m/s"]})
+    )
+
+    assert "UNAUTHORIZED_WORD" in {
+        diagnostic.code for diagnostic in LexicalValidator(custom_vocab, terms).validate(text)
+    }
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])

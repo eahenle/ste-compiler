@@ -29,6 +29,10 @@ def _unit_symbol(unit: str) -> str:
     return f"UNIT_{quote(unit, safe='')}"
 
 
+def _word_symbol(word: str) -> str:
+    return f"WORD_{quote(word, safe='')}"
+
+
 def _term_symbol(term_id: str) -> str:
     return f"TERM_{quote(term_id, safe='')}"
 
@@ -156,8 +160,13 @@ class SymbolicLexicalizer:
 
             value: str
             if symbol.startswith("WORD_"):
-                value = self.vocabulary.canonical_word(symbol[5:]) or ""
-                if not value or not WORD_TEXT.fullmatch(value):
+                word_surface = unquote(symbol[5:])
+                value = (
+                    word_surface
+                    if exact_whitespace and self.vocabulary.contains(word_surface)
+                    else self.vocabulary.canonical_word(word_surface) or ""
+                )
+                if not value or WORD_TEXT.fullmatch(value) is None:
                     raise ValueError(f"unauthorized word symbol: {symbol}")
             elif symbol.startswith("TERM_"):
                 try:
@@ -173,7 +182,7 @@ class SymbolicLexicalizer:
             else:
                 raise ValueError(f"invalid output symbol: {symbol}")
 
-            if at_sentence_start:
+            if at_sentence_start and not exact_whitespace:
                 value = value[:1].upper() + value[1:]
             at_sentence_start = False
             output += (
@@ -254,8 +263,8 @@ class SymbolicLexicalizer:
             canonical_unit = self.vocabulary.unit_forms.get(token)
             if canonical_unit is not None:
                 symbols.append(_unit_symbol(canonical_unit))
-            elif canonical_word := self.vocabulary.canonical_word(token):
-                symbols.append(f"WORD_{canonical_word}")
+            elif self.vocabulary.contains(token):
+                symbols.append(_word_symbol(token))
             else:
                 raise ValueError(f"unauthorized word in controlled text: {token}")
             position = word.end()
