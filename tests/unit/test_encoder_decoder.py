@@ -11,6 +11,7 @@ from ste_compiler.realizer import (
     InvalidSymbolGeneration,
     NeuralRealizer,
     TransformersEncoderDecoderSymbolGenerator,
+    encoder_decoder,
 )
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.realizer.encoder_decoder import (
@@ -102,6 +103,62 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["return_dict_in_generate"] is False
     assert "forced_decoder_ids" not in model.kwargs
     assert model.kwargs["input_ids"]
+
+
+def test_encoder_decoder_loader_requires_safe_pinned_weights(monkeypatch):
+    calls = []
+    tokenizer = object()
+    model = object()
+
+    class Factory:
+        def __init__(self, name, result):
+            self.name = name
+            self.result = result
+
+        def from_pretrained(self, model_id, **kwargs):
+            calls.append((self.name, model_id, kwargs))
+            return self.result
+
+    transformers = SimpleNamespace(
+        AutoTokenizer=Factory("tokenizer", tokenizer),
+        AutoModelForSeq2SeqLM=Factory("model", model),
+    )
+    monkeypatch.setattr(
+        encoder_decoder,
+        "import_module",
+        lambda name: transformers if name == "transformers" else None,
+    )
+    config = EncoderDecoderConfig(
+        model_id="organization/small-seq2seq",
+        revision=MODEL_REVISION,
+        local_files_only=True,
+    )
+
+    assert TransformersEncoderDecoderSymbolGenerator._load_transformers_components(config) == (
+        tokenizer,
+        model,
+    )
+    assert calls == [
+        (
+            "tokenizer",
+            "organization/small-seq2seq",
+            {
+                "revision": MODEL_REVISION,
+                "local_files_only": True,
+                "trust_remote_code": False,
+            },
+        ),
+        (
+            "model",
+            "organization/small-seq2seq",
+            {
+                "revision": MODEL_REVISION,
+                "local_files_only": True,
+                "trust_remote_code": False,
+                "use_safetensors": True,
+            },
+        ),
+    ]
 
 
 def test_encoder_decoder_overrides_inherited_generation_strategy():

@@ -12,8 +12,8 @@ repository ID and a full lowercase 40-character commit digest. Local filesystem 
 rejected before loading because a digest-shaped configuration value cannot make mutable local
 contents immutable. Tags, branches, abbreviated hashes, and other mutable or ambiguous revision
 labels are also rejected. The exact digest is retained separately in realization metadata as well
-as in the revision-qualified model ID. Loading is lazy, disables remote model code, and remains
-optional through the `neural` dependency extra.
+as in the revision-qualified model ID. Loading is lazy, disables remote model code, requires
+safetensors model weights, and remains optional through the `neural` dependency extra.
 
 The encoder receives canonical serialized IR. The decoder can emit only token paths that form:
 
@@ -38,6 +38,8 @@ including for omissions and reordered sentences.
 ## Consequences and limits
 
 - The tokenizer must represent every allowed symbol without EOS or an unknown token.
+- Hub revisions without safetensors model weights fail closed; pickle-based checkpoint
+  deserialization is not allowed at this trust boundary.
 - Every first and space-prefixed symbolic form must round-trip through the tokenizer exactly;
   normalization is rejected before generation.
 - Source truncation and the output-token cap are explicit configuration choices and can reduce

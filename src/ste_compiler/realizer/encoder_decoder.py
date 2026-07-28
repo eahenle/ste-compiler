@@ -266,6 +266,7 @@ class TransformersEncoderDecoderSymbolGenerator:
             revision=config.revision,
             local_files_only=config.local_files_only,
             trust_remote_code=False,
+            use_safetensors=True,
         )
         return tokenizer, model
 
