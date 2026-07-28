@@ -4,12 +4,36 @@ from .base import RealizationResult
 from .deterministic import DeterministicRealizer
 
 if TYPE_CHECKING:
+    from .encoder_decoder import (
+        EncoderDecoderConfig,
+        EncoderDecoderUnavailable,
+        InvalidSymbolGeneration,
+        TransformersEncoderDecoderSymbolGenerator,
+    )
     from .neural import NeuralRealizer, SymbolGenerator
 
-__all__ = ["DeterministicRealizer", "NeuralRealizer", "RealizationResult", "SymbolGenerator"]
+__all__ = [
+    "DeterministicRealizer",
+    "EncoderDecoderConfig",
+    "EncoderDecoderUnavailable",
+    "InvalidSymbolGeneration",
+    "NeuralRealizer",
+    "RealizationResult",
+    "SymbolGenerator",
+    "TransformersEncoderDecoderSymbolGenerator",
+]
 
 
 def __getattr__(name: str) -> object:
+    if name in {
+        "EncoderDecoderConfig",
+        "EncoderDecoderUnavailable",
+        "InvalidSymbolGeneration",
+        "TransformersEncoderDecoderSymbolGenerator",
+    }:
+        from . import encoder_decoder
+
+        return getattr(encoder_decoder, name)
     if name == "NeuralRealizer":
         from .neural import NeuralRealizer
 

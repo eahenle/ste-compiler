@@ -66,16 +66,20 @@ class NeuralRealizer:
             deterministic if text == deterministic.text else replace(deterministic, mappings=())
         )
         aligned = align_controlled_text(text, alignment_reference)
+        metadata = {
+            **aligned.metadata,
+            "realizer": "symbolic-neural",
+            "realizer_version": self.version,
+            "model_id": self.generator.model_id,
+            "symbol_profile": "plan-specific-v1",
+            "whitespace_alignment": "exact-layout-v1",
+            "whitespace_layout_preserved": str(whitespace_layout_preserved).lower(),
+        }
+        model_revision = getattr(self.generator, "model_revision", None)
+        if isinstance(model_revision, str):
+            metadata["model_revision"] = model_revision
         return RealizationResult(
             text=aligned.text,
             mappings=aligned.mappings,
-            metadata={
-                **aligned.metadata,
-                "realizer": "symbolic-neural",
-                "realizer_version": self.version,
-                "model_id": self.generator.model_id,
-                "symbol_profile": "plan-specific-v1",
-                "whitespace_alignment": "exact-layout-v1",
-                "whitespace_layout_preserved": str(whitespace_layout_preserved).lower(),
-            },
+            metadata=metadata,
         )
