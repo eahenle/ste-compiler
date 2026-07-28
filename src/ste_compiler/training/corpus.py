@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 import hashlib
 import json
 import os
 import secrets
+import stat
 from pathlib import Path
 from typing import TypedDict
 
@@ -16,6 +18,7 @@ from .records import TrainingRecord, build_training_record
 CORPUS_SCHEMA_VERSION = "symbolic-corpus-v1"
 IR_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
 OUTPUT_ARTIFACTS = ("corpus.jsonl", "manifest.json")
+OUTPUT_LOCK = ".ste-compiler-corpus.lock"
 MANIFEST_KEYS = frozenset(
     {"schema_version", "record_count", "corpus_sha256", "source_files", "profiles"}
 )
@@ -223,7 +226,7 @@ def _reject_output_aliases(paths: list[Path], output: Path) -> None:
             )
 
 
-def _unlink_temporary(directory_fd: int, name: str) -> None:
+def _unlink_entry(directory_fd: int, name: str) -> None:
     try:
         os.unlink(name, dir_fd=directory_fd)
     except FileNotFoundError:
@@ -254,7 +257,7 @@ def _write_temporary_artifact(directory_fd: int, data: bytes) -> str:
                     os.close(file_fd)
                 except OSError:
                     pass
-            _unlink_temporary(directory_fd, name)
+            _unlink_entry(directory_fd, name)
             raise
         return name
     raise FileExistsError("could not create a unique temporary corpus artifact")
@@ -277,22 +280,152 @@ def _fsync_directory(directory_fd: int) -> None:
             raise
 
 
-def _publish_artifacts(output: Path, artifacts: tuple[tuple[str, bytes], ...]) -> None:
+def _entry_exists(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _acquire_output_lock(directory_fd: int, output: Path) -> int:
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(OUTPUT_LOCK, flags, 0o600, dir_fd=directory_fd)
+    except OSError as error:
+        raise ValueError(
+            f"symbolic corpus output lock must be a regular single-link file: {output / OUTPUT_LOCK}"
+        ) from error
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        opened = os.fstat(lock_fd)
+        entry = os.stat(OUTPUT_LOCK, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or not stat.S_ISREG(entry.st_mode)
+            or entry.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
+        ):
+            raise ValueError(
+                "symbolic corpus output lock must be a regular single-link file: "
+                f"{output / OUTPUT_LOCK}"
+            )
+    except BaseException:
+        os.close(lock_fd)
+        raise
+    return lock_fd
+
+
+def _unique_backup_name(directory_fd: int, artifact_name: str) -> str:
+    for _ in range(128):
+        name = f".ste-compiler-{secrets.token_hex(16)}.{artifact_name}.bak"
+        if not _entry_exists(directory_fd, name):
+            return name
+    raise FileExistsError("could not allocate a unique corpus artifact backup")
+
+
+def _rollback_publication(
+    directory_fd: int,
+    *,
+    had_previous_pair: bool,
+    backup_names: dict[str, str],
+    installed_names: set[str],
+) -> None:
+    if had_previous_pair:
+        for artifact_name in installed_names:
+            _unlink_entry(directory_fd, artifact_name)
+        for artifact_name, backup_name in backup_names.items():
+            if not _entry_exists(directory_fd, backup_name):
+                continue
+            _unlink_entry(directory_fd, artifact_name)
+            os.replace(
+                backup_name,
+                artifact_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+    else:
+        for artifact_name in OUTPUT_ARTIFACTS:
+            _unlink_entry(directory_fd, artifact_name)
+        for backup_name in backup_names.values():
+            _unlink_entry(directory_fd, backup_name)
+    _fsync_directory(directory_fd)
+
+
+def _publish_artifacts(
+    output: Path,
+    source_paths: list[Path],
+    artifacts: tuple[tuple[str, bytes], ...],
+) -> None:
     output.mkdir(parents=True, exist_ok=True)
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
     directory_fd = os.open(output, directory_flags)
+    lock_fd = -1
     temporary_names: dict[str, str] = {}
+    backup_names: dict[str, str] = {}
+    installed_names: set[str] = set()
+    pair_committed = False
     try:
+        lock_fd = _acquire_output_lock(directory_fd, output)
+        _reject_output_aliases(source_paths, output)
+        existing = {
+            artifact_name: _entry_exists(directory_fd, artifact_name)
+            for artifact_name in OUTPUT_ARTIFACTS
+        }
+        if any(existing.values()) and not all(existing.values()):
+            raise ValueError(
+                "symbolic corpus output must contain both corpus.jsonl and manifest.json or neither"
+            )
+        had_previous_pair = all(existing.values())
+
         for artifact_name, data in artifacts:
             temporary_names[artifact_name] = _write_temporary_artifact(directory_fd, data)
+
+        for artifact_name, _ in artifacts:
+            if not _entry_exists(directory_fd, artifact_name):
+                continue
+            backup_name = _unique_backup_name(directory_fd, artifact_name)
+            os.replace(
+                artifact_name,
+                backup_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            backup_names[artifact_name] = backup_name
+        if backup_names:
+            _fsync_directory(directory_fd)
+
         for artifact_name, _ in artifacts:
             temporary_name = temporary_names[artifact_name]
             _atomic_replace(directory_fd, temporary_name, artifact_name)
             del temporary_names[artifact_name]
+            installed_names.add(artifact_name)
         _fsync_directory(directory_fd)
+        pair_committed = True
+
+        for artifact_name, backup_name in tuple(backup_names.items()):
+            _unlink_entry(directory_fd, backup_name)
+            del backup_names[artifact_name]
+        _fsync_directory(directory_fd)
+    except BaseException:
+        if lock_fd >= 0 and ("had_previous_pair" in locals()) and not pair_committed:
+            _rollback_publication(
+                directory_fd,
+                had_previous_pair=had_previous_pair,
+                backup_names=backup_names,
+                installed_names=installed_names,
+            )
+            backup_names.clear()
+        raise
     finally:
         for temporary_name in temporary_names.values():
-            _unlink_temporary(directory_fd, temporary_name)
+            _unlink_entry(directory_fd, temporary_name)
+        for backup_name in backup_names.values():
+            _unlink_entry(directory_fd, backup_name)
+        if lock_fd >= 0:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
         os.close(directory_fd)
 
 
@@ -344,6 +477,7 @@ def export_symbolic_corpus(
     ).encode("utf-8")
     _publish_artifacts(
         output,
+        paths,
         (
             ("corpus.jsonl", corpus_bytes),
             ("manifest.json", manifest_bytes),

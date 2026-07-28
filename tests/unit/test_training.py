@@ -1,5 +1,7 @@
 import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -502,17 +504,17 @@ def test_atomic_publication_replaces_racing_symlink_without_following_target(
     source_bytes = source_path.read_bytes()
     output = tmp_path / "output"
     output.mkdir()
-    original_builder = corpus_module.build_training_record
+    original_writer = corpus_module._write_temporary_artifact
     raced = False
 
-    def build_with_race(*args, **kwargs):
+    def write_with_race(*args, **kwargs):
         nonlocal raced
         if not raced:
             (output / artifact_name).symlink_to(source_path)
             raced = True
-        return original_builder(*args, **kwargs)
+        return original_writer(*args, **kwargs)
 
-    monkeypatch.setattr(corpus_module, "build_training_record", build_with_race)
+    monkeypatch.setattr(corpus_module, "_write_temporary_artifact", write_with_race)
 
     manifest = export_symbolic_corpus(source, output, vocab, terms)
 
@@ -536,18 +538,165 @@ def test_atomic_publication_cleans_temporary_files_when_replace_fails(
     source_bytes = source_path.read_bytes()
     output = tmp_path / "output"
     output.mkdir()
+    original_replace = corpus_module._atomic_replace
 
-    def fail_replace(*args, **kwargs):
-        assert len(list(output.glob(".ste-compiler-*.tmp"))) == 2
-        raise OSError("injected atomic replacement failure")
+    def fail_second_replace(directory_fd, temporary_name, artifact_name):
+        if artifact_name == "manifest.json":
+            assert len(list(output.glob(".ste-compiler-*.tmp"))) == 1
+            raise OSError("injected atomic replacement failure")
+        original_replace(directory_fd, temporary_name, artifact_name)
 
-    monkeypatch.setattr(corpus_module, "_atomic_replace", fail_replace)
+    monkeypatch.setattr(corpus_module, "_atomic_replace", fail_second_replace)
 
     with pytest.raises(OSError, match="injected atomic replacement failure"):
         export_symbolic_corpus(source, output, vocab, terms)
 
     assert source_path.read_bytes() == source_bytes
-    assert not list(output.iterdir())
+    assert not (output / "corpus.jsonl").exists()
+    assert not (output / "manifest.json").exists()
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+    assert not list(output.glob(".ste-compiler-*.bak"))
+    assert (output / corpus_module.OUTPUT_LOCK).is_file()
+
+
+def test_atomic_publication_restores_previous_pair_when_second_replace_fails(
+    tmp_path, monkeypatch, vocab, terms
+):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    before = {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    }
+    original_replace = corpus_module._atomic_replace
+
+    def fail_second_replace(directory_fd, temporary_name, artifact_name):
+        if artifact_name == "manifest.json":
+            raise OSError("injected second replacement failure")
+        original_replace(directory_fd, temporary_name, artifact_name)
+
+    monkeypatch.setattr(corpus_module, "_atomic_replace", fail_second_replace)
+
+    with pytest.raises(OSError, match="injected second replacement failure"):
+        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
+
+    assert {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    } == before
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+    assert not list(output.glob(".ste-compiler-*.bak"))
+
+
+def test_backup_cleanup_failure_keeps_committed_pair(tmp_path, monkeypatch, vocab, terms):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    original_unlink = corpus_module._unlink_entry
+    backup_unlinks = 0
+    injected = False
+
+    def fail_second_backup_unlink(directory_fd, name):
+        nonlocal backup_unlinks, injected
+        if name.endswith(".bak"):
+            backup_unlinks += 1
+            if backup_unlinks == 2 and not injected:
+                injected = True
+                raise OSError("injected backup cleanup failure")
+        original_unlink(directory_fd, name)
+
+    monkeypatch.setattr(corpus_module, "_unlink_entry", fail_second_backup_unlink)
+
+    with pytest.raises(OSError, match="injected backup cleanup failure"):
+        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
+
+    corpus_bytes = (output / "corpus.jsonl").read_bytes()
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert injected
+    assert manifest["source_files"] == ["sequence.yaml"]
+    assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+    assert not list(output.glob(".ste-compiler-*.bak"))
+
+
+def test_concurrent_publishers_leave_one_coherent_generation(tmp_path, monkeypatch, vocab, terms):
+    output = tmp_path / "output"
+    first_installed_corpus = threading.Event()
+    allow_first_to_finish = threading.Event()
+    second_attempted_lock = threading.Event()
+    publisher = threading.local()
+    original_replace = corpus_module._atomic_replace
+    original_acquire = corpus_module._acquire_output_lock
+
+    def observed_acquire(directory_fd, output_path):
+        if publisher.name == "second":
+            second_attempted_lock.set()
+        return original_acquire(directory_fd, output_path)
+
+    def interleaved_replace(directory_fd, temporary_name, artifact_name):
+        original_replace(directory_fd, temporary_name, artifact_name)
+        if publisher.name == "first" and artifact_name == "corpus.jsonl":
+            first_installed_corpus.set()
+            assert allow_first_to_finish.wait(timeout=10)
+
+    def publish(name, source):
+        publisher.name = name
+        return export_symbolic_corpus(source, output, vocab, terms)
+
+    monkeypatch.setattr(corpus_module, "_acquire_output_lock", observed_acquire)
+    monkeypatch.setattr(corpus_module, "_atomic_replace", interleaved_replace)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            publish,
+            "first",
+            ROOT / "data/examples/installation.yaml",
+        )
+        assert first_installed_corpus.wait(timeout=10)
+        second = executor.submit(
+            publish,
+            "second",
+            ROOT / "data/examples/sequence.yaml",
+        )
+        assert second_attempted_lock.wait(timeout=10)
+        allow_first_to_finish.set()
+        first.result(timeout=10)
+        second_manifest = second.result(timeout=10)
+
+    corpus_bytes = (output / "corpus.jsonl").read_bytes()
+    manifest = json.loads((output / "manifest.json").read_text())
+    records = [json.loads(line) for line in corpus_bytes.splitlines()]
+    assert manifest == second_manifest
+    assert manifest["source_files"] == ["sequence.yaml"]
+    assert [record["source_path"] for record in records] == manifest["source_files"]
+    assert manifest["record_count"] == len(records)
+    assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+    assert not list(output.glob(".ste-compiler-*.bak"))
+
+
+@pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
+def test_corpus_export_rejects_linked_output_lock_without_following_target(
+    tmp_path, vocab, terms, link_type
+):
+    source = ROOT / "data/examples/installation.yaml"
+    output = tmp_path / "output"
+    output.mkdir()
+    unrelated = tmp_path / "unrelated.lock"
+    unrelated.write_bytes(b"unrelated lock bytes")
+    lock_path = output / corpus_module.OUTPUT_LOCK
+    if link_type == "symlink":
+        lock_path.symlink_to(unrelated)
+    else:
+        lock_path.hardlink_to(unrelated)
+
+    with pytest.raises(ValueError, match="output lock must be a regular single-link file"):
+        export_symbolic_corpus(source, output, vocab, terms)
+
+    assert unrelated.read_bytes() == b"unrelated lock bytes"
+    assert not (output / "corpus.jsonl").exists()
+    assert not (output / "manifest.json").exists()
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+    assert not list(output.glob(".ste-compiler-*.bak"))
 
 
 def test_corpus_export_rejects_symlinked_source_root(tmp_path, vocab, terms):
