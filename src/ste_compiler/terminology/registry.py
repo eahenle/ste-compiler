@@ -50,7 +50,7 @@ class Vocabulary:
         self.words = {
             word.casefold() for entry in data.entries for word in [entry.lemma, *entry.inflections]
         }
-        self.unit_forms = {unit.casefold(): unit for unit in data.units}
+        self.unit_forms = {unit: unit for unit in data.units}
         self.units = set(self.unit_forms)
 
     @classmethod

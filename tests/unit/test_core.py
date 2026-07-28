@@ -111,6 +111,26 @@ def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
     assert lexicalizer.lexicalize(symbols) == text
 
 
+def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    assert lexicalizer.symbolize("20 MPa.") == "NUMBER_20 UNIT_MPa PERIOD"
+    with pytest.raises(ValueError, match="unauthorized word"):
+        lexicalizer.symbolize("20 mPa.")
+    with pytest.raises(ValueError, match="unauthorized unit symbol"):
+        lexicalizer.lexicalize("NUMBER_20 UNIT_mPa PERIOD")
+    assert {
+        diagnostic.code for diagnostic in LexicalValidator(vocab, terms).validate("20 mPa.")
+    } == {"UNAUTHORIZED_WORD"}
+
+
+def test_symbolic_plan_supports_scientific_notation(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    symbols = lexicalizer.symbolize("1e-07 MPa.")
+    assert symbols == "NUMBER_1e-07 UNIT_MPa PERIOD"
+    assert lexicalizer.lexicalize(symbols) == "1e-07 MPa."
+    assert not LexicalValidator(vocab, terms).validate("1e-07 MPa.")
+
+
 def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     document = load_document(ROOT / "data/examples/negative.yaml")
     lexicalizer = SymbolicLexicalizer(vocab, terms)
@@ -156,6 +176,40 @@ def test_neural_realizer_aligns_decimal_quantities(vocab, terms):
         def generate_symbols(self, serialized_ir, allowed_symbols):
             del serialized_ir
             assert "NUMBER_20.5" in allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+    assert result.text == expected.text
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_aligns_scientific_notation_quantities(vocab, terms):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    instruction = document.sections[0].statements[0]
+    scientific_quantity = Quantity(value=1e-7, unit="MPa", comparator="more_than")
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={
+            "quantity_constraints": [
+                instruction.quantity_constraints[0].model_copy(
+                    update={"quantity": scientific_quantity}
+                )
+            ],
+            "hazards": [
+                instruction.hazards[0].model_copy(update={"threshold": scientific_quantity})
+            ],
+        }
+    )
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert "NUMBER_1e-07" in expected_plan.split()
+
+    class Generator:
+        model_id = "offline-scientific-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert "NUMBER_1e-07" in allowed_symbols
             return expected_plan
 
     result = NeuralRealizer(Generator()).realize(document, vocab, terms)

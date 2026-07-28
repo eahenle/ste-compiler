@@ -5,8 +5,9 @@ from urllib.parse import quote, unquote
 
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
-NUMBER_SYMBOL = re.compile(r"NUMBER_-?\d+(?:\.\d+)?")
-NUMBER_TEXT = re.compile(r"-?\d+(?:\.\d+)?")
+NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+NUMBER_SYMBOL = re.compile(rf"NUMBER_{NUMBER}")
+NUMBER_TEXT = re.compile(NUMBER)
 WORD_TEXT = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)?")
 PUNCTUATION = {
     "PERIOD": ".",
@@ -72,7 +73,7 @@ class SymbolicLexicalizer:
                     raise ValueError(f"unauthorized term symbol: {symbol}") from error
                 output += ("" if not output or output.endswith(("\n", " ")) else " ") + term
             elif symbol.startswith("UNIT_"):
-                unit = self.vocabulary.unit_forms.get(unquote(symbol[5:]).casefold())
+                unit = self.vocabulary.unit_forms.get(unquote(symbol[5:]))
                 if unit is None:
                     raise ValueError(f"unauthorized unit symbol: {symbol}")
                 output += ("" if not output or output.endswith(("\n", " ")) else " ") + unit
@@ -117,7 +118,7 @@ class SymbolicLexicalizer:
             matched_unit = None
             for unit_form in units:
                 end = position + len(unit_form)
-                if text[position:end].casefold() != unit_form.casefold():
+                if text[position:end] != unit_form:
                     continue
                 if end < len(text) and unit_form[-1].isalnum() and text[end].isalnum():
                     continue
@@ -144,7 +145,7 @@ class SymbolicLexicalizer:
             if word is None:
                 raise ValueError(f"cannot symbolize text at offset {position}: {text[position]!r}")
             token = word.group()
-            canonical_unit = self.vocabulary.unit_forms.get(token.casefold())
+            canonical_unit = self.vocabulary.unit_forms.get(token)
             if canonical_unit is not None:
                 symbols.append(_unit_symbol(canonical_unit))
             elif self.vocabulary.contains(token):
