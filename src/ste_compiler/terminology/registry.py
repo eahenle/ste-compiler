@@ -47,9 +47,11 @@ class TerminologyRegistry:
 class Vocabulary:
     def __init__(self, data: VocabularyData):
         self.data = data
-        self.words = {
-            word.casefold() for entry in data.entries for word in [entry.lemma, *entry.inflections]
-        }
+        self.word_forms: dict[str, str] = {}
+        for entry in data.entries:
+            for word in [entry.lemma, *entry.inflections]:
+                self.word_forms.setdefault(word.casefold(), word)
+        self.words = set(self.word_forms)
         self.unit_forms = {unit: unit for unit in data.units}
         self.units = set(self.unit_forms)
 
@@ -59,3 +61,6 @@ class Vocabulary:
 
     def contains(self, word: str) -> bool:
         return word.casefold() in self.words
+
+    def canonical_word(self, word: str) -> str | None:
+        return self.word_forms.get(word.casefold())

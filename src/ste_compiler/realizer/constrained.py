@@ -17,10 +17,31 @@ PUNCTUATION = {
     "EXCLAMATION": "!",
 }
 TEXT_PUNCTUATION = {value: key for key, value in PUNCTUATION.items()}
+PUNCTUATION_TEXT = re.compile(r"[^\w\s]")
+PUNCTUATION_SYMBOL = re.compile(r"PUNCT_U([0-9A-F]{4,6})")
+OPENING_PUNCTUATION = frozenset("([{")
+JOINING_PUNCTUATION = frozenset({"'", "-", "/", "\\", "–", "—", "’"})
 
 
 def _unit_symbol(unit: str) -> str:
     return f"UNIT_{quote(unit, safe='')}"
+
+
+def _punctuation_symbol(punctuation: str) -> str:
+    return f"PUNCT_U{ord(punctuation):04X}"
+
+
+def _punctuation_text(symbol: str) -> str | None:
+    if symbol in PUNCTUATION:
+        return PUNCTUATION[symbol]
+    match = PUNCTUATION_SYMBOL.fullmatch(symbol)
+    if match is None:
+        return None
+    try:
+        punctuation = chr(int(match.group(1), 16))
+    except (OverflowError, ValueError):
+        return None
+    return punctuation if PUNCTUATION_TEXT.fullmatch(punctuation) else None
 
 
 class SymbolicLexicalizer:
@@ -28,21 +49,6 @@ class SymbolicLexicalizer:
 
     def __init__(self, vocabulary: Vocabulary, terminology: TerminologyRegistry):
         self.vocabulary, self.terminology = vocabulary, terminology
-
-    @staticmethod
-    def _sentence_case(text: str) -> str:
-        output: list[str] = []
-        at_sentence_start = True
-        for character in text:
-            if at_sentence_start and character.isalpha():
-                character = character.upper()
-                at_sentence_start = False
-            elif not character.isspace():
-                at_sentence_start = False
-            output.append(character)
-            if character in ".!?":
-                at_sentence_start = True
-        return "".join(output)
 
     def lexicalize(
         self,
@@ -54,34 +60,59 @@ class SymbolicLexicalizer:
         """Copy approved forms from symbols, optionally enforcing a plan-specific allowlist."""
 
         output = ""
+        join_next = False
+        at_sentence_start = capitalize_sentences
         for symbol in symbols.split():
             if allowed_symbols is not None and symbol not in allowed_symbols:
                 raise ValueError(f"symbol is not allowed for this document: {symbol}")
             if symbol == "NEWLINE":
                 output = output.rstrip() + "\n"
-            elif symbol in PUNCTUATION:
-                output = output.rstrip() + PUNCTUATION[symbol]
-            elif symbol.startswith("WORD_"):
-                word = symbol[5:]
-                if not WORD_TEXT.fullmatch(word) or not self.vocabulary.contains(word):
+                join_next = False
+                continue
+
+            punctuation = _punctuation_text(symbol)
+            if punctuation is not None:
+                if punctuation in OPENING_PUNCTUATION:
+                    if output and not output.endswith(("\n", " ")) and not join_next:
+                        output += " "
+                    output += punctuation
+                    join_next = True
+                else:
+                    output = output.rstrip() + punctuation
+                    join_next = punctuation in JOINING_PUNCTUATION
+                if punctuation in ".!?":
+                    at_sentence_start = capitalize_sentences
+                elif at_sentence_start:
+                    at_sentence_start = False
+                continue
+
+            value: str
+            if symbol.startswith("WORD_"):
+                value = self.vocabulary.canonical_word(symbol[5:]) or ""
+                if not value or not WORD_TEXT.fullmatch(value):
                     raise ValueError(f"unauthorized word symbol: {symbol}")
-                output += ("" if not output or output.endswith(("\n", " ")) else " ") + word
             elif symbol.startswith("TERM_"):
                 try:
-                    term = self.terminology.get(symbol[5:]).canonical_form
+                    value = self.terminology.get(symbol[5:]).canonical_form
                 except (KeyError, ValueError) as error:
                     raise ValueError(f"unauthorized term symbol: {symbol}") from error
-                output += ("" if not output or output.endswith(("\n", " ")) else " ") + term
             elif symbol.startswith("UNIT_"):
-                unit = self.vocabulary.unit_forms.get(unquote(symbol[5:]))
-                if unit is None:
+                value = self.vocabulary.unit_forms.get(unquote(symbol[5:])) or ""
+                if not value:
                     raise ValueError(f"unauthorized unit symbol: {symbol}")
-                output += ("" if not output or output.endswith(("\n", " ")) else " ") + unit
             elif NUMBER_SYMBOL.fullmatch(symbol):
-                output += ("" if not output or output.endswith(("\n", " ")) else " ") + symbol[7:]
+                value = symbol[7:]
             else:
                 raise ValueError(f"invalid output symbol: {symbol}")
-        return self._sentence_case(output) if capitalize_sentences else output
+
+            if at_sentence_start:
+                value = value[:1].upper() + value[1:]
+            at_sentence_start = False
+            output += (
+                "" if not output or output.endswith(("\n", " ")) or join_next else " "
+            ) + value
+            join_next = False
+        return output
 
     def symbolize(self, text: str) -> str:
         """Create a lossless symbolic plan from already-controlled text."""
@@ -134,6 +165,10 @@ class SymbolicLexicalizer:
                 symbols.append(TEXT_PUNCTUATION[character])
                 position += 1
                 continue
+            if PUNCTUATION_TEXT.fullmatch(character):
+                symbols.append(_punctuation_symbol(character))
+                position += 1
+                continue
 
             number = NUMBER_TEXT.match(text, position)
             if number is not None:
@@ -148,8 +183,8 @@ class SymbolicLexicalizer:
             canonical_unit = self.vocabulary.unit_forms.get(token)
             if canonical_unit is not None:
                 symbols.append(_unit_symbol(canonical_unit))
-            elif self.vocabulary.contains(token):
-                symbols.append(f"WORD_{token.casefold()}")
+            elif canonical_word := self.vocabulary.canonical_word(token):
+                symbols.append(f"WORD_{canonical_word}")
             else:
                 raise ValueError(f"unauthorized word in controlled text: {token}")
             position = word.end()

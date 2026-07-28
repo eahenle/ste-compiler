@@ -2,12 +2,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from ste_compiler.frontend.llm import LLMFrontend
-from ste_compiler.ir.models import Document, EntityRef, Quantity
+from ste_compiler.ir.models import Document, EntityRef, Quantity, QuantityConstraint
 from ste_compiler.ir.serialization import (
     canonical_document_json,
     dumps_document,
@@ -16,7 +16,7 @@ from ste_compiler.ir.serialization import (
 )
 from ste_compiler.realizer import DeterministicRealizer, NeuralRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
-from ste_compiler.terminology import Vocabulary
+from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.validators.lexical import LexicalValidator
 from ste_compiler.validators.semantic import SemanticValidator
 from ste_compiler.validators.structural import StructuralValidator
@@ -71,6 +71,8 @@ def test_vocabulary_and_symbolic_lexicalizer(vocab, terms):
     )
     with pytest.raises(ValueError):
         lexicalizer.lexicalize("WORD_commence PERIOD")
+    with pytest.raises(ValueError, match="invalid output symbol"):
+        lexicalizer.lexicalize("PUNCT_UFFFFFF")
 
 
 @pytest.mark.parametrize(
@@ -109,6 +111,28 @@ def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
         "NUMBER_2 UNIT_degrees%20Celsius PERIOD"
     )
     assert lexicalizer.lexicalize(symbols) == text
+
+
+@given(punctuation=st.from_regex(r"[^\w\s]", fullmatch=True))
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_symbolic_plan_represents_every_accepted_punctuation(punctuation, vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    symbols = lexicalizer.symbolize(punctuation)
+    assert lexicalizer.lexicalize(symbols) == punctuation
+
+
+def test_symbolic_plan_round_trips_parentheses_semicolon_and_word_case(vocab, terms):
+    apu_entry = vocab.data.entries[0].model_copy(update={"lemma": "APU", "inflections": []})
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(update={"entries": [*vocab.data.entries, apu_entry]})
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
+    text = "APU (test); APU."
+
+    symbols = lexicalizer.symbolize(text)
+
+    assert symbols == ("WORD_APU PUNCT_U0028 WORD_test PUNCT_U0029 PUNCT_U003B WORD_APU PERIOD")
+    assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
 
 
 def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(vocab, terms):
@@ -214,6 +238,61 @@ def test_neural_realizer_aligns_scientific_notation_quantities(vocab, terms):
 
     result = NeuralRealizer(Generator()).realize(document, vocab, terms)
     assert result.text == expected.text
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_aligns_opaque_casing_and_internal_periods(vocab, terms):
+    apu_entry = vocab.data.entries[0].model_copy(update={"lemma": "APU", "inflections": []})
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(
+            update={
+                "entries": [*vocab.data.entries, apu_entry],
+                "units": [*vocab.data.units, "N.m"],
+            }
+        )
+    )
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "No. valve"})
+                    if term.id == "access_panel"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={
+            "quantity_constraints": [
+                QuantityConstraint(
+                    property="torque",
+                    quantity=Quantity(value=20, unit="N.m"),
+                )
+            ],
+            "manner": "(APU); APU",
+        }
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, custom_terms)
+    expected = DeterministicRealizer().realize(document, custom_vocab, custom_terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert expected.text == "Install the No. valve to 20 N.m (APU); APU."
+
+    class Generator:
+        model_id = "offline-opaque-symbol-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert {"WORD_APU", "UNIT_N.m", "TERM_access_panel"} <= allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, custom_vocab, custom_terms)
+
+    assert result.text == expected.text
+    assert result.mappings == expected.mappings
     assert not SemanticValidator().validate(document, result)
 
 

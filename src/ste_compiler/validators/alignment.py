@@ -45,6 +45,13 @@ def align_controlled_text(text: str, expected: RealizationResult) -> Realization
     validation can reject both changed and extra content.
     """
 
+    if text == expected.text:
+        return RealizationResult(
+            text=text,
+            mappings=expected.mappings,
+            metadata={**expected.metadata, "alignment": "deterministic-surface-v1"},
+        )
+
     mappings: list[SentenceMapping] = []
     for index, sentence in enumerate(_sentences(text)):
         expected_mapping = expected.mappings[index] if index < len(expected.mappings) else None
