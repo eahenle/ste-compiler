@@ -35,7 +35,10 @@ def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
 
     source_root = source.resolve()
     output_root = output.resolve()
-    output_is_within_source = output_root.is_relative_to(source_root)
+    output_is_nested_in_source = output_root != source_root and output_root.is_relative_to(
+        source_root
+    )
+    artifact_locations = {output_root / artifact_name for artifact_name in OUTPUT_ARTIFACTS}
     candidates = sorted(
         (path for path in source.rglob("*") if path.suffix.casefold() in IR_SUFFIXES),
         key=lambda path: path.relative_to(source).as_posix(),
@@ -43,13 +46,16 @@ def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
     paths: list[Path] = []
     for path in candidates:
         source_path = path.relative_to(source).as_posix()
+        path_location = path.parent.resolve() / path.name
+        if path_location in artifact_locations or (
+            output_is_nested_in_source and path_location.is_relative_to(output_root)
+        ):
+            continue
         if path.is_symlink():
             raise ValueError(f"symbolic corpus source contains a symlinked IR file: {source_path}")
         if not path.is_file():
             continue
         resolved_path = path.resolve()
-        if output_is_within_source and resolved_path.is_relative_to(output_root):
-            continue
         if not resolved_path.is_relative_to(source_root):
             raise ValueError(f"IR file resolves outside the corpus source: {source_path}")
         paths.append(path)
@@ -68,14 +74,17 @@ def _paths_alias(first: Path, second: Path) -> bool:
     return first.exists() and second.exists() and first.samefile(second)
 
 
-def _reject_output_source_aliases(paths: list[Path], output: Path) -> None:
-    for artifact_name in OUTPUT_ARTIFACTS:
-        artifact = output / artifact_name
+def _reject_output_aliases(paths: list[Path], output: Path) -> None:
+    artifacts = [output / artifact_name for artifact_name in OUTPUT_ARTIFACTS]
+    for artifact in artifacts:
         for source in paths:
             if _paths_alias(artifact, source):
                 raise ValueError(
                     f"symbolic corpus output artifact {artifact} aliases source IR file {source}"
                 )
+    first, second = artifacts
+    if _paths_alias(first, second):
+        raise ValueError(f"symbolic corpus output artifacts {first} and {second} alias each other")
 
 
 def export_symbolic_corpus(
@@ -85,7 +94,7 @@ def export_symbolic_corpus(
     terminology: TerminologyRegistry,
 ) -> CorpusManifest:
     root, paths = _input_paths(source, output)
-    _reject_output_source_aliases(paths, output)
+    _reject_output_aliases(paths, output)
     records: list[TrainingRecord] = []
     document_sources: dict[str, str] = {}
     for path in paths:
