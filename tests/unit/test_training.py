@@ -58,17 +58,15 @@ def test_corpus_output_nested_inside_source_is_not_reingested(tmp_path, vocab, t
     assert first["record_count"] == 1
 
 
-def test_corpus_output_equal_to_source_processes_inputs_and_replaces_artifacts(
-    tmp_path, vocab, terms
-):
+def test_corpus_output_equal_to_source_reuses_verified_generated_artifacts(tmp_path, vocab, terms):
     source = tmp_path / "source"
     source.mkdir()
     document = load_document(ROOT / "data/examples/installation.yaml")
     (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
-    (source / "manifest.json").write_text('{"stale":true}\n', encoding="utf-8")
-    (source / "corpus.jsonl").write_text('{"stale":true}\n', encoding="utf-8")
 
     first = export_symbolic_corpus(source, source, vocab, terms)
+    first_manifest_bytes = (source / "manifest.json").read_bytes()
+    first_corpus_bytes = (source / "corpus.jsonl").read_bytes()
     second = export_symbolic_corpus(source, source, vocab, terms)
 
     assert first == second
@@ -77,6 +75,77 @@ def test_corpus_output_equal_to_source_processes_inputs_and_replaces_artifacts(
     assert json.loads((source / "manifest.json").read_text()) == first
     records = [json.loads(line) for line in (source / "corpus.jsonl").read_text().splitlines()]
     assert [record["source_path"] for record in records] == ["installation.yaml"]
+    assert (source / "manifest.json").read_bytes() == first_manifest_bytes
+    assert (source / "corpus.jsonl").read_bytes() == first_corpus_bytes
+
+
+def test_in_place_corpus_rejects_valid_ir_named_manifest_without_writes(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    source.mkdir()
+    manifest_document = load_document(ROOT / "data/examples/installation.yaml")
+    manifest_path = source / "manifest.json"
+    manifest_path.write_text(
+        dumps_document(manifest_document, as_json=True),
+        encoding="utf-8",
+    )
+    other_document = load_document(ROOT / "data/examples/sequence.yaml")
+    other_path = source / "other.yaml"
+    other_path.write_text(dumps_document(other_document), encoding="utf-8")
+    corpus_path = source / "corpus.jsonl"
+    corpus_path.write_bytes(b"existing corpus bytes")
+    before = {path.name: path.read_bytes() for path in (manifest_path, other_path, corpus_path)}
+
+    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
+        export_symbolic_corpus(source, source, vocab, terms)
+
+    assert {
+        path.name: path.read_bytes() for path in (manifest_path, other_path, corpus_path)
+    } == before
+
+
+@pytest.mark.parametrize(
+    "spoof",
+    ["invalid-json", "extra-field", "wrong-hash", "wrong-profile", "wrong-sources"],
+)
+def test_in_place_corpus_rejects_spoofed_generated_manifest_without_writes(
+    tmp_path, vocab, terms, spoof
+):
+    baseline = tmp_path / "baseline"
+    export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        baseline,
+        vocab,
+        terms,
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/sequence.yaml")
+    input_path = source / "input.yaml"
+    input_path.write_text(dumps_document(document), encoding="utf-8")
+    corpus_path = source / "corpus.jsonl"
+    corpus_path.write_bytes((baseline / "corpus.jsonl").read_bytes())
+    manifest_path = source / "manifest.json"
+    manifest = json.loads((baseline / "manifest.json").read_text())
+    if spoof == "invalid-json":
+        manifest_path.write_bytes(b"{invalid JSON")
+    else:
+        if spoof == "extra-field":
+            manifest["unexpected"] = True
+        elif spoof == "wrong-hash":
+            manifest["corpus_sha256"] = "0" * 64
+        elif spoof == "wrong-profile":
+            manifest["profiles"][0]["unexpected"] = "value"
+        else:
+            manifest["source_files"] = ["different.yaml"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    before = {path.name: path.read_bytes() for path in (manifest_path, input_path, corpus_path)}
+
+    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
+        export_symbolic_corpus(source, source, vocab, terms)
+
+    assert {
+        path.name: path.read_bytes() for path in (manifest_path, input_path, corpus_path)
+    } == before
 
 
 @pytest.mark.parametrize("placement", ["ancestor", "sibling"])

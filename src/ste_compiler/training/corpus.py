@@ -13,6 +13,31 @@ from .records import TrainingRecord, build_training_record
 CORPUS_SCHEMA_VERSION = "symbolic-corpus-v1"
 IR_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
 OUTPUT_ARTIFACTS = ("corpus.jsonl", "manifest.json")
+MANIFEST_KEYS = frozenset(
+    {"schema_version", "record_count", "corpus_sha256", "source_files", "profiles"}
+)
+PROFILE_KEYS = frozenset(
+    {
+        "frontend",
+        "frontend_version",
+        "realizer",
+        "realizer_version",
+        "vocabulary_version",
+        "terminology_version",
+        "validator_profile",
+    }
+)
+CORPUS_RECORD_KEYS = frozenset(
+    {
+        "document_id",
+        "serialized_ir",
+        "symbols",
+        "allowed_symbols",
+        "text",
+        "metadata",
+        "source_path",
+    }
+)
 
 
 class CorpusManifest(TypedDict):
@@ -21,6 +46,88 @@ class CorpusManifest(TypedDict):
     corpus_sha256: str
     source_files: list[str]
     profiles: list[dict[str, str]]
+
+
+def _string_mapping(value: object, keys: frozenset[str]) -> dict[str, str] | None:
+    if not isinstance(value, dict) or set(value) != keys:
+        return None
+    if not all(isinstance(key, str) and isinstance(item, str) for key, item in value.items()):
+        return None
+    return {key: item for key, item in value.items()}
+
+
+def _is_prior_generated_manifest(manifest_path: Path, corpus_path: Path) -> bool:
+    if (
+        not manifest_path.is_file()
+        or manifest_path.is_symlink()
+        or manifest_path.stat().st_nlink != 1
+        or not corpus_path.is_file()
+        or corpus_path.is_symlink()
+        or corpus_path.stat().st_nlink != 1
+    ):
+        return False
+    try:
+        manifest: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+        corpus_bytes = corpus_path.read_bytes()
+        records: list[object] = [json.loads(line) for line in corpus_bytes.splitlines()]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(manifest, dict) or set(manifest) != MANIFEST_KEYS:
+        return False
+
+    schema_version = manifest["schema_version"]
+    record_count = manifest["record_count"]
+    corpus_sha256 = manifest["corpus_sha256"]
+    source_files = manifest["source_files"]
+    profiles = manifest["profiles"]
+    if (
+        schema_version != CORPUS_SCHEMA_VERSION
+        or type(record_count) is not int
+        or record_count < 1
+        or not isinstance(corpus_sha256, str)
+        or len(corpus_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in corpus_sha256)
+        or not isinstance(source_files, list)
+        or not all(isinstance(source_path, str) for source_path in source_files)
+        or not isinstance(profiles, list)
+    ):
+        return False
+    normalized_profiles: list[dict[str, str]] = []
+    for profile in profiles:
+        normalized = _string_mapping(profile, PROFILE_KEYS)
+        if normalized is None:
+            return False
+        normalized_profiles.append(normalized)
+
+    record_sources: list[str] = []
+    record_profiles: dict[str, dict[str, str]] = {}
+    for record in records:
+        if not isinstance(record, dict) or set(record) != CORPUS_RECORD_KEYS:
+            return False
+        string_fields = ("document_id", "serialized_ir", "symbols", "text", "source_path")
+        if not all(isinstance(record[field], str) for field in string_fields):
+            return False
+        allowed_symbols = record["allowed_symbols"]
+        if not isinstance(allowed_symbols, list) or not all(
+            isinstance(symbol, str) for symbol in allowed_symbols
+        ):
+            return False
+        metadata = _string_mapping(record["metadata"], PROFILE_KEYS)
+        if metadata is None:
+            return False
+        record_sources.append(record["source_path"])
+        metadata_json = json.dumps(
+            metadata, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        record_profiles[metadata_json] = metadata
+
+    expected_profiles = [record_profiles[key] for key in sorted(record_profiles)]
+    return (
+        record_count == len(records)
+        and source_files == record_sources
+        and normalized_profiles == expected_profiles
+        and corpus_sha256 == hashlib.sha256(corpus_bytes).hexdigest()
+    )
 
 
 def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
@@ -47,10 +154,16 @@ def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
         for path in sorted(directory.iterdir(), key=lambda child: child.name):
             source_path = path.relative_to(source).as_posix()
             path_location = path.parent.resolve() / path.name
-            if path_location in artifact_locations or (
-                output_is_nested_in_source and path_location.is_relative_to(output_root)
-            ):
+            if output_is_nested_in_source and path_location.is_relative_to(output_root):
                 continue
+            if path_location in artifact_locations:
+                prior_manifest = (
+                    output_root == source_root
+                    and path.name == "manifest.json"
+                    and _is_prior_generated_manifest(path, output_root / "corpus.jsonl")
+                )
+                if path.name != "manifest.json" or prior_manifest:
+                    continue
             if path.is_symlink():
                 if not path.exists() or path.is_dir():
                     raise ValueError(

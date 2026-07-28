@@ -126,6 +126,30 @@ def test_cli_rejects_mismatched_corpus_profile(tmp_path):
     assert not output.exists()
 
 
+def test_cli_corpus_export_rejects_unknown_term_without_traceback_or_artifacts(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"][0]["object"] = {"term_id": "unknown_term"}
+    document = type(document).model_validate(raw)
+    (source / "unknown-term.json").write_text(
+        dumps_document(document, as_json=True),
+        encoding="utf-8",
+    )
+    output = tmp_path / "training"
+
+    result = runner.invoke(
+        app,
+        ["export-symbolic-corpus", str(source), "--output", str(output)],
+    )
+
+    assert result.exit_code == 1
+    assert "unknown_term" in result.stderr
+    assert "Traceback" not in result.output
+    assert not output.exists()
+
+
 def test_cli_training_plan_preserves_negative_quantity_symbol(tmp_path):
     document = load_document(ROOT / "data/examples/warning_pressure.yaml")
     instruction = document.sections[0].statements[0]

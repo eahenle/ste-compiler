@@ -24,6 +24,7 @@ app.add_typer(glossary_app, name="glossary")
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_DATA = Path(__file__).with_name("data")
 DATA_ROOT = PACKAGE_DATA if PACKAGE_DATA.is_dir() else ROOT / "data"
+CONTROLLED_INPUT_ERRORS = (KeyError, ValidationError, ValueError)
 
 
 def resources(
@@ -83,7 +84,7 @@ def plan_symbols(
     except TrainingRecordValidationError as error:
         emit_report(error.report, json_output)
         raise typer.Exit(1) from error
-    except (KeyError, ValidationError, ValueError) as error:
+    except CONTROLLED_INPUT_ERRORS as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     if json_output:
@@ -102,7 +103,7 @@ def export_corpus(
     vocab, terms = resources()
     try:
         manifest = export_symbolic_corpus(source, output, vocab, terms)
-    except (ValidationError, ValueError) as error:
+    except CONTROLLED_INPUT_ERRORS as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     typer.echo(
