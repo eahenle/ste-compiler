@@ -107,7 +107,8 @@ def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
     text = "20 % 5 °C 3 m/s 2 degrees Celsius."
     symbols = lexicalizer.symbolize(text)
     assert symbols == (
-        "NUMBER_20 SPACE UNIT_%25 SPACE NUMBER_5 SPACE UNIT_%C2%B0C SPACE "
+        "PLAN_EXACT_WHITESPACE_V1 NUMBER_20 SPACE UNIT_%25 SPACE NUMBER_5 "
+        "SPACE UNIT_%C2%B0C SPACE "
         "NUMBER_3 SPACE UNIT_m%2Fs SPACE NUMBER_2 SPACE UNIT_degrees%20Celsius PERIOD"
     )
     assert lexicalizer.lexicalize(symbols) == text
@@ -132,7 +133,8 @@ def test_symbolic_plan_round_trips_parentheses_semicolon_and_word_case(vocab, te
     symbols = lexicalizer.symbolize(text)
 
     assert symbols == (
-        "WORD_APU SPACE PUNCT_U0028 WORD_test PUNCT_U0029 PUNCT_U003B SPACE WORD_APU PERIOD"
+        "PLAN_EXACT_WHITESPACE_V1 WORD_APU SPACE PUNCT_U0028 WORD_test "
+        "PUNCT_U0029 PUNCT_U003B SPACE WORD_APU PERIOD"
     )
     assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
 
@@ -142,15 +144,19 @@ def test_symbolic_plan_round_trips_parentheses_semicolon_and_word_case(vocab, te
     [
         (
             "safe — slowly",
-            "WORD_safe SPACE PUNCT_U2014 SPACE WORD_slowly",
+            "PLAN_EXACT_WHITESPACE_V1 WORD_safe SPACE PUNCT_U2014 SPACE WORD_slowly",
         ),
         (
             "safe ; slowly",
-            "WORD_safe SPACE PUNCT_U003B SPACE WORD_slowly",
+            "PLAN_EXACT_WHITESPACE_V1 WORD_safe SPACE PUNCT_U003B SPACE WORD_slowly",
+        ),
+        (
+            "safe;slowly",
+            "PLAN_EXACT_WHITESPACE_V1 WORD_safe PUNCT_U003B WORD_slowly",
         ),
         (
             "safe\t;\tslowly",
-            "WORD_safe WS_U0009 PUNCT_U003B WS_U0009 WORD_slowly",
+            "PLAN_EXACT_WHITESPACE_V1 WORD_safe WS_U0009 PUNCT_U003B WS_U0009 WORD_slowly",
         ),
     ],
 )
@@ -161,6 +167,37 @@ def test_symbolic_plan_preserves_explicit_whitespace(text, expected_symbols, voc
 
     assert symbols == expected_symbols
     assert lexicalizer.lexicalize(symbols, allowed_symbols=frozenset(symbols.split())) == text
+
+
+def test_markerless_symbolic_plans_retain_legacy_implicit_spacing(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+
+    assert lexicalizer.lexicalize("WORD_safe PUNCT_U003B WORD_slowly") == "safe; slowly"
+
+
+def test_symbolic_plan_escapes_terminology_ids(vocab, terms):
+    encoded_id = "access panel/v1"
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"id": encoded_id})
+                    if term.id == "access_panel"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    lexicalizer = SymbolicLexicalizer(vocab, custom_terms)
+
+    symbols = lexicalizer.symbolize("access panel")
+
+    assert symbols == "PLAN_EXACT_WHITESPACE_V1 TERM_access%20panel%2Fv1"
+    assert (
+        lexicalizer.lexicalize(symbols, allowed_symbols=frozenset(symbols.split()))
+        == "access panel"
+    )
 
 
 @pytest.mark.parametrize(
@@ -185,7 +222,10 @@ def test_quote_spacing_does_not_break_apostrophe_joining(vocab, terms):
 
 def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
-    assert lexicalizer.symbolize("20 MPa.") == "NUMBER_20 SPACE UNIT_MPa PERIOD"
+    assert (
+        lexicalizer.symbolize("20 MPa.")
+        == "PLAN_EXACT_WHITESPACE_V1 NUMBER_20 SPACE UNIT_MPa PERIOD"
+    )
     with pytest.raises(ValueError, match="unauthorized word"):
         lexicalizer.symbolize("20 mPa.")
     with pytest.raises(ValueError, match="unauthorized unit symbol"):
@@ -198,7 +238,7 @@ def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(voc
 def test_symbolic_plan_supports_scientific_notation(vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
     symbols = lexicalizer.symbolize("1e-07 MPa.")
-    assert symbols == "NUMBER_1e-07 SPACE UNIT_MPa PERIOD"
+    assert symbols == "PLAN_EXACT_WHITESPACE_V1 NUMBER_1e-07 SPACE UNIT_MPa PERIOD"
     assert lexicalizer.lexicalize(symbols) == "1e-07 MPa."
     assert not LexicalValidator(vocab, terms).validate("1e-07 MPa.")
 
@@ -206,8 +246,14 @@ def test_symbolic_plan_supports_scientific_notation(vocab, terms):
 @pytest.mark.parametrize(
     ("text", "expected_symbol"),
     [
-        ("-20 MPa.", "NUMBER_-20 SPACE UNIT_MPa PERIOD"),
-        ("-1e-07 MPa.", "NUMBER_-1e-07 SPACE UNIT_MPa PERIOD"),
+        (
+            "-20 MPa.",
+            "PLAN_EXACT_WHITESPACE_V1 NUMBER_-20 SPACE UNIT_MPa PERIOD",
+        ),
+        (
+            "-1e-07 MPa.",
+            "PLAN_EXACT_WHITESPACE_V1 NUMBER_-1e-07 SPACE UNIT_MPa PERIOD",
+        ),
     ],
 )
 def test_symbolic_plan_parses_signed_numbers_before_punctuation(
@@ -436,6 +482,52 @@ def test_neural_realizer_aligns_spaced_punctuation(vocab, terms):
             return expected_plan
 
     result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+    assert result.text == expected.text
+    assert result.mappings == expected.mappings
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_aligns_adjacency_and_escaped_term_id(vocab, terms):
+    encoded_id = "access panel/v1"
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"id": encoded_id})
+                    if term.id == "access_panel"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={
+            "object": instruction.object.model_copy(update={"term_id": encoded_id}),
+            "manner": "safe;slowly",
+        }
+    )
+    lexicalizer = SymbolicLexicalizer(vocab, custom_terms)
+    expected = DeterministicRealizer().realize(document, vocab, custom_terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert expected.text == "Install the access panel safe;slowly."
+
+    class Generator:
+        model_id = "offline-exact-plan-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert {
+                "PLAN_EXACT_WHITESPACE_V1",
+                "TERM_access%20panel%2Fv1",
+                "PUNCT_U003B",
+            } <= allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, custom_terms)
 
     assert result.text == expected.text
     assert result.mappings == expected.mappings

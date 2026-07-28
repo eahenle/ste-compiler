@@ -22,10 +22,15 @@ PUNCTUATION_SYMBOL = re.compile(r"PUNCT_U([0-9A-F]{4,6})")
 WHITESPACE_SYMBOL = re.compile(r"WS_U([0-9A-F]{4,6})")
 OPENING_PUNCTUATION = frozenset("([{“‘")
 JOINING_PUNCTUATION = frozenset({"'", "-", "/", "\\", "–", "—", "’"})
+EXACT_PLAN_SYMBOL = "PLAN_EXACT_WHITESPACE_V1"
 
 
 def _unit_symbol(unit: str) -> str:
     return f"UNIT_{quote(unit, safe='')}"
+
+
+def _term_symbol(term_id: str) -> str:
+    return f"TERM_{quote(term_id, safe='')}"
 
 
 def _punctuation_symbol(punctuation: str) -> str:
@@ -83,11 +88,19 @@ class SymbolicLexicalizer:
         at_sentence_start = capitalize_sentences
         ascii_double_quote_open = False
         curly_single_quote_open = False
-        for symbol in symbols.split():
+        plan_symbols = symbols.split()
+        exact_whitespace = bool(plan_symbols and plan_symbols[0] == EXACT_PLAN_SYMBOL)
+        for index, symbol in enumerate(plan_symbols):
             if allowed_symbols is not None and symbol not in allowed_symbols:
                 raise ValueError(f"symbol is not allowed for this document: {symbol}")
+            if symbol == EXACT_PLAN_SYMBOL:
+                if index != 0:
+                    raise ValueError(f"invalid output symbol: {symbol}")
+                continue
             if symbol == "NEWLINE":
-                output = (output if explicit_whitespace else output.rstrip()) + "\n"
+                output = (
+                    output if exact_whitespace or explicit_whitespace else output.rstrip()
+                ) + "\n"
                 join_next = False
                 explicit_whitespace = False
                 continue
@@ -101,6 +114,14 @@ class SymbolicLexicalizer:
 
             punctuation = _punctuation_text(symbol)
             if punctuation is not None:
+                if exact_whitespace:
+                    output += punctuation
+                    if punctuation in ".!?":
+                        at_sentence_start = capitalize_sentences
+                    elif at_sentence_start:
+                        at_sentence_start = False
+                    continue
+
                 opening_quote = False
                 closing_quote = False
                 if punctuation == '"':
@@ -140,7 +161,7 @@ class SymbolicLexicalizer:
                     raise ValueError(f"unauthorized word symbol: {symbol}")
             elif symbol.startswith("TERM_"):
                 try:
-                    value = self.terminology.get(symbol[5:]).canonical_form
+                    value = self.terminology.get(unquote(symbol[5:])).canonical_form
                 except (KeyError, ValueError) as error:
                     raise ValueError(f"unauthorized term symbol: {symbol}") from error
             elif symbol.startswith("UNIT_"):
@@ -155,7 +176,9 @@ class SymbolicLexicalizer:
             if at_sentence_start:
                 value = value[:1].upper() + value[1:]
             at_sentence_start = False
-            output += ("" if not output or output[-1].isspace() or join_next else " ") + value
+            output += (
+                "" if exact_whitespace or not output or output[-1].isspace() or join_next else " "
+            ) + value
             join_next = False
             explicit_whitespace = False
         return output
@@ -163,7 +186,7 @@ class SymbolicLexicalizer:
     def symbolize(self, text: str) -> str:
         """Create a lossless symbolic plan from already-controlled text."""
 
-        symbols: list[str] = []
+        symbols = [EXACT_PLAN_SYMBOL]
         position = 0
         terms = sorted(
             self.terminology.approved_terms,
@@ -190,7 +213,7 @@ class SymbolicLexicalizer:
                 matched_term = term
                 break
             if matched_term is not None:
-                symbols.append(f"TERM_{matched_term.id}")
+                symbols.append(_term_symbol(matched_term.id))
                 position += len(matched_term.canonical_form)
                 continue
 
