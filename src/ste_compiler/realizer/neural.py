@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Protocol
 
 from ste_compiler.ir.models import Document
@@ -10,7 +11,10 @@ from ste_compiler.realizer.base import (
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.realizer.deterministic import DeterministicRealizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
-from ste_compiler.validators.alignment import align_controlled_text
+from ste_compiler.validators.alignment import (
+    align_controlled_text,
+    has_exact_whitespace_layout,
+)
 
 
 class SymbolGenerator(Protocol):
@@ -54,7 +58,11 @@ class NeuralRealizer:
             allowed_symbols=allowed_symbols,
             capitalize_sentences=True,
         )
-        aligned = align_controlled_text(text, deterministic)
+        whitespace_layout_preserved = has_exact_whitespace_layout(text, deterministic.text)
+        alignment_reference = (
+            deterministic if whitespace_layout_preserved else replace(deterministic, mappings=())
+        )
+        aligned = align_controlled_text(text, alignment_reference)
         return RealizationResult(
             text=aligned.text,
             mappings=aligned.mappings,
@@ -64,5 +72,7 @@ class NeuralRealizer:
                 "realizer_version": self.version,
                 "model_id": self.generator.model_id,
                 "symbol_profile": "plan-specific-v1",
+                "whitespace_alignment": "exact-layout-v1",
+                "whitespace_layout_preserved": str(whitespace_layout_preserved).lower(),
             },
         )

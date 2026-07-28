@@ -1,6 +1,22 @@
 from ste_compiler.realizer.base import RealizationResult, SentenceMapping
 
 
+def has_exact_whitespace_layout(text: str, expected: str) -> bool:
+    """Compare whitespace values and positions relative to non-whitespace characters."""
+
+    def layout(value: str) -> tuple[tuple[int, str], ...]:
+        non_whitespace = 0
+        positions: list[tuple[int, str]] = []
+        for character in value:
+            if character.isspace():
+                positions.append((non_whitespace, character))
+            else:
+                non_whitespace += 1
+        return tuple(positions)
+
+    return layout(text) == layout(expected)
+
+
 def _sentences(text: str) -> list[str]:
     sentences: list[str] = []
     start = 0

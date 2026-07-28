@@ -17,6 +17,7 @@ from ste_compiler.ir.serialization import (
 from ste_compiler.realizer import DeterministicRealizer, NeuralRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+from ste_compiler.validators.alignment import align_controlled_text
 from ste_compiler.validators.lexical import LexicalValidator
 from ste_compiler.validators.semantic import SemanticValidator
 from ste_compiler.validators.structural import StructuralValidator
@@ -283,7 +284,75 @@ def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     assert result.text == expected.text
     assert result.metadata["model_id"] == "offline-test-generator"
     assert result.metadata["alignment"] == "deterministic-surface-v1"
+    assert result.metadata["whitespace_alignment"] == "exact-layout-v1"
+    assert result.metadata["whitespace_layout_preserved"] == "true"
     assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_rejects_moved_and_retyped_newline_layout(vocab, terms):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    generated_symbols = lexicalizer.symbolize(expected.text).split()
+    original_newline = generated_symbols.index("NEWLINE")
+    moved_newline = generated_symbols.index("WORD_injury") + 1
+    assert generated_symbols[moved_newline] == "SPACE"
+    generated_symbols[moved_newline] = "NEWLINE"
+    generated_symbols[original_newline] = "SPACE"
+    generated_plan = " ".join(generated_symbols)
+
+    class Generator:
+        model_id = "offline-moved-newline-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert {"SPACE", "NEWLINE"} <= allowed_symbols
+            assert set(generated_symbols) <= allowed_symbols
+            return generated_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+    assert result.text != expected.text
+    assert all(
+        mapping.ir_node_ids for mapping in align_controlled_text(result.text, expected).mappings
+    )
+    assert result.metadata["whitespace_layout_preserved"] == "false"
+    assert all(not mapping.ir_node_ids for mapping in result.mappings)
+    assert {diagnostic.code for diagnostic in SemanticValidator().validate(document, result)} == {
+        "REQUIRED_NODE_OMITTED",
+        "UNSUPPORTED_SEMANTIC_CHANGE",
+    }
+
+
+def test_neural_realizer_rejects_repeated_space_hidden_by_normalization(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    generated_symbols = lexicalizer.symbolize(expected.text).split()
+    first_space = generated_symbols.index("SPACE")
+    generated_symbols.insert(first_space, "SPACE")
+    generated_plan = " ".join(generated_symbols)
+
+    class Generator:
+        model_id = "offline-repeated-space-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert set(generated_symbols) <= allowed_symbols
+            return generated_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+    assert result.text == expected.text.replace(" ", "  ", 1)
+    assert all(
+        mapping.ir_node_ids for mapping in align_controlled_text(result.text, expected).mappings
+    )
+    assert result.metadata["whitespace_layout_preserved"] == "false"
+    assert all(not mapping.ir_node_ids for mapping in result.mappings)
+    assert {diagnostic.code for diagnostic in SemanticValidator().validate(document, result)} == {
+        "REQUIRED_NODE_OMITTED",
+        "UNSUPPORTED_SEMANTIC_CHANGE",
+    }
 
 
 def test_neural_realizer_aligns_decimal_quantities(vocab, terms):
