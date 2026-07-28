@@ -197,6 +197,7 @@ def test_encoder_decoder_overrides_inherited_generation_strategy():
         min_new_tokens=128,
         max_time=0.001,
         stop_strings=["stop"],
+        token_healing=True,
         watermarking_config=object(),
         guidance_scale=2.0,
     )
@@ -246,6 +247,7 @@ def test_encoder_decoder_overrides_inherited_generation_strategy():
             "min_new_tokens",
             "max_time",
             "stop_strings",
+            "token_healing",
             "watermarking_config",
             "guidance_scale",
         )
@@ -283,6 +285,7 @@ def test_encoder_decoder_overrides_inherited_generation_strategy():
         "min_new_tokens": 0,
         "max_time": None,
         "stop_strings": None,
+        "token_healing": False,
         "watermarking_config": None,
         "guidance_scale": None,
     }

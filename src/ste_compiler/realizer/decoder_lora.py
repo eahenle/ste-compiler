@@ -463,6 +463,7 @@ class DecoderOnlyLoRASymbolGenerator:
             encoder_no_repeat_ngram_size=0,
             max_time=None,
             stop_strings=None,
+            token_healing=False,
             max_new_tokens=self.config.max_new_tokens,
             pad_token_id=grammar.eos_token_id if pad_token_id is None else pad_token_id,
             eos_token_id=grammar.eos_token_id,

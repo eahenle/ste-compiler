@@ -334,6 +334,7 @@ class TransformersEncoderDecoderSymbolGenerator:
             "min_new_tokens": 0,
             "max_time": None,
             "stop_strings": None,
+            "token_healing": False,
             "watermarking_config": None,
             "guidance_scale": None,
             "prefix_allowed_tokens_fn": constraint,

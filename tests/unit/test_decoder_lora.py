@@ -270,6 +270,7 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         encoder_no_repeat_ngram_size=4,
         max_time=0.001,
         stop_strings=["WORD_open"],
+        token_healing=True,
     )
     generator = DecoderOnlyLoRASymbolGenerator(
         _config(),
@@ -309,6 +310,7 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
             "encoder_no_repeat_ngram_size",
             "max_time",
             "stop_strings",
+            "token_healing",
         )
     } == {
         "do_sample": False,
@@ -333,6 +335,7 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         "encoder_no_repeat_ngram_size": 0,
         "max_time": None,
         "stop_strings": None,
+        "token_healing": False,
     }
 
 
