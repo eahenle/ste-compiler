@@ -4,6 +4,11 @@ from .base import RealizationResult
 from .deterministic import DeterministicRealizer
 
 if TYPE_CHECKING:
+    from .decoder_lora import (
+        DecoderOnlyLoRAConfig,
+        DecoderOnlyLoRAError,
+        DecoderOnlyLoRASymbolGenerator,
+    )
     from .encoder_decoder import (
         EncoderDecoderConfig,
         EncoderDecoderError,
@@ -14,6 +19,9 @@ if TYPE_CHECKING:
     from .neural import NeuralRealizer, SymbolGenerator
 
 __all__ = [
+    "DecoderOnlyLoRAConfig",
+    "DecoderOnlyLoRAError",
+    "DecoderOnlyLoRASymbolGenerator",
     "DeterministicRealizer",
     "EncoderDecoderConfig",
     "EncoderDecoderError",
@@ -27,6 +35,14 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
+    if name in {
+        "DecoderOnlyLoRAConfig",
+        "DecoderOnlyLoRAError",
+        "DecoderOnlyLoRASymbolGenerator",
+    }:
+        from . import decoder_lora
+
+        return getattr(decoder_lora, name)
     if name in {
         "EncoderDecoderConfig",
         "EncoderDecoderError",

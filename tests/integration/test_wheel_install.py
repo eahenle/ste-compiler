@@ -75,6 +75,26 @@ assert result.exit_code == 0, result.output
         text=True,
     )
     command = [sys.executable, "-m", "ste_compiler.cli"]
+    public_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from ste_compiler.realizer import "
+                "DecoderOnlyLoRAConfig, DecoderOnlyLoRAError, "
+                "DecoderOnlyLoRASymbolGenerator; "
+                "assert DecoderOnlyLoRAConfig and DecoderOnlyLoRAError "
+                "and DecoderOnlyLoRASymbolGenerator"
+            ),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert not public_import.stderr
+
     realized = subprocess.run(
         [*command, "realize", str(ROOT / "data/examples/negative.yaml")],
         cwd=tmp_path,

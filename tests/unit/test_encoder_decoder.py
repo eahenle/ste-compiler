@@ -251,7 +251,54 @@ def test_adapter_rejects_output_when_model_ignores_constraint():
         EncoderDecoderConfig(model_id="test/model", revision=MODEL_REVISION),
         component_loader=lambda config: (tokenizer, IgnoringModel()),
     )
-    with pytest.raises(InvalidSymbolGeneration, match="outside the document allowlist"):
+    with pytest.raises(InvalidSymbolGeneration, match="outside the symbolic grammar"):
+        generator.generate_symbols("{}", frozenset({"WORD_do", "PERIOD"}))
+
+
+@pytest.mark.parametrize("special_token_id", [0, 2], ids=["PAD", "BOS"])
+def test_adapter_rejects_special_tokens_before_eos_even_when_decode_hides_them(
+    special_token_id,
+):
+    plan = "WORD_do PERIOD"
+
+    class SpecialTokenHidingTokenizer(CharacterTokenizer):
+        bos_token_id = 2
+
+        def decode(self, token_ids, **kwargs):
+            hidden = {self.pad_token_id, self.bos_token_id, self.eos_token_id}
+            return super().decode(
+                [token_id for token_id in token_ids if token_id not in hidden],
+                **kwargs,
+            )
+
+    tokenizer = SpecialTokenHidingTokenizer()
+    encoded_plan = tokenizer.encode(plan, add_special_tokens=False)
+    injected = [*encoded_plan[:4], special_token_id, *encoded_plan[4:]]
+    assert (
+        tokenizer.decode(
+            injected,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        == plan
+    )
+
+    class InjectingModel:
+        config = SimpleNamespace(decoder_start_token_id=tokenizer.pad_token_id)
+
+        def generate(self, **kwargs):
+            del kwargs
+            return [[tokenizer.pad_token_id, *injected, tokenizer.eos_token_id]]
+
+    generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderConfig(model_id="test/model", revision=MODEL_REVISION),
+        component_loader=lambda config: (tokenizer, InjectingModel()),
+    )
+
+    with pytest.raises(
+        InvalidSymbolGeneration,
+        match="token path outside the symbolic grammar before EOS",
+    ):
         generator.generate_symbols("{}", frozenset({"WORD_do", "PERIOD"}))
 
 

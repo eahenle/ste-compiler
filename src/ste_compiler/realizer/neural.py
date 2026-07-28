@@ -75,9 +75,14 @@ class NeuralRealizer:
             "whitespace_alignment": "exact-layout-v1",
             "whitespace_layout_preserved": str(whitespace_layout_preserved).lower(),
         }
-        model_revision = getattr(self.generator, "model_revision", None)
-        if isinstance(model_revision, str):
-            metadata["model_revision"] = model_revision
+        for revision_field in (
+            "model_revision",
+            "base_model_revision",
+            "adapter_revision",
+        ):
+            revision = getattr(self.generator, revision_field, None)
+            if isinstance(revision, str):
+                metadata[revision_field] = revision
         return RealizationResult(
             text=aligned.text,
             mappings=aligned.mappings,

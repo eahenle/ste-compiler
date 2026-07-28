@@ -182,6 +182,21 @@ class _SymbolTokenConstraint:
             raise InvalidSymbolGeneration("decoder reached a prefix outside the symbolic grammar")
         return sorted(allowed)
 
+    def validate_complete(self, token_ids: Sequence[int]) -> None:
+        """Reject any pre-EOS token path that the prefix grammar could not generate."""
+
+        generated: tuple[int, ...] = ()
+        for token_id in token_ids:
+            if token_id not in self._allowed_next(generated):
+                raise InvalidSymbolGeneration(
+                    "model output contains a token path outside the symbolic grammar before EOS"
+                )
+            generated = (*generated, token_id)
+        if self.eos_token_id not in self._allowed_next(generated):
+            raise InvalidSymbolGeneration(
+                "model output does not end at a complete symbolic boundary before EOS"
+            )
+
     def _allowed_next(self, generated: tuple[int, ...]) -> set[int]:
         allowed: set[int] = set()
         visited: set[tuple[int, bool]] = set()
@@ -300,6 +315,7 @@ class TransformersEncoderDecoderSymbolGenerator:
             termination = token_ids.index(int(eos_token_id))
         except ValueError as error:
             raise InvalidSymbolGeneration("model output did not terminate with EOS") from error
+        constraint.validate_complete(token_ids[:termination])
         trailing_token_ids = token_ids[termination + 1 :]
         pad_token_id = tokenizer.pad_token_id
         if trailing_token_ids and (
