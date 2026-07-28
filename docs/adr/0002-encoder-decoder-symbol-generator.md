@@ -12,8 +12,10 @@ repository ID and a full lowercase 40-character commit digest. Local filesystem 
 rejected before loading because a digest-shaped configuration value cannot make mutable local
 contents immutable. Tags, branches, abbreviated hashes, and other mutable or ambiguous revision
 labels are also rejected. The exact digest is retained separately in realization metadata as well
-as in the revision-qualified model ID. Loading is lazy, disables remote model code, requires
-safetensors model weights, and remains optional through the `neural` dependency extra.
+as in the revision-qualified model ID. Loading is lazy and resolves the exact Hub commit once to a
+checked local snapshot. The tokenizer and model are both loaded only from that same snapshot with
+remote model code disabled and safetensors model weights required. The adapter remains optional
+through the `neural` dependency extra.
 
 The encoder receives canonical serialized IR. The decoder can emit only token paths that form:
 

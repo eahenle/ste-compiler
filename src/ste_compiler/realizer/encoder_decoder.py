@@ -8,10 +8,20 @@ from dataclasses import dataclass
 from importlib import import_module
 from operator import index
 from pathlib import Path, PureWindowsPath
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 _COMMIT_REVISION = re.compile(r"[0-9a-f]{40}", re.ASCII)
 _HUB_COMPONENT = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?", re.ASCII)
+_SAFE_SNAPSHOT_PATTERNS = [
+    "*.json",
+    "*.merges",
+    "*.model",
+    "*.safetensors",
+    "*.spm",
+    "*.tiktoken",
+    "*.txt",
+    "*.vocab",
+]
 
 
 class _Tokenizer(Protocol):
@@ -250,25 +260,64 @@ class TransformersEncoderDecoderSymbolGenerator:
         _reject_local_model_id(config.model_id)
         try:
             transformers = import_module("transformers")
+            huggingface_hub = import_module("huggingface_hub")
         except ModuleNotFoundError as error:
             raise EncoderDecoderUnavailable(
                 "install ste-compiler[neural] to use the encoder-decoder adapter"
             ) from error
 
+        snapshot = TransformersEncoderDecoderSymbolGenerator._resolve_safe_model_snapshot(
+            config,
+            huggingface_hub,
+        )
+        common = {
+            "local_files_only": True,
+            "trust_remote_code": False,
+        }
         tokenizer = transformers.AutoTokenizer.from_pretrained(
-            config.model_id,
-            revision=config.revision,
-            local_files_only=config.local_files_only,
-            trust_remote_code=False,
+            str(snapshot),
+            **common,
         )
         model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
-            config.model_id,
-            revision=config.revision,
-            local_files_only=config.local_files_only,
-            trust_remote_code=False,
+            str(snapshot),
+            **common,
             use_safetensors=True,
         )
         return tokenizer, model
+
+    @staticmethod
+    def _resolve_safe_model_snapshot(
+        config: EncoderDecoderConfig,
+        huggingface_hub: object,
+    ) -> Path:
+        download = cast(Callable[..., object], cast(Any, huggingface_hub).snapshot_download)
+        try:
+            snapshot = Path(
+                cast(
+                    str,
+                    download(
+                        repo_id=config.model_id,
+                        revision=config.revision,
+                        local_files_only=config.local_files_only,
+                        allow_patterns=_SAFE_SNAPSHOT_PATTERNS,
+                    ),
+                )
+            ).resolve(strict=True)
+        except Exception as error:
+            raise EncoderDecoderError(
+                "model revision could not be resolved to a safe local snapshot"
+            ) from error
+        if not snapshot.is_dir():
+            raise EncoderDecoderError("model snapshot resolver did not return a directory")
+        if snapshot.name != config.revision:
+            raise EncoderDecoderError(
+                "model snapshot resolver did not return the configured commit revision"
+            )
+        if not (snapshot / "config.json").is_file():
+            raise EncoderDecoderError("model snapshot is missing config.json")
+        if not any(snapshot.glob("*.safetensors")):
+            raise EncoderDecoderError("model snapshot is missing safetensors weights")
+        return snapshot
 
     def _get_components(self) -> tuple[_Tokenizer, _Model]:
         if self._components is None:

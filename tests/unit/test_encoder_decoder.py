@@ -105,29 +105,42 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["input_ids"]
 
 
-def test_encoder_decoder_loader_requires_safe_pinned_weights(monkeypatch):
+def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, tmp_path):
     calls = []
     tokenizer = object()
     model = object()
+    snapshot = tmp_path / "snapshots" / MODEL_REVISION
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}")
+    (snapshot / "model.safetensors").touch()
 
     class Factory:
         def __init__(self, name, result):
             self.name = name
             self.result = result
 
-        def from_pretrained(self, model_id, **kwargs):
-            calls.append((self.name, model_id, kwargs))
+        def from_pretrained(self, *args, **kwargs):
+            calls.append((self.name, args, kwargs))
+            if self.name == "snapshot":
+                local_collision = tmp_path / "organization" / "small-seq2seq"
+                local_collision.mkdir(parents=True)
             return self.result
 
-    transformers = SimpleNamespace(
-        AutoTokenizer=Factory("tokenizer", tokenizer),
-        AutoModelForSeq2SeqLM=Factory("model", model),
-    )
+    modules = {
+        "transformers": SimpleNamespace(
+            AutoTokenizer=Factory("tokenizer", tokenizer),
+            AutoModelForSeq2SeqLM=Factory("model", model),
+        ),
+        "huggingface_hub": SimpleNamespace(
+            snapshot_download=Factory("snapshot", str(snapshot)).from_pretrained
+        ),
+    }
     monkeypatch.setattr(
         encoder_decoder,
         "import_module",
-        lambda name: transformers if name == "transformers" else None,
+        modules.__getitem__,
     )
+    monkeypatch.chdir(tmp_path)
     config = EncoderDecoderConfig(
         model_id="organization/small-seq2seq",
         revision=MODEL_REVISION,
@@ -140,25 +153,86 @@ def test_encoder_decoder_loader_requires_safe_pinned_weights(monkeypatch):
     )
     assert calls == [
         (
-            "tokenizer",
-            "organization/small-seq2seq",
+            "snapshot",
+            (),
             {
+                "repo_id": "organization/small-seq2seq",
                 "revision": MODEL_REVISION,
+                "local_files_only": True,
+                "allow_patterns": [
+                    "*.json",
+                    "*.merges",
+                    "*.model",
+                    "*.safetensors",
+                    "*.spm",
+                    "*.tiktoken",
+                    "*.txt",
+                    "*.vocab",
+                ],
+            },
+        ),
+        (
+            "tokenizer",
+            (str(snapshot),),
+            {
                 "local_files_only": True,
                 "trust_remote_code": False,
             },
         ),
         (
             "model",
-            "organization/small-seq2seq",
+            (str(snapshot),),
             {
-                "revision": MODEL_REVISION,
                 "local_files_only": True,
                 "trust_remote_code": False,
                 "use_safetensors": True,
             },
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("snapshot_name", "artifacts", "message"),
+    [
+        ("different-revision", {"config.json", "model.safetensors"}, "configured commit"),
+        (MODEL_REVISION, {"model.safetensors"}, "config.json"),
+        (MODEL_REVISION, {"config.json"}, "safetensors weights"),
+    ],
+)
+def test_encoder_decoder_rejects_unsafe_model_snapshot(
+    tmp_path,
+    snapshot_name,
+    artifacts,
+    message,
+):
+    snapshot = tmp_path / "snapshots" / snapshot_name
+    snapshot.mkdir(parents=True)
+    for artifact in artifacts:
+        (snapshot / artifact).touch()
+    hub = SimpleNamespace(snapshot_download=lambda **kwargs: str(snapshot))
+    config = EncoderDecoderConfig(
+        model_id="organization/small-seq2seq",
+        revision=MODEL_REVISION,
+    )
+
+    with pytest.raises(EncoderDecoderError, match=message):
+        TransformersEncoderDecoderSymbolGenerator._resolve_safe_model_snapshot(config, hub)
+
+
+def test_encoder_decoder_wraps_snapshot_resolution_failure():
+    def fail(**kwargs):
+        raise OSError("cache failure")
+
+    hub = SimpleNamespace(snapshot_download=fail)
+    config = EncoderDecoderConfig(
+        model_id="organization/small-seq2seq",
+        revision=MODEL_REVISION,
+    )
+
+    with pytest.raises(EncoderDecoderError, match="could not be resolved") as caught:
+        TransformersEncoderDecoderSymbolGenerator._resolve_safe_model_snapshot(config, hub)
+
+    assert isinstance(caught.value.__cause__, OSError)
 
 
 def test_encoder_decoder_overrides_inherited_generation_strategy():
