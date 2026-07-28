@@ -7,6 +7,7 @@ from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import (
     DeterministicRealizer,
     EncoderDecoderConfig,
+    EncoderDecoderError,
     InvalidSymbolGeneration,
     NeuralRealizer,
     TransformersEncoderDecoderSymbolGenerator,
@@ -100,6 +101,81 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["num_beams"] == 1
     assert model.kwargs["return_dict_in_generate"] is False
     assert model.kwargs["input_ids"]
+
+
+def test_encoder_decoder_configuration_accepts_hub_repository_id():
+    config = EncoderDecoderConfig(model_id="organization/model", revision=MODEL_REVISION)
+
+    assert config.model_id == "organization/model"
+
+
+def test_encoder_decoder_configuration_rejects_existing_local_paths(tmp_path, monkeypatch):
+    local_directory = tmp_path / "local-model"
+    local_directory.mkdir()
+    local_file = tmp_path / "model.bin"
+    local_file.write_bytes(b"mutable")
+    monkeypatch.chdir(tmp_path)
+
+    for model_id in (
+        str(local_directory),
+        str(local_file),
+        local_directory.name,
+        local_file.name,
+    ):
+        with pytest.raises(EncoderDecoderError, match="local filesystem model paths"):
+            EncoderDecoderConfig(model_id=model_id, revision=MODEL_REVISION)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "/models/local",
+        "./models/local",
+        "../models/local",
+        "~/models/local",
+        "file:///models/local",
+        r"C:\models\local",
+        r"\\server\share\local",
+        "models/nested/local",
+    ],
+)
+def test_encoder_decoder_configuration_rejects_local_path_forms(model_id):
+    with pytest.raises(EncoderDecoderError, match="Hugging Face Hub repository ID"):
+        EncoderDecoderConfig(model_id=model_id, revision=MODEL_REVISION)
+
+
+def test_local_model_created_after_configuration_is_rejected_before_loader(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = EncoderDecoderConfig(model_id="organization/model", revision=MODEL_REVISION)
+    calls = []
+
+    def load(config):
+        calls.append(config)
+        raise AssertionError("loader must not run for a local model path")
+
+    generator = TransformersEncoderDecoderSymbolGenerator(config, component_loader=load)
+    (tmp_path / "organization/model").mkdir(parents=True)
+
+    with pytest.raises(EncoderDecoderError, match="local filesystem model paths"):
+        generator.generate_symbols("{}", frozenset({"PERIOD"}))
+    assert not calls
+
+
+def test_local_model_created_before_generator_is_rejected_before_identity_claim(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    config = EncoderDecoderConfig(model_id="organization/model", revision=MODEL_REVISION)
+    (tmp_path / "organization/model").mkdir(parents=True)
+    calls = []
+
+    def load(config):
+        calls.append(config)
+        raise AssertionError("loader must not run for a local model path")
+
+    with pytest.raises(EncoderDecoderError, match="local filesystem model paths"):
+        TransformersEncoderDecoderSymbolGenerator(config, component_loader=load)
+    assert not calls
 
 
 def test_constraint_allows_eos_only_at_symbol_boundaries():

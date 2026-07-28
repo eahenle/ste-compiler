@@ -7,9 +7,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from operator import index
+from pathlib import Path, PureWindowsPath
 from typing import Any, Protocol
 
 _COMMIT_REVISION = re.compile(r"[0-9a-f]{40}", re.ASCII)
+_HUB_COMPONENT = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?", re.ASCII)
 
 
 class _Tokenizer(Protocol):
@@ -45,7 +47,11 @@ class _Model(Protocol):
 ComponentLoader = Callable[["EncoderDecoderConfig"], tuple[_Tokenizer, _Model]]
 
 
-class EncoderDecoderUnavailable(RuntimeError):
+class EncoderDecoderError(RuntimeError):
+    """Raised when the encoder-decoder trust boundary cannot be established."""
+
+
+class EncoderDecoderUnavailable(EncoderDecoderError):
     """Raised when the optional Transformers runtime is not installed."""
 
 
@@ -67,6 +73,7 @@ class EncoderDecoderConfig:
     def __post_init__(self) -> None:
         if not self.model_id.strip():
             raise ValueError("model_id must not be blank")
+        _reject_local_model_id(self.model_id)
         if not self.revision.strip():
             raise ValueError("revision must not be blank")
         if _COMMIT_REVISION.fullmatch(self.revision) is None:
@@ -77,6 +84,40 @@ class EncoderDecoderConfig:
             raise ValueError("max_new_tokens must be positive")
         if self.num_beams < 1:
             raise ValueError("num_beams must be positive")
+
+
+def _reject_local_model_id(model_id: str) -> None:
+    """Require a Hub repository ID whose resolution cannot currently select a local path."""
+
+    path = Path(model_id).expanduser()
+    windows_path = PureWindowsPath(model_id)
+    components = model_id.split("/")
+    valid_hub_id = (
+        1 <= len(model_id) <= 96
+        and len(components) in {1, 2}
+        and all(_HUB_COMPONENT.fullmatch(component) for component in components)
+        and "--" not in model_id
+        and ".." not in model_id
+        and not model_id.endswith(".git")
+    )
+    explicitly_local = (
+        model_id != model_id.strip()
+        or model_id in {".", "..", "~"}
+        or model_id.startswith(("file:", "./", "../", "~/", ".\\", "..\\", "~\\"))
+        or path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+        or not valid_hub_id
+    )
+    try:
+        resolves_locally = path.exists() or path.is_symlink()
+    except OSError:
+        resolves_locally = explicitly_local
+    if explicitly_local or resolves_locally:
+        raise EncoderDecoderError(
+            "local filesystem model paths are not supported; model_id must be a Hugging Face "
+            "Hub repository ID such as 'org/model'"
+        )
 
 
 class _SymbolTokenConstraint:
@@ -180,6 +221,7 @@ class TransformersEncoderDecoderSymbolGenerator:
         *,
         component_loader: ComponentLoader | None = None,
     ):
+        _reject_local_model_id(config.model_id)
         self.config = config
         self.model_id = f"{config.model_id}@{config.revision}"
         self.model_revision = config.revision
@@ -190,6 +232,7 @@ class TransformersEncoderDecoderSymbolGenerator:
     def _load_transformers_components(
         config: EncoderDecoderConfig,
     ) -> tuple[_Tokenizer, _Model]:
+        _reject_local_model_id(config.model_id)
         try:
             transformers = import_module("transformers")
         except ModuleNotFoundError as error:
@@ -213,6 +256,7 @@ class TransformersEncoderDecoderSymbolGenerator:
 
     def _get_components(self) -> tuple[_Tokenizer, _Model]:
         if self._components is None:
+            _reject_local_model_id(self.config.model_id)
             self._components = self._component_loader(self.config)
         return self._components
 

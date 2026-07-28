@@ -6,6 +6,7 @@ from .deterministic import DeterministicRealizer
 if TYPE_CHECKING:
     from .encoder_decoder import (
         EncoderDecoderConfig,
+        EncoderDecoderError,
         EncoderDecoderUnavailable,
         InvalidSymbolGeneration,
         TransformersEncoderDecoderSymbolGenerator,
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DeterministicRealizer",
     "EncoderDecoderConfig",
+    "EncoderDecoderError",
     "EncoderDecoderUnavailable",
     "InvalidSymbolGeneration",
     "NeuralRealizer",
@@ -27,6 +29,7 @@ __all__ = [
 def __getattr__(name: str) -> object:
     if name in {
         "EncoderDecoderConfig",
+        "EncoderDecoderError",
         "EncoderDecoderUnavailable",
         "InvalidSymbolGeneration",
         "TransformersEncoderDecoderSymbolGenerator",

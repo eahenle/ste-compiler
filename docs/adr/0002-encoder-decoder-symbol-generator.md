@@ -7,11 +7,13 @@ Accepted as an inference adapter design. No trained model or quality result is s
 ## Decision
 
 Use a small encoder-decoder Transformers model behind the provider-neutral
-`SymbolGenerator` protocol. The immutable adapter configuration requires both a model ID and a
-full lowercase 40-character commit digest. Tags, branches, abbreviated hashes, and other mutable or
-ambiguous revision labels are rejected. The exact digest is retained separately in realization
-metadata as well as in the revision-qualified model ID. Loading is lazy, disables remote model code,
-and remains optional through the `neural` dependency extra.
+`SymbolGenerator` protocol. The immutable adapter configuration requires both a Hugging Face Hub
+repository ID and a full lowercase 40-character commit digest. Local filesystem identifiers are
+rejected before loading because a digest-shaped configuration value cannot make mutable local
+contents immutable. Tags, branches, abbreviated hashes, and other mutable or ambiguous revision
+labels are also rejected. The exact digest is retained separately in realization metadata as well
+as in the revision-qualified model ID. Loading is lazy, disables remote model code, and remains
+optional through the `neural` dependency extra.
 
 The encoder receives canonical serialized IR. The decoder can emit only token paths that form:
 
