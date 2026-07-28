@@ -1,0 +1,18 @@
+id: installation
+title: installation
+sections:
+- id: sec_1
+  kind: procedure
+  statements:
+  - kind: instruction
+    id: inst_001
+    action:
+      id: install
+      lemma: install
+    object:
+      term_id: access_panel
+    source_spans:
+    - source_id: inst_001.txt
+      start: 0
+      end: 10
+      quote: demonstration source

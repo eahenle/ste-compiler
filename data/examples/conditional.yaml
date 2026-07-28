@@ -1,0 +1,24 @@
+id: conditional
+title: conditional
+sections:
+- id: sec_1
+  kind: procedure
+  statements:
+  - kind: instruction
+    id: inst_003
+    action:
+      id: close
+      lemma: close
+    object:
+      term_id: shutoff_valve
+    source_spans:
+    - source_id: inst_003.txt
+      start: 0
+      end: 10
+      quote: demonstration source
+    conditions:
+    - id: cond_1
+      subject:
+        term_id: hydraulic_pressure
+      predicate: is
+      value: high

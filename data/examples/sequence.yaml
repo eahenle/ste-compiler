@@ -1,0 +1,23 @@
+id: sequence
+title: sequence
+sections:
+- id: sec_1
+  kind: procedure
+  statements:
+  - kind: instruction
+    id: inst_004
+    action:
+      id: disconnect
+      lemma: disconnect
+    object:
+      term_id: access_panel
+    source_spans:
+    - source_id: inst_004.txt
+      start: 0
+      end: 10
+      quote: demonstration source
+    temporal_relations:
+    - relation: before
+      event: the test
+    - relation: after
+      event: the check

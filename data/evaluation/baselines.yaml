@@ -1,0 +1,11 @@
+cases:
+  - id: negation
+    ir: negative.yaml
+    direct: Kindly proceed to open the system pressure stop valve.
+    prompted: Do open the stop valve.
+    expected_failure: Both baselines omit negation and use aliases or unauthorized words.
+  - id: quantity
+    ir: pressure.yaml
+    direct: Halt things if the pressure gets excessive.
+    prompted: Stop the hydraulic pressure.
+    expected_failure: Both baselines omit the 20 MPa quantity and hazard metadata.
