@@ -1,6 +1,6 @@
 from ste_compiler.diagnostics import Diagnostic, Severity
 from ste_compiler.ir.models import Document, Instruction
-from ste_compiler.realizer.base import RealizationResult
+from ste_compiler.realizer.base import RealizationResult, SentenceMapping
 
 
 class SemanticValidator:
@@ -19,11 +19,21 @@ class SemanticValidator:
                         ),
                     )
                 )
-        mappings = {node: m for m in result.mappings for node in m.ir_node_ids}
+        mappings: dict[str, list[SentenceMapping]] = {}
+        for result_mapping in result.mappings:
+            for node in result_mapping.ir_node_ids:
+                mappings.setdefault(node, []).append(result_mapping)
         for section in document.sections:
             for item in section.statements:
-                mapping = mappings.get(item.id)
-                if mapping is None:
+                primary_mapping = next(
+                    (
+                        candidate
+                        for candidate in mappings.get(item.id, [])
+                        if candidate.ir_node_ids == (item.id,)
+                    ),
+                    None,
+                )
+                if primary_mapping is None:
                     if isinstance(item, Instruction) and not item.required:
                         continue
                     out.append(
@@ -36,7 +46,7 @@ class SemanticValidator:
                     )
                     continue
                 expected = item.model_dump(mode="json")
-                actual = mapping.features
+                actual = primary_mapping.features
                 checks = [
                     ("negated", "NEGATION_NOT_PRESERVED"),
                     ("quantity_constraints", "QUANTITY_NOT_PRESERVED"),
@@ -65,7 +75,25 @@ class SemanticValidator:
                                     ir_node_id=item.id,
                                 )
                             )
-                    sentence = mapping.text.casefold()
+                    for hazard in item.hazards:
+                        hazard_mapping = next(
+                            (
+                                candidate
+                                for candidate in mappings.get(hazard.id, [])
+                                if candidate.features == expected
+                            ),
+                            None,
+                        )
+                        if hazard_mapping is None:
+                            out.append(
+                                Diagnostic(
+                                    code="HAZARD_NOT_PRESERVED",
+                                    severity=Severity.CRITICAL,
+                                    message=f"Output omitted hazard {hazard.id} from {item.id}.",
+                                    ir_node_id=item.id,
+                                )
+                            )
+                    sentence = primary_mapping.text.casefold()
                     if item.negated and "do not" not in sentence and "must not" not in sentence:
                         out.append(
                             Diagnostic(

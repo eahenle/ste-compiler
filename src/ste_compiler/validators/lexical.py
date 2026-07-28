@@ -2,8 +2,14 @@ import re
 
 from ste_compiler.diagnostics import Diagnostic, Severity
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+from ste_compiler.terminology.boundaries import (
+    mask_casefold_form,
+    mask_unit_surface,
+    whole_casefold_spans,
+)
 
-TOKEN = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)?|\d+(?:\.\d+)?|[^\w\s]")
+NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+TOKEN = re.compile(rf"{NUMBER}|[A-Za-z]+(?:-[A-Za-z]+)?|[^\w\s]")
 
 
 class LexicalValidator:
@@ -11,10 +17,10 @@ class LexicalValidator:
         self.vocabulary, self.terminology = vocabulary, terminology
 
     def validate(self, text: str) -> list[Diagnostic]:
-        masked = text.casefold()
+        masked = text
         diagnostics: list[Diagnostic] = []
         for alias in sorted(self.terminology.aliases, key=len, reverse=True):
-            if re.search(rf"\b{re.escape(alias)}\b", masked):
+            if whole_casefold_spans(masked, alias):
                 diagnostics.append(
                     Diagnostic(
                         code="TERMINOLOGY_ALIAS",
@@ -26,15 +32,17 @@ class LexicalValidator:
         for form in sorted(
             self.terminology.canonical_forms | self.terminology.aliases, key=len, reverse=True
         ):
-            masked = re.sub(rf"\b{re.escape(form)}\b", " ", masked)
+            masked = mask_casefold_form(masked, form)
+        for unit in sorted(self.vocabulary.units, key=len, reverse=True):
+            masked = mask_unit_surface(masked, unit)
         sentence = 1
         for match in TOKEN.finditer(masked):
             token = match.group()
             if token == ".":
                 sentence += 1
-            if token.isnumeric() or re.fullmatch(r"\d+\.\d+|[^\w\s]", token):
+            if re.fullmatch(NUMBER, token) or re.fullmatch(r"[^\w\s]", token):
                 continue
-            if self.vocabulary.contains(token) or token.casefold() in self.vocabulary.units:
+            if self.vocabulary.contains(token):
                 continue
             diagnostics.append(
                 Diagnostic(

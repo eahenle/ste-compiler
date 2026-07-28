@@ -11,6 +11,7 @@ from ste_compiler.evaluation import write_reports
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+from ste_compiler.training import TrainingRecordValidationError, build_training_record
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
 app = typer.Typer(help="Compile semantic IR to auditable STE-inspired controlled English.")
@@ -63,6 +64,28 @@ def realize(path: Path, metadata: bool = typer.Option(False, help="Print JSON ma
                 indent=2,
             )
         )
+
+
+@app.command("plan-symbols")
+def plan_symbols(
+    path: Path, json_output: bool = typer.Option(False, "--json", help="Print a training record.")
+) -> None:
+    """Create the deterministic symbolic target for one IR document."""
+
+    try:
+        doc = load_document(path)
+        vocab, terms = resources()
+        record = build_training_record(doc, vocab, terms)
+    except TrainingRecordValidationError as error:
+        emit_report(error.report, json_output)
+        raise typer.Exit(1) from error
+    except (KeyError, ValidationError, ValueError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    if json_output:
+        typer.echo(json.dumps(record, indent=2))
+    else:
+        typer.echo(record["symbols"])
 
 
 @app.command("validate-text")

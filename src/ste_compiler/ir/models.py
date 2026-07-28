@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
+
+NUMBER_SURFACE = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 
 
 class StrictModel(BaseModel):
@@ -48,10 +51,19 @@ class TermReference(StrictModel):
 
 
 class Quantity(StrictModel):
-    value: float
+    value: FiniteFloat
     unit: str
-    tolerance: float | None = Field(default=None, ge=0)
+    tolerance: FiniteFloat | None = Field(default=None, ge=0)
     comparator: Literal["equal", "less_than", "more_than", "at_most", "at_least"] = "equal"
+
+    @field_validator("unit")
+    @classmethod
+    def symbolic_unit_surface(cls, unit: str) -> str:
+        if not unit or unit != unit.strip():
+            raise ValueError("unit must be nonblank and have no leading or trailing whitespace")
+        if NUMBER_SURFACE.fullmatch(unit):
+            raise ValueError("unit must not be a numeric-only surface form")
+        return unit
 
 
 class Measurement(StrictModel):

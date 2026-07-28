@@ -1,12 +1,52 @@
-import re
-
 from ste_compiler.realizer.base import RealizationResult, SentenceMapping
 
-SENTENCE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
+
+def has_exact_whitespace_layout(text: str, expected: str) -> bool:
+    """Compare whitespace values and positions relative to non-whitespace characters."""
+
+    def layout(value: str) -> tuple[tuple[int, str], ...]:
+        non_whitespace = 0
+        positions: list[tuple[int, str]] = []
+        for character in value:
+            if character.isspace():
+                positions.append((non_whitespace, character))
+            else:
+                non_whitespace += 1
+        return tuple(positions)
+
+    return layout(text) == layout(expected)
 
 
 def _sentences(text: str) -> list[str]:
-    return [match.group().strip() for match in SENTENCE.finditer(text) if match.group().strip()]
+    sentences: list[str] = []
+    start = 0
+    position = 0
+    while position < len(text):
+        character = text[position]
+        if (
+            character == "."
+            and position > 0
+            and position + 1 < len(text)
+            and text[position - 1].isdigit()
+            and text[position + 1].isdigit()
+        ):
+            position += 1
+            continue
+        if character not in ".!?":
+            position += 1
+            continue
+        end = position + 1
+        while end < len(text) and text[end] in ".!?":
+            end += 1
+        sentence = text[start:end].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = end
+        position = end
+    remainder = text[start:].strip()
+    if remainder:
+        sentences.append(remainder)
+    return sentences
 
 
 def _normalized(text: str) -> str:
@@ -20,6 +60,13 @@ def align_controlled_text(text: str, expected: RealizationResult) -> Realization
     snapshot. Unmatched sentences remain explicitly unassociated so semantic
     validation can reject both changed and extra content.
     """
+
+    if text == expected.text:
+        return RealizationResult(
+            text=text,
+            mappings=expected.mappings,
+            metadata={**expected.metadata, "alignment": "deterministic-surface-v1"},
+        )
 
     mappings: list[SentenceMapping] = []
     for index, sentence in enumerate(_sentences(text)):
