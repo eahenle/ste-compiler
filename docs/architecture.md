@@ -11,7 +11,9 @@ The deterministic realizer composes clauses and records the complete source-node
 1. **Encoder-decoder:** encode canonical JSON IR and decode a symbolic sentence plan. This fits transformation tasks and can be compact, but needs task-specific training.
 2. **Decoder-only + LoRA:** place canonical IR before the symbolic plan. Existing small models and adapters are convenient, but prompt handling and unsupported continuations increase risk.
 
-Both must emit from a grammar of symbolic word/term IDs. A prefix trie or character-level finite-state machine can constrain symbol syntax. `SymbolicLexicalizer` rejects unknown symbols and copies canonical terms. Naive BPE masking cannot reliably express word boundaries because approved strings and model tokens are not one-to-one. The deterministic validator remains authoritative; LoRA changes probabilities, not guarantees.
+Both must emit from a grammar of symbolic word, term, unit, punctuation, newline, and number IDs. `plan-symbols` creates deterministic training targets. At inference, `NeuralRealizer` supplies only the symbols present in the document's deterministic reference plan; this prevents invented words and quantities without trusting model metadata. `SymbolicLexicalizer` rejects out-of-plan symbols and copies canonical terms and units. The independent surface aligner then grants IR mappings only to position-preserving exact sentences, so reordering or omission still fails semantic validation.
+
+A prefix trie or character-level finite-state machine can constrain symbol syntax in a concrete model adapter. Naive BPE masking cannot reliably express word boundaries because approved strings and model tokens are not one-to-one. The deterministic validator remains authoritative; LoRA changes probabilities, not guarantees.
 
 ## Trust and reproducibility
 

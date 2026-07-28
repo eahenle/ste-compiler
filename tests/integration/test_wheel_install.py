@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -55,6 +56,18 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
         text=True,
     )
     assert realized.stdout == "Do not open the shutoff valve.\n"
+
+    planned = subprocess.run(
+        [*command, "plan-symbols", str(ROOT / "data/examples/warning_pressure.yaml"), "--json"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    training_record = json.loads(planned.stdout)
+    assert "WORD_occur" in training_record["allowed_symbols"]
+    assert "TERM_hydraulic_pressure" in training_record["symbols"]
 
     reports = tmp_path / "reports"
     subprocess.run(

@@ -8,8 +8,13 @@ from pydantic import ValidationError
 
 from ste_compiler.frontend.llm import LLMFrontend
 from ste_compiler.ir.models import Document, EntityRef, Quantity
-from ste_compiler.ir.serialization import dumps_document, load_document, loads_document
-from ste_compiler.realizer import DeterministicRealizer
+from ste_compiler.ir.serialization import (
+    canonical_document_json,
+    dumps_document,
+    load_document,
+    loads_document,
+)
+from ste_compiler.realizer import DeterministicRealizer, NeuralRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.validators.lexical import LexicalValidator
 from ste_compiler.validators.semantic import SemanticValidator
@@ -65,6 +70,85 @@ def test_vocabulary_and_symbolic_lexicalizer(vocab, terms):
     )
     with pytest.raises(ValueError):
         lexicalizer.lexicalize("WORD_commence PERIOD")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["installation", "negative", "conditional", "sequence", "warning_pressure"],
+)
+def test_symbolic_plan_round_trip(name, vocab, terms):
+    document = load_document(ROOT / f"data/examples/{name}.yaml")
+    expected = DeterministicRealizer().realize(document, vocab, terms).text
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    symbols = lexicalizer.symbolize(expected)
+    assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == expected
+
+
+def test_symbolic_plan_allowlist_blocks_invented_quantity(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    allowed = frozenset({"NUMBER_20", "UNIT_MPa", "PERIOD"})
+    with pytest.raises(ValueError, match="not allowed"):
+        lexicalizer.lexicalize(
+            "NUMBER_21 UNIT_MPa PERIOD",
+            allowed_symbols=allowed,
+        )
+
+
+def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
+    document = load_document(ROOT / "data/examples/negative.yaml")
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+
+    class Generator:
+        model_id = "offline-test-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            assert serialized_ir == canonical_document_json(document)
+            assert allowed_symbols == frozenset(expected_plan.split())
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+    assert result.text == expected.text
+    assert result.metadata["model_id"] == "offline-test-generator"
+    assert result.metadata["alignment"] == "deterministic-surface-v1"
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_does_not_trust_reordered_allowed_symbols(vocab, terms):
+    document = load_document(ROOT / "data/examples/negative.yaml")
+
+    class Generator:
+        model_id = "offline-corrupt-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert "WORD_not" in allowed_symbols
+            return "WORD_open WORD_do WORD_not WORD_the TERM_shutoff_valve PERIOD"
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+    diagnostics = SemanticValidator().validate(document, result)
+    assert not result.mappings[0].ir_node_ids
+    assert {diagnostic.code for diagnostic in diagnostics} == {
+        "REQUIRED_NODE_OMITTED",
+        "UNSUPPORTED_SEMANTIC_CHANGE",
+    }
+
+
+def test_hazard_sentence_does_not_substitute_for_required_instruction(vocab, terms):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    result = DeterministicRealizer().realize(document, vocab, terms)
+    hazard_only = replace(result, text=result.mappings[0].text, mappings=result.mappings[:1])
+    codes = {item.code for item in SemanticValidator().validate(document, hazard_only)}
+    assert "REQUIRED_NODE_OMITTED" in codes
+
+
+def test_instruction_cannot_omit_its_hazard_sentence(vocab, terms):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    result = DeterministicRealizer().realize(document, vocab, terms)
+    instruction_only = replace(result, text=result.mappings[1].text, mappings=result.mappings[1:])
+    codes = {item.code for item in SemanticValidator().validate(document, instruction_only)}
+    assert "HAZARD_NOT_PRESERVED" in codes
 
 
 def test_lexical_and_structural_diagnostics(vocab, terms):

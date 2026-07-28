@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -25,6 +26,23 @@ def test_cli_realize_and_validate():
     assert result.exit_code == 1
     assert "REQUIRED_NODE_OMITTED" in result.stdout
     assert "UNSUPPORTED_SEMANTIC_CHANGE" in result.stdout
+
+
+def test_cli_exports_symbolic_training_record():
+    result = runner.invoke(
+        app,
+        [
+            "plan-symbols",
+            str(ROOT / "data/examples/warning_pressure.yaml"),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    assert record["document_id"] == "warning_pressure"
+    assert "TERM_hydraulic_pressure" in record["allowed_symbols"]
+    assert "NUMBER_20" in record["symbols"]
+    assert json.loads(record["serialized_ir"])["id"] == "warning_pressure"
 
 
 def test_validate_text_does_not_inherit_expected_semantics(tmp_path):

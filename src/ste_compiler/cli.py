@@ -8,8 +8,9 @@ from pydantic import ValidationError
 from ste_compiler.diagnostics import ValidationReport
 from ste_compiler.evaluation import evaluate as run_evaluation
 from ste_compiler.evaluation import write_reports
-from ste_compiler.ir.serialization import load_document
+from ste_compiler.ir.serialization import canonical_document_json, load_document
 from ste_compiler.realizer import DeterministicRealizer
+from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
@@ -63,6 +64,34 @@ def realize(path: Path, metadata: bool = typer.Option(False, help="Print JSON ma
                 indent=2,
             )
         )
+
+
+@app.command("plan-symbols")
+def plan_symbols(
+    path: Path, json_output: bool = typer.Option(False, "--json", help="Print a training record.")
+) -> None:
+    """Create the deterministic symbolic target for one IR document."""
+
+    doc = load_document(path)
+    vocab, terms = resources()
+    result = DeterministicRealizer().realize(doc, vocab, terms)
+    symbols = SymbolicLexicalizer(vocab, terms).symbolize(result.text)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "document_id": doc.id,
+                    "serialized_ir": canonical_document_json(doc),
+                    "symbols": symbols,
+                    "allowed_symbols": sorted(set(symbols.split())),
+                    "text": result.text,
+                    "metadata": result.metadata,
+                },
+                indent=2,
+            )
+        )
+    else:
+        typer.echo(symbols)
 
 
 @app.command("validate-text")

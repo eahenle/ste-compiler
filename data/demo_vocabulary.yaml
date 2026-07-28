@@ -620,11 +620,12 @@ entries:
   inflections: []
   example: null
   forbidden_confusions: []
-- lemma: occurs
+- lemma: occur
   parts_of_speech:
   - demo
-  meaning_id: demo.occurs
-  inflections: []
+  meaning_id: demo.occur
+  inflections:
+  - occurs
   example: null
   forbidden_confusions: []
 - lemma: oil

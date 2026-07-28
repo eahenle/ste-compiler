@@ -39,6 +39,10 @@ class TerminologyRegistry:
     def aliases(self) -> set[str]:
         return {a.casefold() for t in self.data.terms for a in t.aliases}
 
+    @property
+    def approved_terms(self) -> tuple[Term, ...]:
+        return tuple(term for term in self.data.terms if term.status == "approved")
+
 
 class Vocabulary:
     def __init__(self, data: VocabularyData):
@@ -46,7 +50,8 @@ class Vocabulary:
         self.words = {
             word.casefold() for entry in data.entries for word in [entry.lemma, *entry.inflections]
         }
-        self.units = {unit.casefold() for unit in data.units}
+        self.unit_forms = {unit.casefold(): unit for unit in data.units}
+        self.units = set(self.unit_forms)
 
     @classmethod
     def load(cls, path: Path) -> "Vocabulary":

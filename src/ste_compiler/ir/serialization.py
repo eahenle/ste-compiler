@@ -18,3 +18,14 @@ def load_document(path: Path) -> Document:
 def dumps_document(document: Document, *, as_json: bool = False) -> str:
     obj = document.model_dump(mode="json")
     return json.dumps(obj, indent=2) if as_json else yaml.safe_dump(obj, sort_keys=False)
+
+
+def canonical_document_json(document: Document) -> str:
+    """Serialize IR deterministically for model inputs, hashes, and training records."""
+
+    return json.dumps(
+        document.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )

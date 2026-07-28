@@ -26,6 +26,7 @@ Requires Python 3.12+.
 python -m pip install -e '.[dev]'
 ste-compiler validate-ir data/examples/conditional.yaml
 ste-compiler realize data/examples/sequence.yaml --metadata
+ste-compiler plan-symbols data/examples/warning_pressure.yaml --json
 ste-compiler compile data/examples/warning_pressure.yaml --json
 ste-compiler validate-text data/examples/invalid_semantic.txt --ir data/examples/negative.yaml --json
 ste-compiler glossary check data/demo_terminology.yaml
@@ -39,8 +40,9 @@ pytest
 
 * **Vocabulary:** add an original/authorized entry to `data/demo_vocabulary.yaml`, including lemma, roles, meaning ID, inflections, example, and confusion notes. Keep its license explicit.
 * **Terminology:** add a versioned term with canonical form, aliases, role, domain, provenance, approval status, and optional replacement. Frontends can resolve aliases; realizers copy canonical forms.
-* **Neural realizer:** implement `SymbolGenerator`, serialize the existing IR, emit only `WORD_*`, `TERM_*`, punctuation, and number symbols, then pass them through `SymbolicLexicalizer` and the unchanged validators.
-* **LoRA/SLM:** install `.[neural]`; train an adapter over synthetic `(serialized IR, symbolic plan)` pairs. Record base model/revision, parameter count, adapter revision, seeds, data hash, hardware, and decoding profile. Evaluate constrained and unconstrained variants separately. A practical single-GPU experiment can use a small encoder-decoder model, or a compact decoder-only model with a LoRA adapter.
+* **Neural realizer:** implement `SymbolGenerator`. `NeuralRealizer` sends it canonical IR and only the symbols present in the deterministic reference plan. `SymbolicLexicalizer` rejects out-of-plan symbols, and the independent aligner withholds IR mappings from changed, reordered, omitted, or extra sentences.
+* **Training data:** use `plan-symbols --json` to export canonical `(serialized IR, symbolic plan)` records. Plans contain only `WORD_*`, `TERM_*`, `UNIT_*`, punctuation, newline, and document-specific number symbols.
+* **LoRA/SLM:** install `.[neural]`; train an adapter over the exported pairs. Record base model/revision, parameter count, adapter revision, seeds, data hash, hardware, and decoding profile. Evaluate constrained and unconstrained variants separately. A practical single-GPU experiment can use a small encoder-decoder model, or a compact decoder-only model with a LoRA adapter.
 
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 
