@@ -12,6 +12,7 @@ from .records import TrainingRecord, build_training_record
 
 CORPUS_SCHEMA_VERSION = "symbolic-corpus-v1"
 IR_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
+OUTPUT_ARTIFACTS = ("corpus.jsonl", "manifest.json")
 
 
 class CorpusManifest(TypedDict):
@@ -61,6 +62,22 @@ def _canonical_line(record: TrainingRecord) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
 
 
+def _paths_alias(first: Path, second: Path) -> bool:
+    if first.resolve() == second.resolve():
+        return True
+    return first.exists() and second.exists() and first.samefile(second)
+
+
+def _reject_output_source_aliases(paths: list[Path], output: Path) -> None:
+    for artifact_name in OUTPUT_ARTIFACTS:
+        artifact = output / artifact_name
+        for source in paths:
+            if _paths_alias(artifact, source):
+                raise ValueError(
+                    f"symbolic corpus output artifact {artifact} aliases source IR file {source}"
+                )
+
+
 def export_symbolic_corpus(
     source: Path,
     output: Path,
@@ -68,6 +85,7 @@ def export_symbolic_corpus(
     terminology: TerminologyRegistry,
 ) -> CorpusManifest:
     root, paths = _input_paths(source, output)
+    _reject_output_source_aliases(paths, output)
     records: list[TrainingRecord] = []
     document_sources: dict[str, str] = {}
     for path in paths:
