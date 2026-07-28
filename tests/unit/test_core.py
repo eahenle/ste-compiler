@@ -107,8 +107,8 @@ def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
     text = "20 % 5 °C 3 m/s 2 degrees Celsius."
     symbols = lexicalizer.symbolize(text)
     assert symbols == (
-        "NUMBER_20 UNIT_%25 NUMBER_5 UNIT_%C2%B0C NUMBER_3 UNIT_m%2Fs "
-        "NUMBER_2 UNIT_degrees%20Celsius PERIOD"
+        "NUMBER_20 SPACE UNIT_%25 SPACE NUMBER_5 SPACE UNIT_%C2%B0C SPACE "
+        "NUMBER_3 SPACE UNIT_m%2Fs SPACE NUMBER_2 SPACE UNIT_degrees%20Celsius PERIOD"
     )
     assert lexicalizer.lexicalize(symbols) == text
 
@@ -131,8 +131,36 @@ def test_symbolic_plan_round_trips_parentheses_semicolon_and_word_case(vocab, te
 
     symbols = lexicalizer.symbolize(text)
 
-    assert symbols == ("WORD_APU PUNCT_U0028 WORD_test PUNCT_U0029 PUNCT_U003B WORD_APU PERIOD")
+    assert symbols == (
+        "WORD_APU SPACE PUNCT_U0028 WORD_test PUNCT_U0029 PUNCT_U003B SPACE WORD_APU PERIOD"
+    )
     assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_symbols"),
+    [
+        (
+            "safe — slowly",
+            "WORD_safe SPACE PUNCT_U2014 SPACE WORD_slowly",
+        ),
+        (
+            "safe ; slowly",
+            "WORD_safe SPACE PUNCT_U003B SPACE WORD_slowly",
+        ),
+        (
+            "safe\t;\tslowly",
+            "WORD_safe WS_U0009 PUNCT_U003B WS_U0009 WORD_slowly",
+        ),
+    ],
+)
+def test_symbolic_plan_preserves_explicit_whitespace(text, expected_symbols, vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+
+    symbols = lexicalizer.symbolize(text)
+
+    assert symbols == expected_symbols
+    assert lexicalizer.lexicalize(symbols, allowed_symbols=frozenset(symbols.split())) == text
 
 
 @pytest.mark.parametrize(
@@ -157,7 +185,7 @@ def test_quote_spacing_does_not_break_apostrophe_joining(vocab, terms):
 
 def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
-    assert lexicalizer.symbolize("20 MPa.") == "NUMBER_20 UNIT_MPa PERIOD"
+    assert lexicalizer.symbolize("20 MPa.") == "NUMBER_20 SPACE UNIT_MPa PERIOD"
     with pytest.raises(ValueError, match="unauthorized word"):
         lexicalizer.symbolize("20 mPa.")
     with pytest.raises(ValueError, match="unauthorized unit symbol"):
@@ -170,7 +198,7 @@ def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(voc
 def test_symbolic_plan_supports_scientific_notation(vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
     symbols = lexicalizer.symbolize("1e-07 MPa.")
-    assert symbols == "NUMBER_1e-07 UNIT_MPa PERIOD"
+    assert symbols == "NUMBER_1e-07 SPACE UNIT_MPa PERIOD"
     assert lexicalizer.lexicalize(symbols) == "1e-07 MPa."
     assert not LexicalValidator(vocab, terms).validate("1e-07 MPa.")
 
@@ -178,8 +206,8 @@ def test_symbolic_plan_supports_scientific_notation(vocab, terms):
 @pytest.mark.parametrize(
     ("text", "expected_symbol"),
     [
-        ("-20 MPa.", "NUMBER_-20 UNIT_MPa PERIOD"),
-        ("-1e-07 MPa.", "NUMBER_-1e-07 UNIT_MPa PERIOD"),
+        ("-20 MPa.", "NUMBER_-20 SPACE UNIT_MPa PERIOD"),
+        ("-1e-07 MPa.", "NUMBER_-1e-07 SPACE UNIT_MPa PERIOD"),
     ],
 )
 def test_symbolic_plan_parses_signed_numbers_before_punctuation(
@@ -390,6 +418,30 @@ def test_neural_realizer_aligns_quoted_manner(vocab, terms):
     assert not SemanticValidator().validate(document, result)
 
 
+def test_neural_realizer_aligns_spaced_punctuation(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(update={"manner": "safe — slowly"})
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert expected.text == "Install the access panel safe — slowly."
+
+    class Generator:
+        model_id = "offline-spaced-punctuation-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert {"SPACE", "PUNCT_U2014", "WORD_safe", "WORD_slowly"} <= allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+    assert result.text == expected.text
+    assert result.mappings == expected.mappings
+    assert not SemanticValidator().validate(document, result)
+
+
 def test_neural_realizer_does_not_trust_reordered_allowed_symbols(vocab, terms):
     document = load_document(ROOT / "data/examples/negative.yaml")
 
@@ -432,6 +484,22 @@ def test_lexical_and_structural_diagnostics(vocab, terms):
     structural = StructuralValidator(max_sentence_words=2).validate("Open it now.")
     assert {x.code for x in structural} == {"SENTENCE_TOO_LONG", "AMBIGUOUS_PRONOUN"}
     assert lexical[0].model_dump_json()
+
+
+def test_terminology_schema_rejects_empty_canonical_form(terms):
+    data = terms.data.model_dump()
+    data["terms"][0]["canonical_form"] = ""
+
+    with pytest.raises(ValidationError):
+        type(terms.data).model_validate(data)
+
+
+def test_vocabulary_schema_rejects_empty_unit(vocab):
+    data = vocab.data.model_dump()
+    data["units"].append("")
+
+    with pytest.raises(ValidationError):
+        type(vocab.data).model_validate(data)
 
 
 def test_semantic_corruption_detected(vocab, terms):

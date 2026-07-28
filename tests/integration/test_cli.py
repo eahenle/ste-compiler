@@ -84,8 +84,26 @@ def test_cli_training_plan_round_trips_quoted_manner(tmp_path):
     assert result.exit_code == 0
     record = json.loads(result.stdout)
     assert record["text"] == 'Install the access panel "safe".'
-    assert record["symbols"].endswith("TERM_access_panel PUNCT_U0022 WORD_safe PUNCT_U0022 PERIOD")
+    assert record["symbols"].endswith(
+        "TERM_access_panel SPACE PUNCT_U0022 WORD_safe PUNCT_U0022 PERIOD"
+    )
     assert "PUNCT_U0022" in record["allowed_symbols"]
+
+
+def test_cli_training_plan_preserves_spaced_punctuation(tmp_path):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(update={"manner": "safe ; slowly"})
+    source = tmp_path / "spaced_punctuation.json"
+    source.write_text(dumps_document(document, as_json=True))
+
+    result = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    assert record["text"] == "Install the access panel safe ; slowly."
+    assert record["symbols"].endswith("WORD_safe SPACE PUNCT_U003B SPACE WORD_slowly PERIOD")
+    assert {"SPACE", "PUNCT_U003B"} <= set(record["allowed_symbols"])
 
 
 def test_validate_text_does_not_inherit_expected_semantics(tmp_path):

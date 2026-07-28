@@ -1,6 +1,8 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+NonEmptyString = Annotated[str, Field(min_length=1)]
 
 
 class Provenance(BaseModel):
@@ -12,7 +14,7 @@ class Provenance(BaseModel):
 class Term(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
-    canonical_form: str
+    canonical_form: NonEmptyString
     definition: str
     domain: str
     allowed_roles: list[str] = Field(min_length=1)
@@ -44,6 +46,6 @@ class VocabularyData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str
     license: str
-    units: list[str] = []
+    units: list[NonEmptyString] = []
     structural_tokens: list[str] = []
     entries: list[VocabularyEntry]

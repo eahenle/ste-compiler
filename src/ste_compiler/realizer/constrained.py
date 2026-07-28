@@ -19,6 +19,7 @@ PUNCTUATION = {
 TEXT_PUNCTUATION = {value: key for key, value in PUNCTUATION.items()}
 PUNCTUATION_TEXT = re.compile(r"[^\w\s]")
 PUNCTUATION_SYMBOL = re.compile(r"PUNCT_U([0-9A-F]{4,6})")
+WHITESPACE_SYMBOL = re.compile(r"WS_U([0-9A-F]{4,6})")
 OPENING_PUNCTUATION = frozenset("([{“‘")
 JOINING_PUNCTUATION = frozenset({"'", "-", "/", "\\", "–", "—", "’"})
 
@@ -44,6 +45,23 @@ def _punctuation_text(symbol: str) -> str | None:
     return punctuation if PUNCTUATION_TEXT.fullmatch(punctuation) else None
 
 
+def _whitespace_symbol(whitespace: str) -> str:
+    return "SPACE" if whitespace == " " else f"WS_U{ord(whitespace):04X}"
+
+
+def _whitespace_text(symbol: str) -> str | None:
+    if symbol == "SPACE":
+        return " "
+    match = WHITESPACE_SYMBOL.fullmatch(symbol)
+    if match is None:
+        return None
+    try:
+        whitespace = chr(int(match.group(1), 16))
+    except (OverflowError, ValueError):
+        return None
+    return whitespace if whitespace != "\n" and whitespace.isspace() else None
+
+
 class SymbolicLexicalizer:
     """Translate between controlled text and an auditable symbolic plan."""
 
@@ -61,6 +79,7 @@ class SymbolicLexicalizer:
 
         output = ""
         join_next = False
+        explicit_whitespace = False
         at_sentence_start = capitalize_sentences
         ascii_double_quote_open = False
         curly_single_quote_open = False
@@ -68,8 +87,16 @@ class SymbolicLexicalizer:
             if allowed_symbols is not None and symbol not in allowed_symbols:
                 raise ValueError(f"symbol is not allowed for this document: {symbol}")
             if symbol == "NEWLINE":
-                output = output.rstrip() + "\n"
+                output = (output if explicit_whitespace else output.rstrip()) + "\n"
                 join_next = False
+                explicit_whitespace = False
+                continue
+
+            whitespace = _whitespace_text(symbol)
+            if whitespace is not None:
+                output += whitespace
+                join_next = False
+                explicit_whitespace = True
                 continue
 
             punctuation = _punctuation_text(symbol)
@@ -92,13 +119,14 @@ class SymbolicLexicalizer:
                     closing_quote = True
 
                 if punctuation in OPENING_PUNCTUATION or opening_quote:
-                    if output and not output.endswith(("\n", " ")) and not join_next:
+                    if output and not output[-1].isspace() and not join_next:
                         output += " "
                     output += punctuation
                     join_next = True
                 else:
-                    output = output.rstrip() + punctuation
+                    output = (output if explicit_whitespace else output.rstrip()) + punctuation
                     join_next = punctuation in JOINING_PUNCTUATION and not closing_quote
+                explicit_whitespace = False
                 if punctuation in ".!?":
                     at_sentence_start = capitalize_sentences
                 elif at_sentence_start:
@@ -127,10 +155,9 @@ class SymbolicLexicalizer:
             if at_sentence_start:
                 value = value[:1].upper() + value[1:]
             at_sentence_start = False
-            output += (
-                "" if not output or output.endswith(("\n", " ")) or join_next else " "
-            ) + value
+            output += ("" if not output or output[-1].isspace() or join_next else " ") + value
             join_next = False
+            explicit_whitespace = False
         return output
 
     def symbolize(self, text: str) -> str:
@@ -148,6 +175,8 @@ class SymbolicLexicalizer:
             if text[position].isspace():
                 if text[position] == "\n":
                     symbols.append("NEWLINE")
+                else:
+                    symbols.append(_whitespace_symbol(text[position]))
                 position += 1
                 continue
 
