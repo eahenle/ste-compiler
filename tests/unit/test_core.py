@@ -16,6 +16,7 @@ from ste_compiler.ir.serialization import (
 )
 from ste_compiler.realizer import DeterministicRealizer, NeuralRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
+from ste_compiler.terminology import Vocabulary
 from ste_compiler.validators.lexical import LexicalValidator
 from ste_compiler.validators.semantic import SemanticValidator
 from ste_compiler.validators.structural import StructuralValidator
@@ -94,6 +95,17 @@ def test_symbolic_plan_allowlist_blocks_invented_quantity(vocab, terms):
         )
 
 
+def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(update={"units": [*vocab.data.units, "%", "°C", "m/s"]})
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
+    text = "20 % 5 °C 3 m/s."
+    symbols = lexicalizer.symbolize(text)
+    assert symbols == "NUMBER_20 UNIT_% NUMBER_5 UNIT_°C NUMBER_3 UNIT_m/s PERIOD"
+    assert lexicalizer.lexicalize(symbols) == text
+
+
 def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     document = load_document(ROOT / "data/examples/negative.yaml")
     lexicalizer = SymbolicLexicalizer(vocab, terms)
@@ -112,6 +124,37 @@ def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     assert result.text == expected.text
     assert result.metadata["model_id"] == "offline-test-generator"
     assert result.metadata["alignment"] == "deterministic-surface-v1"
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_aligns_decimal_quantities(vocab, terms):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    instruction = document.sections[0].statements[0]
+    decimal_quantity = Quantity(value=20.5, unit="MPa", comparator="more_than")
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={
+            "quantity_constraints": [
+                instruction.quantity_constraints[0].model_copy(
+                    update={"quantity": decimal_quantity}
+                )
+            ],
+            "hazards": [instruction.hazards[0].model_copy(update={"threshold": decimal_quantity})],
+        }
+    )
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+
+    class Generator:
+        model_id = "offline-decimal-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert "NUMBER_20.5" in allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+    assert result.text == expected.text
     assert not SemanticValidator().validate(document, result)
 
 

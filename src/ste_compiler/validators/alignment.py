@@ -1,12 +1,36 @@
-import re
-
 from ste_compiler.realizer.base import RealizationResult, SentenceMapping
-
-SENTENCE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
 
 
 def _sentences(text: str) -> list[str]:
-    return [match.group().strip() for match in SENTENCE.finditer(text) if match.group().strip()]
+    sentences: list[str] = []
+    start = 0
+    position = 0
+    while position < len(text):
+        character = text[position]
+        if (
+            character == "."
+            and position > 0
+            and position + 1 < len(text)
+            and text[position - 1].isdigit()
+            and text[position + 1].isdigit()
+        ):
+            position += 1
+            continue
+        if character not in ".!?":
+            position += 1
+            continue
+        end = position + 1
+        while end < len(text) and text[end] in ".!?":
+            end += 1
+        sentence = text[start:end].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = end
+        position = end
+    remainder = text[start:].strip()
+    if remainder:
+        sentences.append(remainder)
+    return sentences
 
 
 def _normalized(text: str) -> str:

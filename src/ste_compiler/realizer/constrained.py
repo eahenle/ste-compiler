@@ -87,6 +87,7 @@ class SymbolicLexicalizer:
             key=lambda term: len(term.canonical_form),
             reverse=True,
         )
+        units = sorted(self.vocabulary.unit_forms.values(), key=len, reverse=True)
         while position < len(text):
             if text[position].isspace():
                 if text[position] == "\n":
@@ -108,6 +109,20 @@ class SymbolicLexicalizer:
                 position += len(matched_term.canonical_form)
                 continue
 
+            matched_unit = None
+            for unit_form in units:
+                end = position + len(unit_form)
+                if text[position:end].casefold() != unit_form.casefold():
+                    continue
+                if end < len(text) and unit_form[-1].isalnum() and text[end].isalnum():
+                    continue
+                matched_unit = unit_form
+                break
+            if matched_unit is not None:
+                symbols.append(f"UNIT_{matched_unit}")
+                position += len(matched_unit)
+                continue
+
             character = text[position]
             if character in TEXT_PUNCTUATION:
                 symbols.append(TEXT_PUNCTUATION[character])
@@ -124,9 +139,9 @@ class SymbolicLexicalizer:
             if word is None:
                 raise ValueError(f"cannot symbolize text at offset {position}: {text[position]!r}")
             token = word.group()
-            unit = self.vocabulary.unit_forms.get(token.casefold())
-            if unit is not None:
-                symbols.append(f"UNIT_{unit}")
+            canonical_unit = self.vocabulary.unit_forms.get(token.casefold())
+            if canonical_unit is not None:
+                symbols.append(f"UNIT_{canonical_unit}")
             elif self.vocabulary.contains(token):
                 symbols.append(f"WORD_{token.casefold()}")
             else:
