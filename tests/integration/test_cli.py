@@ -1,12 +1,14 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from ste_compiler.cli import app
 from ste_compiler.ir.models import Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document
+from ste_compiler.training import TrainingRecordValidationError, build_training_record
 
 ROOT = Path(__file__).parents[2]
 runner = CliRunner()
@@ -46,6 +48,45 @@ def test_cli_exports_symbolic_training_record():
     assert "TERM_hydraulic_pressure|hydraulic%20pressure" in record["allowed_symbols"]
     assert "NUMBER_20" in record["symbols"]
     assert json.loads(record["serialized_ir"])["id"] == "warning_pressure"
+
+
+def test_direct_training_record_rejects_forbidden_alias(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={"manner": "system pressure"}
+    )
+
+    with pytest.raises(TrainingRecordValidationError) as captured:
+        build_training_record(document, vocab, terms)
+
+    assert captured.value.report.status == "rejected"
+    assert {item.code for item in captured.value.report.violations} == {"TERMINOLOGY_ALIAS"}
+
+
+def test_cli_training_plan_rejects_forbidden_alias_consistently_with_compile(tmp_path):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={"manner": "system pressure"}
+    )
+    source = tmp_path / "forbidden_alias.json"
+    source.write_text(dumps_document(document, as_json=True))
+
+    compiled = runner.invoke(app, ["compile", str(source)])
+    planned = runner.invoke(app, ["plan-symbols", str(source)])
+    planned_json = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    expected = "ERROR TERMINOLOGY_ALIAS: Use the canonical term instead of 'system pressure'."
+    assert compiled.exit_code == planned.exit_code == 1
+    assert expected in compiled.stdout
+    assert planned.stdout == f"{expected}\n"
+    assert "PLAN_EXACT_WHITESPACE_V1" not in planned.stdout
+    assert planned_json.exit_code == 1
+    rejected_report = json.loads(planned_json.stdout)
+    assert rejected_report["status"] == "rejected"
+    assert [item["code"] for item in rejected_report["violations"]] == ["TERMINOLOGY_ALIAS"]
+    assert "symbols" not in rejected_report
 
 
 def test_cli_training_plan_preserves_negative_quantity_symbol(tmp_path):
@@ -163,6 +204,48 @@ def test_cli_training_plan_preserves_capitalized_first_term_surface(tmp_path):
     record = json.loads(result.stdout)
     exact_term = "TERM_access_panel|Access%20panel"
     assert record["text"] == "Access panel is safe."
+    assert record["symbols"].startswith(f"PLAN_EXACT_WHITESPACE_V1 {exact_term} SPACE")
+    assert exact_term in record["allowed_symbols"]
+
+
+def test_cli_training_plan_preserves_unicode_casefold_expansion(
+    tmp_path, monkeypatch, vocab, terms
+):
+    custom_terms = type(terms)(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "ß", "aliases": []})
+                    if term.id == "access_panel"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr("ste_compiler.cli.resources", lambda: (vocab, custom_terms))
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"] = [
+        {
+            "kind": "state",
+            "id": "state_001",
+            "subject": {"term_id": "access_panel"},
+            "predicate": "is",
+            "value": "safe",
+            "source_spans": [],
+        }
+    ]
+    document = type(document).model_validate(raw)
+    source = tmp_path / "unicode_casefold.json"
+    source.write_text(dumps_document(document, as_json=True))
+
+    result = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    exact_term = "TERM_access_panel|SS"
+    assert record["text"] == "SS is safe."
     assert record["symbols"].startswith(f"PLAN_EXACT_WHITESPACE_V1 {exact_term} SPACE")
     assert exact_term in record["allowed_symbols"]
 

@@ -4,7 +4,7 @@ import re
 from urllib.parse import quote, unquote
 
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
-from ste_compiler.terminology.boundaries import has_unit_boundaries
+from ste_compiler.terminology.boundaries import has_unit_boundaries, whole_casefold_spans
 
 NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
 NUMBER_SYMBOL = re.compile(rf"NUMBER_{NUMBER}")
@@ -217,6 +217,11 @@ class SymbolicLexicalizer:
             key=lambda term: len(term.canonical_form),
             reverse=True,
         )
+        term_matches = {
+            start: (end, term)
+            for term in reversed(terms)
+            for start, end in whole_casefold_spans(text, term.canonical_form)
+        }
         units = sorted(self.vocabulary.unit_forms.values(), key=len, reverse=True)
         while position < len(text):
             if text[position].isspace():
@@ -227,19 +232,11 @@ class SymbolicLexicalizer:
                 position += 1
                 continue
 
-            matched_term = None
-            for term in terms:
-                end = position + len(term.canonical_form)
-                if text[position:end].casefold() != term.canonical_form.casefold():
-                    continue
-                if end < len(text) and (text[end].isalnum() or text[end] in "_-"):
-                    continue
-                matched_term = term
-                break
+            matched_term = term_matches.get(position)
             if matched_term is not None:
-                end = position + len(matched_term.canonical_form)
-                symbols.append(_term_symbol(matched_term.id, text[position:end]))
-                position += len(matched_term.canonical_form)
+                end, term = matched_term
+                symbols.append(_term_symbol(term.id, text[position:end]))
+                position = end
                 continue
 
             matched_unit = None

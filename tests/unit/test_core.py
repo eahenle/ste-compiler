@@ -17,8 +17,9 @@ from ste_compiler.ir.serialization import (
 from ste_compiler.realizer import DeterministicRealizer, NeuralRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+from ste_compiler.terminology.boundaries import whole_casefold_spans
 from ste_compiler.validators.alignment import align_controlled_text
-from ste_compiler.validators.lexical import LexicalValidator, _whole_casefold_spans
+from ste_compiler.validators.lexical import LexicalValidator
 from ste_compiler.validators.semantic import SemanticValidator
 from ste_compiler.validators.structural import StructuralValidator
 
@@ -1172,11 +1173,135 @@ def test_unicode_casefold_masking_retains_original_diagnostic_spans(vocab, terms
 
 
 def test_unicode_casefold_matching_requires_original_character_boundaries():
-    assert _whole_casefold_spans("Straße", "strasse") == ((0, 6),)
-    assert _whole_casefold_spans("ß", "ss") == ((0, 1),)
-    assert _whole_casefold_spans("ß", "s") == ()
-    assert _whole_casefold_spans("XSTRASSE", "strasse") == ()
-    assert _whole_casefold_spans("STRASSE_y", "strasse") == ()
+    assert whole_casefold_spans("Straße", "strasse") == ((0, 6),)
+    assert whole_casefold_spans("ß", "ss") == ((0, 1),)
+    assert whole_casefold_spans("ß", "s") == ()
+    assert whole_casefold_spans("XSTRASSE", "strasse") == ()
+    assert whole_casefold_spans("STRASSE_y", "strasse") == ()
+
+
+def test_symbolizer_uses_original_span_for_unicode_casefold_expansion(vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "Straße", "aliases": []})
+                    if term.id == "hydraulic_pressure"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+
+    symbols = SymbolicLexicalizer(vocab, custom_terms).symbolize("STRASSE.")
+
+    assert symbols == "PLAN_EXACT_WHITESPACE_V1 TERM_hydraulic_pressure|STRASSE PERIOD"
+
+
+@pytest.mark.parametrize(
+    ("canonical_form", "observed_surface"),
+    [
+        ("Straße", "STRASSE"),
+        ("STRASSE", "Straße"),
+    ],
+)
+def test_unicode_casefold_term_symbols_round_trip(canonical_form, observed_surface, vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": canonical_form, "aliases": []})
+                    if term.id == "hydraulic_pressure"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    lexicalizer = SymbolicLexicalizer(vocab, custom_terms)
+    text = f"{observed_surface}."
+
+    symbols = lexicalizer.symbolize(text)
+
+    assert lexicalizer.lexicalize(symbols) == text
+
+
+def test_neural_realizer_handles_sentence_initial_casefold_expansion(vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "ß", "aliases": []})
+                    if term.id == "access_panel"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"] = [
+        {
+            "kind": "state",
+            "id": "state_001",
+            "subject": {"term_id": "access_panel"},
+            "predicate": "is",
+            "value": "safe",
+            "source_spans": [],
+        }
+    ]
+    document = Document.model_validate(raw)
+    lexicalizer = SymbolicLexicalizer(vocab, custom_terms)
+    expected = DeterministicRealizer().realize(document, vocab, custom_terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert expected.text == "SS is safe."
+    assert "TERM_access_panel|SS" in expected_plan.split()
+
+    class Generator:
+        model_id = "offline-unicode-casefold-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            assert serialized_ir == canonical_document_json(document)
+            assert allowed_symbols == frozenset(expected_plan.split())
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, custom_terms)
+
+    assert result.text == expected.text
+    assert result.mappings == expected.mappings
+
+
+def test_symbolizer_does_not_match_casefolded_terms_inside_words(vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "Straße", "aliases": []})
+                    if term.id == "hydraulic_pressure"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+    template = vocab.data.entries[0]
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(
+            update={
+                "entries": [
+                    *vocab.data.entries,
+                    template.model_copy(update={"lemma": "XSTRASSE", "inflections": []}),
+                    template.model_copy(update={"lemma": "STRASSEsafe", "inflections": []}),
+                ]
+            }
+        )
+    )
+
+    symbols = SymbolicLexicalizer(custom_vocab, custom_terms).symbolize("XSTRASSE STRASSEsafe")
+
+    assert symbols == ("PLAN_EXACT_WHITESPACE_V1 WORD_XSTRASSE SPACE WORD_STRASSEsafe")
 
 
 @pytest.mark.parametrize("text", ["20°C.", "20m/s."])
