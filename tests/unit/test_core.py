@@ -18,7 +18,7 @@ from ste_compiler.realizer import DeterministicRealizer, NeuralRealizer
 from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.validators.alignment import align_controlled_text
-from ste_compiler.validators.lexical import LexicalValidator
+from ste_compiler.validators.lexical import LexicalValidator, _whole_casefold_spans
 from ste_compiler.validators.semantic import SemanticValidator
 from ste_compiler.validators.structural import StructuralValidator
 
@@ -448,6 +448,60 @@ def test_neural_realizer_rejects_markerless_legacy_casing_bypass(vocab, terms):
         match="must begin with PLAN_EXACT_WHITESPACE_V1",
     ):
         NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+
+def test_neural_realizer_withholds_mappings_for_swapped_surface_casing(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"] = [
+        {
+            "kind": "state",
+            "id": "state_001",
+            "subject": {"term_id": "access_panel"},
+            "predicate": "is",
+            "value": "access panel safe Safe",
+            "source_spans": [],
+        }
+    ]
+    document = Document.model_validate(raw)
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    generated_symbols = lexicalizer.symbolize(expected.text).split()
+    first_term = generated_symbols.index("TERM_access_panel|Access%20panel")
+    second_term = generated_symbols.index("TERM_access_panel|access%20panel")
+    lower_word = generated_symbols.index("WORD_safe")
+    upper_word = generated_symbols.index("WORD_Safe")
+    generated_symbols[first_term], generated_symbols[second_term] = (
+        generated_symbols[second_term],
+        generated_symbols[first_term],
+    )
+    generated_symbols[lower_word], generated_symbols[upper_word] = (
+        generated_symbols[upper_word],
+        generated_symbols[lower_word],
+    )
+    generated_plan = " ".join(generated_symbols)
+
+    class Generator:
+        model_id = "offline-swapped-case-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert set(generated_symbols) <= allowed_symbols
+            return generated_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+    assert expected.text == "Access panel is access panel safe Safe."
+    assert result.text == "access panel is Access panel Safe safe."
+    assert result.metadata["whitespace_layout_preserved"] == "true"
+    assert all(
+        mapping.ir_node_ids for mapping in align_controlled_text(result.text, expected).mappings
+    )
+    assert all(not mapping.ir_node_ids for mapping in result.mappings)
+    assert {diagnostic.code for diagnostic in SemanticValidator().validate(document, result)} == {
+        "REQUIRED_NODE_OMITTED",
+        "UNSUPPORTED_SEMANTIC_CHANGE",
+    }
 
 
 def test_neural_realizer_rejects_alphabetically_attached_configured_unit(vocab, terms):
@@ -1049,6 +1103,80 @@ def test_lexical_validator_detects_punctuation_delimited_aliases(alias, vocab, t
     diagnostics = LexicalValidator(vocab, registry).validate(alias)
 
     assert [diagnostic.code for diagnostic in diagnostics] == ["TERMINOLOGY_ALIAS"]
+
+
+def test_lexical_validator_masks_unicode_casefolded_canonical_form(vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "Straße", "aliases": []})
+                    if term.id == "hydraulic_pressure"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+
+    assert not LexicalValidator(vocab, custom_terms).validate("STRASSE.")
+
+
+def test_lexical_validator_detects_unicode_casefolded_alias(vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(
+                        update={
+                            "canonical_form": "street",
+                            "aliases": ["Straße"],
+                        }
+                    )
+                    if term.id == "hydraulic_pressure"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+
+    diagnostics = LexicalValidator(vocab, custom_terms).validate("STRASSE.")
+
+    assert [diagnostic.code for diagnostic in diagnostics] == ["TERMINOLOGY_ALIAS"]
+    assert diagnostics[0].suggestions == ["street"]
+
+
+def test_unicode_casefold_masking_retains_original_diagnostic_spans(vocab, terms):
+    custom_terms = TerminologyRegistry(
+        terms.data.model_copy(
+            update={
+                "terms": [
+                    term.model_copy(update={"canonical_form": "Straße", "aliases": []})
+                    if term.id == "hydraulic_pressure"
+                    else term
+                    for term in terms.data.terms
+                ]
+            }
+        )
+    )
+
+    diagnostics = LexicalValidator(vocab, custom_terms).validate("Straße commence.")
+
+    unauthorized = next(
+        diagnostic for diagnostic in diagnostics if diagnostic.code == "UNAUTHORIZED_WORD"
+    )
+    assert unauthorized.span is not None
+    assert unauthorized.span.start == 7
+    assert unauthorized.span.end == 15
+
+
+def test_unicode_casefold_matching_requires_original_character_boundaries():
+    assert _whole_casefold_spans("Straße", "strasse") == ((0, 6),)
+    assert _whole_casefold_spans("ß", "ss") == ((0, 1),)
+    assert _whole_casefold_spans("ß", "s") == ()
+    assert _whole_casefold_spans("XSTRASSE", "strasse") == ()
+    assert _whole_casefold_spans("STRASSE_y", "strasse") == ()
 
 
 @pytest.mark.parametrize("text", ["20°C.", "20m/s."])

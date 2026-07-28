@@ -63,7 +63,7 @@ class NeuralRealizer:
         )
         whitespace_layout_preserved = has_exact_whitespace_layout(text, deterministic.text)
         alignment_reference = (
-            deterministic if whitespace_layout_preserved else replace(deterministic, mappings=())
+            deterministic if text == deterministic.text else replace(deterministic, mappings=())
         )
         aligned = align_controlled_text(text, alignment_reference)
         return RealizationResult(
