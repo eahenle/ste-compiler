@@ -33,6 +33,7 @@ jobs:
           version: "0.11.25"
           enable-cache: true
           cache-dependency-glob: pyproject.toml
+          cache-suffix: quality
       - name: Check formatting
         run: uv run --extra dev ruff format --check .
       - name: Lint
