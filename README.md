@@ -52,10 +52,11 @@ revision-qualified model ID and both exact digests are retained in realization m
 lazy optional imports, disables remote model code, requires safetensors for both the base and
 adapter, resolves the adapter to one checked local snapshot, and requires its LoRA `CAUSAL_LM`
 configuration to name the exact configured base model revision. Generation explicitly neutralizes
-inherited non-greedy modes, requires one batch of integer token IDs, and remains constrained to the
-document-specific symbol set plus EOS. Pinning records identity; deployments must still authorize
-the selected artifact repositories. This repository does not include trained weights, training
-results, or a model-quality claim.
+inherited non-greedy and minimum-length modes so EOS remains available at valid symbol boundaries,
+requires one batch of integer token IDs, and remains constrained to the document-specific symbol
+set plus EOS. Pinning records identity; deployments must still authorize the selected artifact
+repositories. This repository does not include trained weights, training results, or a
+model-quality claim.
 
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 

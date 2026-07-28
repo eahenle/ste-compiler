@@ -437,6 +437,8 @@ class DecoderOnlyLoRASymbolGenerator:
             force_words_ids=None,
             assistant_model=None,
             prompt_lookup_num_tokens=None,
+            min_length=0,
+            min_new_tokens=0,
             max_new_tokens=self.config.max_new_tokens,
             pad_token_id=grammar.eos_token_id if pad_token_id is None else pad_token_id,
             eos_token_id=grammar.eos_token_id,

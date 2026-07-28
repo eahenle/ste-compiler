@@ -212,6 +212,8 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         force_words_ids=[[123]],
         assistant_model=object(),
         prompt_lookup_num_tokens=8,
+        min_length=256,
+        min_new_tokens=128,
     )
     generator = DecoderOnlyLoRASymbolGenerator(
         _config(),
@@ -240,6 +242,8 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
             "force_words_ids",
             "assistant_model",
             "prompt_lookup_num_tokens",
+            "min_length",
+            "min_new_tokens",
         )
     } == {
         "do_sample": False,
@@ -253,6 +257,8 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
         "force_words_ids": None,
         "assistant_model": None,
         "prompt_lookup_num_tokens": None,
+        "min_length": 0,
+        "min_new_tokens": 0,
     }
 
 

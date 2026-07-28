@@ -20,8 +20,10 @@ A prefix trie or character-level finite-state machine can constrain symbol synta
 The decoder-only LoRA adapter implements the token-grammar option with Hub-only base and adapter
 identities pinned by full lowercase 40-character commit digests. Both exact digests are retained
 separately in metadata alongside the revision-qualified model ID. Generation is explicitly
-sanitized, greedy, single-example, and accepted only as one batch of integer token IDs with
-explicit EOS termination and a lossless tokenizer round-trip check for every allowed symbol form.
+sanitized, greedy, and single-example; inherited minimum-length settings are reset so EOS remains
+available at every valid symbol boundary. Output is accepted only as one batch of integer token IDs
+with explicit EOS termination and a lossless tokenizer round-trip check for every allowed symbol
+form.
 The loader requires safetensors, resolves and reuses one checked adapter snapshot, validates the
 pinned adapter as LoRA for the exact configured causal LM commit, and lazy-loads Transformers and
 PEFT only when the adapter is constructed without injected test doubles. See
