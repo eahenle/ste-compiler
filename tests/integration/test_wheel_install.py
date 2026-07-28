@@ -67,7 +67,7 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
     )
     training_record = json.loads(planned.stdout)
     assert "WORD_occur" in training_record["allowed_symbols"]
-    assert "TERM_hydraulic_pressure" in training_record["symbols"]
+    assert "TERM_hydraulic_pressure|hydraulic%20pressure" in training_record["symbols"]
 
     reports = tmp_path / "reports"
     subprocess.run(

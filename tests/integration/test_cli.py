@@ -43,7 +43,7 @@ def test_cli_exports_symbolic_training_record():
     assert result.exit_code == 0
     record = json.loads(result.stdout)
     assert record["document_id"] == "warning_pressure"
-    assert "TERM_hydraulic_pressure" in record["allowed_symbols"]
+    assert "TERM_hydraulic_pressure|hydraulic%20pressure" in record["allowed_symbols"]
     assert "NUMBER_20" in record["symbols"]
     assert json.loads(record["serialized_ir"])["id"] == "warning_pressure"
 
@@ -101,7 +101,7 @@ def test_cli_training_plan_round_trips_quoted_manner(tmp_path):
     record = json.loads(result.stdout)
     assert record["text"] == 'Install the access panel "safe".'
     assert record["symbols"].endswith(
-        "TERM_access_panel SPACE PUNCT_U0022 WORD_safe PUNCT_U0022 PERIOD"
+        "TERM_access_panel|access%20panel SPACE PUNCT_U0022 WORD_safe PUNCT_U0022 PERIOD"
     )
     assert "PUNCT_U0022" in record["allowed_symbols"]
 
@@ -138,6 +138,33 @@ def test_cli_training_plan_preserves_exact_word_case_after_question(tmp_path):
     assert record["symbols"].startswith("PLAN_EXACT_WHITESPACE_V1 WORD_Install SPACE")
     assert record["symbols"].endswith("WORD_safe QUESTION SPACE WORD_slowly PERIOD")
     assert {"WORD_Install", "WORD_slowly"} <= set(record["allowed_symbols"])
+
+
+def test_cli_training_plan_preserves_capitalized_first_term_surface(tmp_path):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"] = [
+        {
+            "kind": "state",
+            "id": "state_001",
+            "subject": {"term_id": "access_panel"},
+            "predicate": "is",
+            "value": "safe",
+            "source_spans": [],
+        }
+    ]
+    document = type(document).model_validate(raw)
+    source = tmp_path / "first_term_surface.json"
+    source.write_text(dumps_document(document, as_json=True))
+
+    result = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    exact_term = "TERM_access_panel|Access%20panel"
+    assert record["text"] == "Access panel is safe."
+    assert record["symbols"].startswith(f"PLAN_EXACT_WHITESPACE_V1 {exact_term} SPACE")
+    assert exact_term in record["allowed_symbols"]
 
 
 def test_validate_text_does_not_inherit_expected_semantics(tmp_path):

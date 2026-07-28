@@ -222,12 +222,17 @@ def test_markerless_symbolic_plans_retain_legacy_implicit_spacing(vocab, terms):
 
 
 def test_symbolic_plan_escapes_terminology_ids(vocab, terms):
-    encoded_id = "access panel/v1"
+    encoded_id = "access|panel/v1"
     custom_terms = TerminologyRegistry(
         terms.data.model_copy(
             update={
                 "terms": [
-                    term.model_copy(update={"id": encoded_id})
+                    term.model_copy(
+                        update={
+                            "id": encoded_id,
+                            "canonical_form": "access|panel",
+                        }
+                    )
                     if term.id == "access_panel"
                     else term
                     for term in terms.data.terms
@@ -237,13 +242,36 @@ def test_symbolic_plan_escapes_terminology_ids(vocab, terms):
     )
     lexicalizer = SymbolicLexicalizer(vocab, custom_terms)
 
-    symbols = lexicalizer.symbolize("access panel")
+    symbols = lexicalizer.symbolize("aCcEsS|PaNeL")
 
-    assert symbols == "PLAN_EXACT_WHITESPACE_V1 TERM_access%20panel%2Fv1"
+    assert symbols == ("PLAN_EXACT_WHITESPACE_V1 TERM_access%7Cpanel%2Fv1|aCcEsS%7CPaNeL")
     assert (
         lexicalizer.lexicalize(symbols, allowed_symbols=frozenset(symbols.split()))
-        == "access panel"
+        == "aCcEsS|PaNeL"
     )
+
+
+def test_exact_term_surface_rejects_tampering_after_allowlist_check(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    valid = "TERM_access_panel|Access%20panel"
+    tampered = "TERM_access_panel|shutoff%20valve"
+    allowed = frozenset({"PLAN_EXACT_WHITESPACE_V1", valid})
+
+    with pytest.raises(ValueError, match="not allowed"):
+        lexicalizer.lexicalize(
+            f"PLAN_EXACT_WHITESPACE_V1 {tampered}",
+            allowed_symbols=allowed,
+        )
+    with pytest.raises(ValueError, match="unauthorized term symbol"):
+        lexicalizer.lexicalize(
+            f"PLAN_EXACT_WHITESPACE_V1 {tampered}",
+        )
+
+
+def test_markerless_term_symbol_retains_legacy_canonical_surface(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+
+    assert lexicalizer.lexicalize("TERM_access_panel") == "access panel"
 
 
 @pytest.mark.parametrize(
@@ -331,6 +359,42 @@ def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     assert result.metadata["alignment"] == "deterministic-surface-v1"
     assert result.metadata["whitespace_alignment"] == "exact-layout-v1"
     assert result.metadata["whitespace_layout_preserved"] == "true"
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_preserves_capitalized_first_term_surface(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"] = [
+        {
+            "kind": "state",
+            "id": "state_001",
+            "subject": {"term_id": "access_panel"},
+            "predicate": "is",
+            "value": "safe",
+            "source_spans": [],
+        }
+    ]
+    document = Document.model_validate(raw)
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    expected_term = "TERM_access_panel|Access%20panel"
+    assert expected.text == "Access panel is safe."
+    assert expected_term in expected_plan.split()
+
+    class Generator:
+        model_id = "offline-first-term-surface-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert expected_term in allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+    assert result.text == expected.text
+    assert result.mappings == expected.mappings
     assert not SemanticValidator().validate(document, result)
 
 
@@ -588,7 +652,11 @@ def test_neural_realizer_aligns_opaque_casing_and_internal_periods(vocab, terms)
 
         def generate_symbols(self, serialized_ir, allowed_symbols):
             del serialized_ir
-            assert {"WORD_APU", "UNIT_N.m", "TERM_access_panel"} <= allowed_symbols
+            assert {
+                "WORD_APU",
+                "UNIT_N.m",
+                "TERM_access_panel|No.%20valve",
+            } <= allowed_symbols
             return expected_plan
 
     result = NeuralRealizer(Generator()).realize(document, custom_vocab, custom_terms)
@@ -647,7 +715,7 @@ def test_neural_realizer_aligns_spaced_punctuation(vocab, terms):
 
 
 def test_neural_realizer_aligns_adjacency_and_escaped_term_id(vocab, terms):
-    encoded_id = "access panel/v1"
+    encoded_id = "access|panel/v1"
     custom_terms = TerminologyRegistry(
         terms.data.model_copy(
             update={
@@ -680,7 +748,7 @@ def test_neural_realizer_aligns_adjacency_and_escaped_term_id(vocab, terms):
             del serialized_ir
             assert {
                 "PLAN_EXACT_WHITESPACE_V1",
-                "TERM_access%20panel%2Fv1",
+                "TERM_access%7Cpanel%2Fv1|access%20panel",
                 "PUNCT_U003B",
             } <= allowed_symbols
             return expected_plan
@@ -701,7 +769,13 @@ def test_neural_realizer_does_not_trust_reordered_allowed_symbols(vocab, terms):
         def generate_symbols(self, serialized_ir, allowed_symbols):
             del serialized_ir
             assert "WORD_not" in allowed_symbols
-            return "WORD_open WORD_Do WORD_not WORD_the TERM_shutoff_valve PERIOD"
+            term_symbol = next(
+                symbol for symbol in allowed_symbols if symbol.startswith("TERM_shutoff_valve|")
+            )
+            return (
+                "PLAN_EXACT_WHITESPACE_V1 WORD_open SPACE WORD_Do SPACE "
+                f"WORD_not SPACE WORD_the SPACE {term_symbol} PERIOD"
+            )
 
     result = NeuralRealizer(Generator()).realize(document, vocab, terms)
     diagnostics = SemanticValidator().validate(document, result)

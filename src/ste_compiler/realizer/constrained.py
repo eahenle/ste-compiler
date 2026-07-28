@@ -23,6 +23,7 @@ WHITESPACE_SYMBOL = re.compile(r"WS_U([0-9A-F]{4,6})")
 OPENING_PUNCTUATION = frozenset("([{“‘")
 JOINING_PUNCTUATION = frozenset({"'", "-", "/", "\\", "–", "—", "’"})
 EXACT_PLAN_SYMBOL = "PLAN_EXACT_WHITESPACE_V1"
+TERM_SURFACE_SEPARATOR = "|"
 
 
 def _unit_symbol(unit: str) -> str:
@@ -33,8 +34,8 @@ def _word_symbol(word: str) -> str:
     return f"WORD_{quote(word, safe='')}"
 
 
-def _term_symbol(term_id: str) -> str:
-    return f"TERM_{quote(term_id, safe='')}"
+def _term_symbol(term_id: str, surface: str) -> str:
+    return f"TERM_{quote(term_id, safe='')}{TERM_SURFACE_SEPARATOR}{quote(surface, safe='')}"
 
 
 def _punctuation_symbol(punctuation: str) -> str:
@@ -170,7 +171,20 @@ class SymbolicLexicalizer:
                     raise ValueError(f"unauthorized word symbol: {symbol}")
             elif symbol.startswith("TERM_"):
                 try:
-                    value = self.terminology.get(unquote(symbol[5:])).canonical_form
+                    payload = symbol[5:]
+                    if exact_whitespace:
+                        fields = payload.split(TERM_SURFACE_SEPARATOR)
+                        if len(fields) != 2:
+                            raise ValueError("exact term symbol requires identity and surface")
+                        term_id, observed_surface = (unquote(field) for field in fields)
+                        canonical_form = self.terminology.get(term_id).canonical_form
+                        if observed_surface.casefold() != canonical_form.casefold():
+                            raise ValueError(
+                                "exact term surface does not match its canonical identity"
+                            )
+                        value = observed_surface
+                    else:
+                        value = self.terminology.get(unquote(payload)).canonical_form
                 except (KeyError, ValueError) as error:
                     raise ValueError(f"unauthorized term symbol: {symbol}") from error
             elif symbol.startswith("UNIT_"):
@@ -222,7 +236,8 @@ class SymbolicLexicalizer:
                 matched_term = term
                 break
             if matched_term is not None:
-                symbols.append(_term_symbol(matched_term.id))
+                end = position + len(matched_term.canonical_form)
+                symbols.append(_term_symbol(matched_term.id, text[position:end]))
                 position += len(matched_term.canonical_form)
                 continue
 
