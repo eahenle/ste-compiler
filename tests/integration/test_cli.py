@@ -4,6 +4,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from ste_compiler.cli import app
+from ste_compiler.ir.models import Quantity
+from ste_compiler.ir.serialization import dumps_document, load_document
 
 ROOT = Path(__file__).parents[2]
 runner = CliRunner()
@@ -43,6 +45,31 @@ def test_cli_exports_symbolic_training_record():
     assert "TERM_hydraulic_pressure" in record["allowed_symbols"]
     assert "NUMBER_20" in record["symbols"]
     assert json.loads(record["serialized_ir"])["id"] == "warning_pressure"
+
+
+def test_cli_training_plan_preserves_negative_quantity_symbol(tmp_path):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    instruction = document.sections[0].statements[0]
+    negative_quantity = Quantity(value=-20, unit="MPa", comparator="more_than")
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={
+            "quantity_constraints": [
+                instruction.quantity_constraints[0].model_copy(
+                    update={"quantity": negative_quantity}
+                )
+            ]
+        }
+    )
+    source = tmp_path / "negative_quantity.json"
+    source.write_text(dumps_document(document, as_json=True))
+
+    result = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    assert "NUMBER_-20" in record["allowed_symbols"]
+    assert "NUMBER_-20" in record["symbols"].split()
+    assert "PUNCT_U002D" not in record["symbols"].split()
 
 
 def test_validate_text_does_not_inherit_expected_semantics(tmp_path):

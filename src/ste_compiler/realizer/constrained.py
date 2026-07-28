@@ -160,6 +160,12 @@ class SymbolicLexicalizer:
                 position += len(matched_unit)
                 continue
 
+            number = NUMBER_TEXT.match(text, position)
+            if number is not None:
+                symbols.append(f"NUMBER_{number.group()}")
+                position = number.end()
+                continue
+
             character = text[position]
             if character in TEXT_PUNCTUATION:
                 symbols.append(TEXT_PUNCTUATION[character])
@@ -168,12 +174,6 @@ class SymbolicLexicalizer:
             if PUNCTUATION_TEXT.fullmatch(character):
                 symbols.append(_punctuation_symbol(character))
                 position += 1
-                continue
-
-            number = NUMBER_TEXT.match(text, position)
-            if number is not None:
-                symbols.append(f"NUMBER_{number.group()}")
-                position = number.end()
                 continue
 
             word = WORD_TEXT.match(text, position)
