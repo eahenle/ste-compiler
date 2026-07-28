@@ -2,6 +2,7 @@ import re
 
 from ste_compiler.diagnostics import Diagnostic, Severity
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+from ste_compiler.terminology.boundaries import mask_unit_surface
 
 NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
 TOKEN = re.compile(rf"{NUMBER}|[A-Za-z]+(?:-[A-Za-z]+)?|[^\w\s]")
@@ -9,12 +10,6 @@ TOKEN = re.compile(rf"{NUMBER}|[A-Za-z]+(?:-[A-Za-z]+)?|[^\w\s]")
 
 def _whole_form(form: str) -> str:
     return rf"(?<!\w){re.escape(form)}(?!\w)"
-
-
-def _whole_unit(unit: str) -> str:
-    """Allow numeric adjacency while excluding letters and underscores."""
-
-    return rf"(?<![^\W\d]){re.escape(unit)}(?![^\W\d])"
 
 
 class LexicalValidator:
@@ -39,7 +34,7 @@ class LexicalValidator:
         ):
             masked = re.sub(_whole_form(form), " ", masked, flags=re.IGNORECASE)
         for unit in sorted(self.vocabulary.units, key=len, reverse=True):
-            masked = re.sub(_whole_unit(unit), " ", masked)
+            masked = mask_unit_surface(masked, unit)
         sentence = 1
         for match in TOKEN.finditer(masked):
             token = match.group()

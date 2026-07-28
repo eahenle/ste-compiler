@@ -4,6 +4,7 @@ import re
 from urllib.parse import quote, unquote
 
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
+from ste_compiler.terminology.boundaries import has_unit_boundaries
 
 NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
 NUMBER_SYMBOL = re.compile(rf"NUMBER_{NUMBER}")
@@ -246,7 +247,7 @@ class SymbolicLexicalizer:
                 end = position + len(unit_form)
                 if text[position:end] != unit_form:
                     continue
-                if end < len(text) and unit_form[-1].isalnum() and text[end].isalnum():
+                if not has_unit_boundaries(text, position, end):
                     continue
                 matched_unit = unit_form
                 break

@@ -115,6 +115,60 @@ def test_symbolic_plan_preserves_configured_nonword_units(vocab, terms):
     assert lexicalizer.lexicalize(symbols) == text
 
 
+@pytest.mark.parametrize(
+    ("text", "expected_symbols"),
+    [
+        (
+            "20°C.",
+            "PLAN_EXACT_WHITESPACE_V1 NUMBER_20 UNIT_%C2%B0C PERIOD",
+        ),
+        (
+            "20m/s.",
+            "PLAN_EXACT_WHITESPACE_V1 NUMBER_20 UNIT_m%2Fs PERIOD",
+        ),
+        (
+            "°C.",
+            "PLAN_EXACT_WHITESPACE_V1 UNIT_%C2%B0C PERIOD",
+        ),
+        (
+            "safe °C.",
+            "PLAN_EXACT_WHITESPACE_V1 WORD_safe SPACE UNIT_%C2%B0C PERIOD",
+        ),
+        (
+            "safe,°C.",
+            "PLAN_EXACT_WHITESPACE_V1 WORD_safe COMMA UNIT_%C2%B0C PERIOD",
+        ),
+    ],
+)
+def test_symbolic_plan_uses_units_at_valid_numeric_and_surface_boundaries(
+    text, expected_symbols, vocab, terms
+):
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(update={"units": [*vocab.data.units, "°C", "m/s"]})
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
+
+    symbols = lexicalizer.symbolize(text)
+
+    assert symbols == expected_symbols
+    assert lexicalizer.lexicalize(symbols) == text
+    assert not LexicalValidator(custom_vocab, terms).validate(text)
+
+
+@pytest.mark.parametrize("text", ["safe°C.", "safem/s.", "safe_°C."])
+def test_symbolic_plan_rejects_units_attached_to_alphabetic_or_underscore(text, vocab, terms):
+    custom_vocab = Vocabulary(
+        vocab.data.model_copy(update={"units": [*vocab.data.units, "°C", "m/s"]})
+    )
+    lexicalizer = SymbolicLexicalizer(custom_vocab, terms)
+
+    with pytest.raises(ValueError, match="cannot symbolize|unauthorized word"):
+        lexicalizer.symbolize(text)
+    assert "UNAUTHORIZED_WORD" in {
+        diagnostic.code for diagnostic in LexicalValidator(custom_vocab, terms).validate(text)
+    }
+
+
 @given(punctuation=st.from_regex(r"[^\w\s]", fullmatch=True))
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_symbolic_plan_represents_every_accepted_punctuation(punctuation, vocab, terms):
@@ -360,6 +414,24 @@ def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     assert result.metadata["whitespace_alignment"] == "exact-layout-v1"
     assert result.metadata["whitespace_layout_preserved"] == "true"
     assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_rejects_alphabetically_attached_configured_unit(vocab, terms):
+    custom_vocab = Vocabulary(vocab.data.model_copy(update={"units": [*vocab.data.units, "°C"]}))
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(update={"manner": "safe°C"})
+
+    class Generator:
+        model_id = "must-not-run"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            raise AssertionError(
+                f"generator called for invalid plan: {serialized_ir}, {allowed_symbols}"
+            )
+
+    with pytest.raises(ValueError, match="unauthorized word"):
+        NeuralRealizer(Generator()).realize(document, custom_vocab, terms)
 
 
 def test_neural_realizer_preserves_capitalized_first_term_surface(vocab, terms):
