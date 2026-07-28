@@ -22,7 +22,12 @@ dev = [
   "ruff>=0.8",
   "types-PyYAML>=6.0",
 ]
-neural = ["transformers>=4.45", "peft>=0.13", "torch>=2.4"]
+neural = [
+  "huggingface-hub>=0.25",
+  "transformers>=4.45",
+  "peft>=0.13",
+  "torch>=2.4",
+]
 
 [project.scripts]
 ste-compiler = "ste_compiler.cli:app"
