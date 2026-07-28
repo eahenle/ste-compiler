@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
+import secrets
 from pathlib import Path
 from typing import TypedDict
 
@@ -220,6 +223,79 @@ def _reject_output_aliases(paths: list[Path], output: Path) -> None:
             )
 
 
+def _unlink_temporary(directory_fd: int, name: str) -> None:
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        pass
+
+
+def _write_temporary_artifact(directory_fd: int, data: bytes) -> str:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    for _ in range(128):
+        name = f".ste-compiler-{secrets.token_hex(16)}.tmp"
+        try:
+            file_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
+        except FileExistsError:
+            continue
+        try:
+            remaining = memoryview(data)
+            while remaining:
+                written = os.write(file_fd, remaining)
+                if written == 0:
+                    raise OSError("failed to write complete corpus artifact")
+                remaining = remaining[written:]
+            os.fsync(file_fd)
+            os.close(file_fd)
+            file_fd = -1
+        except BaseException:
+            if file_fd >= 0:
+                try:
+                    os.close(file_fd)
+                except OSError:
+                    pass
+            _unlink_temporary(directory_fd, name)
+            raise
+        return name
+    raise FileExistsError("could not create a unique temporary corpus artifact")
+
+
+def _atomic_replace(directory_fd: int, temporary_name: str, artifact_name: str) -> None:
+    os.replace(
+        temporary_name,
+        artifact_name,
+        src_dir_fd=directory_fd,
+        dst_dir_fd=directory_fd,
+    )
+
+
+def _fsync_directory(directory_fd: int) -> None:
+    try:
+        os.fsync(directory_fd)
+    except OSError as error:
+        if error.errno not in {errno.EINVAL, errno.ENOTSUP}:
+            raise
+
+
+def _publish_artifacts(output: Path, artifacts: tuple[tuple[str, bytes], ...]) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    directory_fd = os.open(output, directory_flags)
+    temporary_names: dict[str, str] = {}
+    try:
+        for artifact_name, data in artifacts:
+            temporary_names[artifact_name] = _write_temporary_artifact(directory_fd, data)
+        for artifact_name, _ in artifacts:
+            temporary_name = temporary_names[artifact_name]
+            _atomic_replace(directory_fd, temporary_name, artifact_name)
+            del temporary_names[artifact_name]
+        _fsync_directory(directory_fd)
+    finally:
+        for temporary_name in temporary_names.values():
+            _unlink_temporary(directory_fd, temporary_name)
+        os.close(directory_fd)
+
+
 def export_symbolic_corpus(
     source: Path,
     output: Path,
@@ -263,10 +339,14 @@ def export_symbolic_corpus(
         profiles=[profile_by_json[key] for key in sorted(profile_by_json)],
     )
 
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "corpus.jsonl").write_bytes(corpus_bytes)
-    (output / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    _publish_artifacts(
+        output,
+        (
+            ("corpus.jsonl", corpus_bytes),
+            ("manifest.json", manifest_bytes),
+        ),
     )
     return manifest

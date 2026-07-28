@@ -6,6 +6,7 @@ import pytest
 
 from ste_compiler.ir.serialization import dumps_document, load_document
 from ste_compiler.realizer import DeterministicRealizer
+from ste_compiler.training import corpus as corpus_module
 from ste_compiler.training import export_symbolic_corpus
 
 ROOT = Path(__file__).parents[2]
@@ -487,6 +488,66 @@ def test_corpus_export_rejects_broken_artifact_symlink_without_partial_write(
     assert not artifact.exists()
     assert not missing_target.exists()
     assert not other_artifact.exists()
+
+
+@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
+def test_atomic_publication_replaces_racing_symlink_without_following_target(
+    tmp_path, monkeypatch, vocab, terms, artifact_name
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    source_path = source / "installation.yaml"
+    source_path.write_text(dumps_document(document), encoding="utf-8")
+    source_bytes = source_path.read_bytes()
+    output = tmp_path / "output"
+    output.mkdir()
+    original_builder = corpus_module.build_training_record
+    raced = False
+
+    def build_with_race(*args, **kwargs):
+        nonlocal raced
+        if not raced:
+            (output / artifact_name).symlink_to(source_path)
+            raced = True
+        return original_builder(*args, **kwargs)
+
+    monkeypatch.setattr(corpus_module, "build_training_record", build_with_race)
+
+    manifest = export_symbolic_corpus(source, output, vocab, terms)
+
+    assert raced
+    assert source_path.read_bytes() == source_bytes
+    assert not (output / artifact_name).is_symlink()
+    assert json.loads((output / "manifest.json").read_text()) == manifest
+    corpus_bytes = (output / "corpus.jsonl").read_bytes()
+    assert hashlib.sha256(corpus_bytes).hexdigest() == manifest["corpus_sha256"]
+    assert not list(output.glob(".ste-compiler-*.tmp"))
+
+
+def test_atomic_publication_cleans_temporary_files_when_replace_fails(
+    tmp_path, monkeypatch, vocab, terms
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    source_path = source / "installation.yaml"
+    source_path.write_text(dumps_document(document), encoding="utf-8")
+    source_bytes = source_path.read_bytes()
+    output = tmp_path / "output"
+    output.mkdir()
+
+    def fail_replace(*args, **kwargs):
+        assert len(list(output.glob(".ste-compiler-*.tmp"))) == 2
+        raise OSError("injected atomic replacement failure")
+
+    monkeypatch.setattr(corpus_module, "_atomic_replace", fail_replace)
+
+    with pytest.raises(OSError, match="injected atomic replacement failure"):
+        export_symbolic_corpus(source, output, vocab, terms)
+
+    assert source_path.read_bytes() == source_bytes
+    assert not list(output.iterdir())
 
 
 def test_corpus_export_rejects_symlinked_source_root(tmp_path, vocab, terms):
