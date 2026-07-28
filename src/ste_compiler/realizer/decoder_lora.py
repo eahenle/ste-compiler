@@ -439,6 +439,11 @@ class DecoderOnlyLoRASymbolGenerator:
 
         generate = cast(Callable[..., object], cast(Any, self._model).generate)
         pad_token_id = self._tokenizer.pad_token_id
+        token_healing_override = (
+            {"token_healing": False}
+            if hasattr(getattr(self._model, "generation_config", None), "token_healing")
+            else {}
+        )
         output = generate(
             **encoded,
             do_sample=False,
@@ -463,11 +468,11 @@ class DecoderOnlyLoRASymbolGenerator:
             encoder_no_repeat_ngram_size=0,
             max_time=None,
             stop_strings=None,
-            token_healing=False,
             max_new_tokens=self.config.max_new_tokens,
             pad_token_id=grammar.eos_token_id if pad_token_id is None else pad_token_id,
             eos_token_id=grammar.eos_token_id,
             prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
+            **token_healing_override,
         )
         output_ids = _integer_sequence(output, batched=True)
         if output_ids[: len(prompt_ids)] != prompt_ids:

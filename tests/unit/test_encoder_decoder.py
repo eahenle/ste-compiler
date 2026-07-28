@@ -103,6 +103,7 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["num_beams"] == 1
     assert model.kwargs["return_dict_in_generate"] is False
     assert "forced_decoder_ids" not in model.kwargs
+    assert "token_healing" not in model.kwargs
     assert model.kwargs["input_ids"]
 
 

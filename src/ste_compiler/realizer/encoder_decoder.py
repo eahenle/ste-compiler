@@ -385,7 +385,6 @@ class TransformersEncoderDecoderSymbolGenerator:
             "min_new_tokens": 0,
             "max_time": None,
             "stop_strings": None,
-            "token_healing": False,
             "watermarking_config": None,
             "guidance_scale": None,
             "prefix_allowed_tokens_fn": constraint,
@@ -394,6 +393,8 @@ class TransformersEncoderDecoderSymbolGenerator:
         generation_config = getattr(model, "generation_config", None)
         if generation_config is not None and hasattr(generation_config, "forced_decoder_ids"):
             generation_kwargs["forced_decoder_ids"] = None
+        if generation_config is not None and hasattr(generation_config, "token_healing"):
+            generation_kwargs["token_healing"] = False
         generated = model.generate(**encoded_source, **generation_kwargs)
         token_ids = self._first_sequence(generated)
         if token_ids and token_ids[0] == int(decoder_start_token_id):

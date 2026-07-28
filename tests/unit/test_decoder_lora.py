@@ -339,6 +339,25 @@ def test_decoder_lora_overrides_inherited_generation_strategy():
     }
 
 
+def test_decoder_lora_omits_unsupported_token_healing_override():
+    model = ConstrainedFakeModel("WORD_open")
+    model.generation_config = SimpleNamespace()
+    generator = DecoderOnlyLoRASymbolGenerator(
+        _config(),
+        tokenizer=CharacterTokenizer(),
+        model=model,
+    )
+
+    assert (
+        generator.generate_symbols(
+            '{"id":"test"}',
+            frozenset({"WORD_open"}),
+        )
+        == "WORD_open"
+    )
+    assert "token_healing" not in model.generate_arguments
+
+
 @pytest.mark.parametrize(
     ("update", "message"),
     [
