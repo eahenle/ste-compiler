@@ -6,6 +6,8 @@ The IR explicitly represents actors, actions, referents, conditions/exceptions, 
 
 The deterministic realizer composes clauses and records the complete source-node feature snapshot for every sentence. Lexical validation classifies canonical terminology before individual words, then accepts general words, units, numbers, and punctuation. Structural checks are deliberately small STE-inspired heuristics. Semantic checks use mappings plus independent text checks for high-risk features. Metadata is not enough for an untrusted neural backend: it must create a mapping that an independent aligner verifies. The parser-free CLI aligner grants mappings only to position-preserving exact matches of deterministic controlled sentences; changed, omitted, reordered, and extra sentences remain unmapped and are rejected.
 
+Terminology and vocabulary resources fail validation before indexing when their symbolic ownership would be ambiguous. Terminology IDs are unique; canonical forms and aliases have one case-insensitive owner; deprecated replacement references exist and are acyclic. Vocabulary lemmas and inflections use the lexicalizer's ASCII word grammar and have one case-insensitive owner. Term, alias, and unit surfaces are stripped and nonblank. Numeric-only term and unit surfaces are rejected because numbers have their own `NUMBER_*` symbol class. Quantity values and tolerances must be finite. These restrictions make surface-to-symbol classification independent of resource order and keep exported canonical JSON standards-compliant.
+
 ## Constrained neural design
 
 1. **Encoder-decoder:** encode canonical JSON IR and decode a symbolic sentence plan. This fits transformation tasks and can be compact, but needs task-specific training.

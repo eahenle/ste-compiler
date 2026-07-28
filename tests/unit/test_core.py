@@ -594,6 +594,146 @@ def test_vocabulary_schema_rejects_empty_unit(vocab):
         type(vocab.data).model_validate(data)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("canonical_form", " "),
+        ("canonical_form", " 20 "),
+        ("canonical_form", "20"),
+        ("aliases", ["\t"]),
+        ("aliases", ["-1e-07"]),
+    ],
+)
+def test_terminology_schema_rejects_degenerate_or_numeric_forms(field, value, terms):
+    data = terms.data.model_dump()
+    data["terms"][0][field] = value
+
+    with pytest.raises(
+        ValidationError,
+        match="nonblank|leading or trailing whitespace|numeric-only",
+    ):
+        type(terms.data).model_validate(data)
+
+
+@pytest.mark.parametrize("unit", [" ", "\tMPa", "20", "-1e-07"])
+def test_vocabulary_schema_rejects_degenerate_or_numeric_units(unit, vocab):
+    data = vocab.data.model_dump()
+    data["units"].append(unit)
+
+    with pytest.raises(
+        ValidationError,
+        match="nonblank|leading or trailing whitespace|numeric-only",
+    ):
+        type(vocab.data).model_validate(data)
+
+
+@pytest.mark.parametrize("word", ["", " ", "20", "two_words", "three-part-word"])
+def test_vocabulary_schema_rejects_unrepresentable_word_forms(word, vocab):
+    data = vocab.data.model_dump()
+    data["entries"][0]["lemma"] = word
+
+    with pytest.raises(ValidationError, match="nonblank|ASCII word"):
+        type(vocab.data).model_validate(data)
+
+
+def test_terminology_schema_rejects_duplicate_ids(terms):
+    data = terms.data.model_dump()
+    data["terms"][1]["id"] = data["terms"][0]["id"]
+
+    with pytest.raises(ValidationError, match="duplicate terminology ID"):
+        type(terms.data).model_validate(data)
+
+
+def test_terminology_schema_rejects_casefold_form_collisions(terms):
+    data = terms.data.model_dump()
+    data["terms"][1]["aliases"].append(data["terms"][0]["canonical_form"].upper())
+
+    with pytest.raises(
+        ValidationError,
+        match="duplicate case-insensitive terminology form",
+    ):
+        type(terms.data).model_validate(data)
+
+
+def test_vocabulary_schema_rejects_casefold_word_form_collisions(vocab):
+    data = vocab.data.model_dump()
+    data["entries"][1]["inflections"].append(data["entries"][0]["lemma"].upper())
+
+    with pytest.raises(
+        ValidationError,
+        match="duplicate case-insensitive vocabulary form",
+    ):
+        type(vocab.data).model_validate(data)
+
+
+def test_registries_revalidate_unvalidated_model_copies(vocab, terms):
+    duplicate_terms = [
+        *terms.data.terms,
+        terms.data.terms[0].model_copy(),
+    ]
+    invalid_terms = terms.data.model_copy(update={"terms": duplicate_terms})
+    invalid_vocab = vocab.data.model_copy(update={"units": [*vocab.data.units, "20"]})
+
+    with pytest.raises(ValidationError, match="duplicate terminology ID"):
+        TerminologyRegistry(invalid_terms)
+    with pytest.raises(ValidationError, match="numeric-only"):
+        Vocabulary(invalid_vocab)
+
+
+@pytest.mark.parametrize("replacement", ["missing", "old_pressure"])
+def test_terminology_schema_rejects_missing_or_cyclic_replacements(replacement, terms):
+    data = terms.data.model_dump()
+    old_pressure = next(term for term in data["terms"] if term["id"] == "old_pressure")
+    old_pressure["replacement_term_id"] = replacement
+
+    with pytest.raises(
+        ValidationError,
+        match="does not exist|replacement cycle",
+    ):
+        type(terms.data).model_validate(data)
+
+
+def test_terminology_lookup_guards_against_post_validation_cycle(terms):
+    registry = TerminologyRegistry(terms.data)
+    old_pressure = next(term for term in registry.data.terms if term.id == "old_pressure")
+    old_pressure.replacement_term_id = "old_pressure"
+
+    with pytest.raises(ValueError, match="replacement cycle"):
+        registry.get("old_pressure")
+
+
+@pytest.mark.parametrize("alias", ["%", "C++", "°C", "(old)"])
+def test_lexical_validator_detects_punctuation_delimited_aliases(alias, vocab, terms):
+    data = terms.data.model_dump()
+    data["terms"][0]["aliases"] = [alias]
+    registry = TerminologyRegistry(type(terms.data).model_validate(data))
+
+    diagnostics = LexicalValidator(vocab, registry).validate(alias)
+
+    assert [diagnostic.code for diagnostic in diagnostics] == ["TERMINOLOGY_ALIAS"]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_quantity_schema_rejects_nonfinite_values(value):
+    with pytest.raises(ValidationError, match="finite number"):
+        Quantity(value=value, unit="Pa")
+
+
+@pytest.mark.parametrize("tolerance", [float("nan"), float("inf")])
+def test_quantity_schema_rejects_nonfinite_tolerances(tolerance):
+    with pytest.raises(ValidationError, match="finite number"):
+        Quantity(value=1, unit="Pa", tolerance=tolerance)
+
+
+@pytest.mark.parametrize("unit", ["", " ", "\tMPa", "20", "-1e-07"])
+def test_quantity_schema_rejects_degenerate_or_numeric_units(unit):
+    with pytest.raises(
+        ValidationError,
+        match="nonblank|leading or trailing whitespace|numeric-only",
+    ):
+        Quantity(value=1, unit=unit)
+
+
 def test_semantic_corruption_detected(vocab, terms):
     document = load_document(ROOT / "data/examples/negative.yaml")
     result = DeterministicRealizer().realize(document, vocab, terms)

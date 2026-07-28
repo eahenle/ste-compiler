@@ -72,10 +72,14 @@ def plan_symbols(
 ) -> None:
     """Create the deterministic symbolic target for one IR document."""
 
-    doc = load_document(path)
-    vocab, terms = resources()
-    result = DeterministicRealizer().realize(doc, vocab, terms)
-    symbols = SymbolicLexicalizer(vocab, terms).symbolize(result.text)
+    try:
+        doc = load_document(path)
+        vocab, terms = resources()
+        result = DeterministicRealizer().realize(doc, vocab, terms)
+        symbols = SymbolicLexicalizer(vocab, terms).symbolize(result.text)
+    except (KeyError, ValidationError, ValueError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
     if json_output:
         typer.echo(
             json.dumps(

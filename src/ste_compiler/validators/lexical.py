@@ -7,6 +7,10 @@ NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
 TOKEN = re.compile(rf"{NUMBER}|[A-Za-z]+(?:-[A-Za-z]+)?|[^\w\s]")
 
 
+def _whole_form(form: str) -> str:
+    return rf"(?<!\w){re.escape(form)}(?!\w)"
+
+
 class LexicalValidator:
     def __init__(self, vocabulary: Vocabulary, terminology: TerminologyRegistry):
         self.vocabulary, self.terminology = vocabulary, terminology
@@ -15,7 +19,7 @@ class LexicalValidator:
         masked = text
         diagnostics: list[Diagnostic] = []
         for alias in sorted(self.terminology.aliases, key=len, reverse=True):
-            if re.search(rf"\b{re.escape(alias)}\b", masked, flags=re.IGNORECASE):
+            if re.search(_whole_form(alias), masked, flags=re.IGNORECASE):
                 diagnostics.append(
                     Diagnostic(
                         code="TERMINOLOGY_ALIAS",
@@ -27,9 +31,9 @@ class LexicalValidator:
         for form in sorted(
             self.terminology.canonical_forms | self.terminology.aliases, key=len, reverse=True
         ):
-            masked = re.sub(rf"\b{re.escape(form)}\b", " ", masked, flags=re.IGNORECASE)
+            masked = re.sub(_whole_form(form), " ", masked, flags=re.IGNORECASE)
         for unit in sorted(self.vocabulary.units, key=len, reverse=True):
-            masked = re.sub(rf"(?<!\w){re.escape(unit)}(?!\w)", " ", masked)
+            masked = re.sub(_whole_form(unit), " ", masked)
         sentence = 1
         for match in TOKEN.finditer(masked):
             token = match.group()

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import yaml
 from typer.testing import CliRunner
 
 from ste_compiler.cli import app
@@ -70,6 +71,21 @@ def test_cli_training_plan_preserves_negative_quantity_symbol(tmp_path):
     assert "NUMBER_-20" in record["allowed_symbols"]
     assert "NUMBER_-20" in record["symbols"].split()
     assert "PUNCT_U002D" not in record["symbols"].split()
+
+
+def test_cli_training_plan_rejects_nonfinite_quantity(tmp_path):
+    document = load_document(ROOT / "data/examples/warning_pressure.yaml")
+    raw = document.model_dump(mode="json")
+    raw["sections"][0]["statements"][0]["quantity_constraints"][0]["quantity"]["value"] = float(
+        "nan"
+    )
+    source = tmp_path / "nonfinite_quantity.yaml"
+    source.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+    result = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    assert result.exit_code == 1
+    assert "finite number" in result.output
 
 
 def test_cli_training_plan_round_trips_quoted_manner(tmp_path):
@@ -148,6 +164,31 @@ def test_cli_critical_failure_and_glossary():
     assert bad.exit_code == 1
     good = runner.invoke(app, ["glossary", "check", str(ROOT / "data/demo_terminology.yaml")])
     assert good.exit_code == 0
+
+
+def test_glossary_check_rejects_duplicate_ids(tmp_path):
+    raw = yaml.safe_load((ROOT / "data/demo_terminology.yaml").read_text())
+    raw["terms"][1]["id"] = raw["terms"][0]["id"]
+    source = tmp_path / "duplicate_ids.yaml"
+    source.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+    result = runner.invoke(app, ["glossary", "check", str(source)])
+
+    assert result.exit_code == 1
+    assert "duplicate terminology ID" in result.output
+
+
+def test_glossary_check_rejects_replacement_cycles(tmp_path):
+    raw = yaml.safe_load((ROOT / "data/demo_terminology.yaml").read_text())
+    old_pressure = next(term for term in raw["terms"] if term["id"] == "old_pressure")
+    old_pressure["replacement_term_id"] = "old_pressure"
+    source = tmp_path / "replacement_cycle.yaml"
+    source.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+    result = runner.invoke(app, ["glossary", "check", str(source)])
+
+    assert result.exit_code == 1
+    assert "replacement cycle" in result.output
 
 
 def test_evaluation_reports(tmp_path):
