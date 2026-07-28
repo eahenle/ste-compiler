@@ -72,6 +72,22 @@ def test_cli_training_plan_preserves_negative_quantity_symbol(tmp_path):
     assert "PUNCT_U002D" not in record["symbols"].split()
 
 
+def test_cli_training_plan_round_trips_quoted_manner(tmp_path):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(update={"manner": '"safe"'})
+    source = tmp_path / "quoted_manner.json"
+    source.write_text(dumps_document(document, as_json=True))
+
+    result = runner.invoke(app, ["plan-symbols", str(source), "--json"])
+
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    assert record["text"] == 'Install the access panel "safe".'
+    assert record["symbols"].endswith("TERM_access_panel PUNCT_U0022 WORD_safe PUNCT_U0022 PERIOD")
+    assert "PUNCT_U0022" in record["allowed_symbols"]
+
+
 def test_validate_text_does_not_inherit_expected_semantics(tmp_path):
     submitted = tmp_path / "submitted.txt"
     submitted.write_text("Open the shutoff valve.\n")

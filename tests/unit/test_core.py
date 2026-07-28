@@ -135,6 +135,26 @@ def test_symbolic_plan_round_trips_parentheses_semicolon_and_word_case(vocab, te
     assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Install the access panel "safe".',
+        "Install the access panel “safe”.",
+        "Install the access panel ‘safe’.",
+    ],
+)
+def test_symbolic_plan_round_trips_quoted_approved_text(text, vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    symbols = lexicalizer.symbolize(text)
+    assert lexicalizer.lexicalize(symbols, capitalize_sentences=True) == text
+
+
+def test_quote_spacing_does_not_break_apostrophe_joining(vocab, terms):
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    assert lexicalizer.lexicalize("WORD_do PUNCT_U0027 WORD_not") == "do'not"
+    assert lexicalizer.lexicalize("WORD_do PUNCT_U2019 WORD_not") == "do’not"
+
+
 def test_symbolic_plan_preserves_unit_case_and_rejects_noncanonical_spelling(vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
     assert lexicalizer.symbolize("20 MPa.") == "NUMBER_20 UNIT_MPa PERIOD"
@@ -340,6 +360,30 @@ def test_neural_realizer_aligns_opaque_casing_and_internal_periods(vocab, terms)
             return expected_plan
 
     result = NeuralRealizer(Generator()).realize(document, custom_vocab, custom_terms)
+
+    assert result.text == expected.text
+    assert result.mappings == expected.mappings
+    assert not SemanticValidator().validate(document, result)
+
+
+def test_neural_realizer_aligns_quoted_manner(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(update={"manner": '"safe"'})
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    assert expected.text == 'Install the access panel "safe".'
+
+    class Generator:
+        model_id = "offline-quoted-manner-generator"
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            del serialized_ir
+            assert {"PUNCT_U0022", "WORD_safe"} <= allowed_symbols
+            return expected_plan
+
+    result = NeuralRealizer(Generator()).realize(document, vocab, terms)
 
     assert result.text == expected.text
     assert result.mappings == expected.mappings

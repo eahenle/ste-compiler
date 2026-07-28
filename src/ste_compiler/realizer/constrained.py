@@ -19,7 +19,7 @@ PUNCTUATION = {
 TEXT_PUNCTUATION = {value: key for key, value in PUNCTUATION.items()}
 PUNCTUATION_TEXT = re.compile(r"[^\w\s]")
 PUNCTUATION_SYMBOL = re.compile(r"PUNCT_U([0-9A-F]{4,6})")
-OPENING_PUNCTUATION = frozenset("([{")
+OPENING_PUNCTUATION = frozenset("([{“‘")
 JOINING_PUNCTUATION = frozenset({"'", "-", "/", "\\", "–", "—", "’"})
 
 
@@ -62,6 +62,8 @@ class SymbolicLexicalizer:
         output = ""
         join_next = False
         at_sentence_start = capitalize_sentences
+        ascii_double_quote_open = False
+        curly_single_quote_open = False
         for symbol in symbols.split():
             if allowed_symbols is not None and symbol not in allowed_symbols:
                 raise ValueError(f"symbol is not allowed for this document: {symbol}")
@@ -72,14 +74,31 @@ class SymbolicLexicalizer:
 
             punctuation = _punctuation_text(symbol)
             if punctuation is not None:
-                if punctuation in OPENING_PUNCTUATION:
+                opening_quote = False
+                closing_quote = False
+                if punctuation == '"':
+                    opening_quote = not ascii_double_quote_open
+                    closing_quote = ascii_double_quote_open
+                    ascii_double_quote_open = opening_quote
+                elif punctuation == "‘":
+                    opening_quote = True
+                    curly_single_quote_open = True
+                elif punctuation == "’" and curly_single_quote_open:
+                    closing_quote = True
+                    curly_single_quote_open = False
+                elif punctuation == "“":
+                    opening_quote = True
+                elif punctuation == "”":
+                    closing_quote = True
+
+                if punctuation in OPENING_PUNCTUATION or opening_quote:
                     if output and not output.endswith(("\n", " ")) and not join_next:
                         output += " "
                     output += punctuation
                     join_next = True
                 else:
                     output = output.rstrip() + punctuation
-                    join_next = punctuation in JOINING_PUNCTUATION
+                    join_next = punctuation in JOINING_PUNCTUATION and not closing_quote
                 if punctuation in ".!?":
                     at_sentence_start = capitalize_sentences
                 elif at_sentence_start:
