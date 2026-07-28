@@ -101,11 +101,12 @@ def test_cli_exports_reproducible_symbolic_corpus(tmp_path):
         ],
     )
     assert result.exit_code == 0
-    manifest = json.loads((output / "manifest.json").read_text())
+    manifest = json.loads((output / "current" / "manifest.json").read_text())
     assert manifest["schema_version"] == "symbolic-corpus-v1"
     assert manifest["record_count"] == 5
     assert manifest["corpus_sha256"] in result.stdout
-    assert len((output / "corpus.jsonl").read_text().splitlines()) == 5
+    assert str(output / "current" / "corpus.jsonl") in result.stdout
+    assert len((output / "current" / "corpus.jsonl").read_text().splitlines()) == 5
 
 
 def test_cli_rejects_mismatched_corpus_profile(tmp_path):

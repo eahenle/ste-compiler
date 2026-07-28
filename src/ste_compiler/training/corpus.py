@@ -8,7 +8,7 @@ import os
 import secrets
 import stat
 from pathlib import Path
-from typing import Protocol, TypedDict, cast
+from typing import NamedTuple, Protocol, TypedDict, cast
 
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
@@ -19,12 +19,16 @@ CORPUS_SCHEMA_VERSION = "symbolic-corpus-v1"
 IR_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
 OUTPUT_ARTIFACTS = ("corpus.jsonl", "manifest.json")
 OUTPUT_LOCK = ".ste-compiler-corpus.lock"
-TRANSACTION_JOURNAL = ".ste-compiler-corpus.transaction.json"
-TRANSACTION_BACKUPS = {
-    "corpus.jsonl": ".ste-compiler-corpus.jsonl.bak",
-    "manifest.json": ".ste-compiler-manifest.json.bak",
-}
-TRANSACTION_KEYS = frozenset({"version", "had_previous_pair"})
+OUTPUT_LOCK_BYTES = b"ste-compiler-symbolic-corpus-lock-v1\n"
+CURRENT_SELECTOR = "current"
+GENERATIONS_DIRECTORY = "generations"
+GENERATIONS_MARKER = ".ste-compiler-owned"
+GENERATIONS_MARKER_BYTES = b"ste-compiler-symbolic-corpus-generations-v1\n"
+GENERATION_PREFIX = "sha256-"
+GENERATION_STAGE_PREFIX = ".ste-compiler-generation-"
+GENERATIONS_STAGE_PREFIX = ".ste-compiler-generations-"
+STAGE_SUFFIX = ".stage"
+CURRENT_TEMP_PREFIX = ".ste-compiler-current-"
 MANIFEST_KEYS = frozenset(
     {"schema_version", "record_count", "corpus_sha256", "source_files", "profiles"}
 )
@@ -60,9 +64,10 @@ class CorpusManifest(TypedDict):
     profiles: list[dict[str, str]]
 
 
-class _TransactionJournal(TypedDict):
-    version: int
-    had_previous_pair: bool
+class SymbolicCorpusSnapshot(NamedTuple):
+    generation_id: str
+    corpus_bytes: bytes
+    manifest: CorpusManifest
 
 
 class _FcntlModule(Protocol):
@@ -177,7 +182,15 @@ def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
     output_is_nested_in_source = output_root != source_root and output_root.is_relative_to(
         source_root
     )
-    artifact_locations = {output_root / artifact_name for artifact_name in OUTPUT_ARTIFACTS}
+    generations_path = output_root / GENERATIONS_DIRECTORY
+    owned_generations = (
+        output_root == source_root
+        and generations_path.is_dir()
+        and not generations_path.is_symlink()
+        and (generations_path / GENERATIONS_MARKER).is_file()
+        and not (generations_path / GENERATIONS_MARKER).is_symlink()
+        and (generations_path / GENERATIONS_MARKER).read_bytes() == GENERATIONS_MARKER_BYTES
+    )
     paths: list[Path] = []
     pending_directories = [source]
     while pending_directories:
@@ -188,14 +201,19 @@ def _input_paths(source: Path, output: Path) -> tuple[Path, list[Path]]:
             path_location = path.parent.resolve() / path.name
             if output_is_nested_in_source and path_location.is_relative_to(output_root):
                 continue
-            if path_location in artifact_locations:
-                prior_manifest = (
-                    output_root == source_root
-                    and path.name == "manifest.json"
-                    and _is_prior_generated_manifest(path, output_root / "corpus.jsonl")
-                )
-                if path.name != "manifest.json" or prior_manifest:
-                    continue
+            if (
+                output_root == source_root
+                and owned_generations
+                and path.parent.resolve() == output_root
+                and path.name in {CURRENT_SELECTOR, GENERATIONS_DIRECTORY}
+            ):
+                continue
+            if (
+                output_root == source_root
+                and path_location == output_root / "manifest.json"
+                and _is_prior_generated_manifest(path, output_root / "corpus.jsonl")
+            ):
+                continue
             if path.is_symlink():
                 if not path.exists() or path.is_dir():
                     raise ValueError(
@@ -226,30 +244,31 @@ def _canonical_line(record: TrainingRecord) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
 
 
-def _paths_alias(first: Path, second: Path) -> bool:
-    if first.resolve() == second.resolve():
-        return True
-    return first.exists() and second.exists() and first.samefile(second)
+def _is_hex_token(value: str, length: int = 32) -> bool:
+    return len(value) == length and all(character in "0123456789abcdef" for character in value)
 
 
-def _reject_output_aliases(paths: list[Path], output: Path) -> None:
-    artifacts = [output / artifact_name for artifact_name in OUTPUT_ARTIFACTS]
-    for artifact in artifacts:
-        for source in paths:
-            if _paths_alias(artifact, source):
-                raise ValueError(
-                    f"symbolic corpus output artifact {artifact} aliases source IR file {source}"
-                )
-    first, second = artifacts
-    if _paths_alias(first, second):
-        raise ValueError(f"symbolic corpus output artifacts {first} and {second} alias each other")
-    for artifact in artifacts:
-        if artifact.is_symlink():
-            raise ValueError(f"symbolic corpus output artifact must not be a symlink: {artifact}")
-        if artifact.exists() and (not artifact.is_file() or artifact.stat().st_nlink > 1):
-            raise ValueError(
-                f"symbolic corpus output artifact must be a regular single-link file: {artifact}"
-            )
+def _is_generation_id(value: str) -> bool:
+    return value.startswith(GENERATION_PREFIX) and _is_hex_token(
+        value[len(GENERATION_PREFIX) :], 64
+    )
+
+
+def _generation_id(corpus_bytes: bytes, manifest_bytes: bytes) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"ste-compiler-symbolic-corpus-generation-v1\0")
+    for artifact_bytes in (corpus_bytes, manifest_bytes):
+        digest.update(len(artifact_bytes).to_bytes(8, "big"))
+        digest.update(artifact_bytes)
+    return f"{GENERATION_PREFIX}{digest.hexdigest()}"
+
+
+def _entry_exists(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _unlink_entry(directory_fd: int, name: str) -> None:
@@ -257,45 +276,6 @@ def _unlink_entry(directory_fd: int, name: str) -> None:
         os.unlink(name, dir_fd=directory_fd)
     except FileNotFoundError:
         pass
-
-
-def _write_temporary_artifact(directory_fd: int, data: bytes) -> str:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
-    for _ in range(128):
-        name = f".ste-compiler-{secrets.token_hex(16)}.tmp"
-        try:
-            file_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
-        except FileExistsError:
-            continue
-        try:
-            remaining = memoryview(data)
-            while remaining:
-                written = os.write(file_fd, remaining)
-                if written == 0:
-                    raise OSError("failed to write complete corpus artifact")
-                remaining = remaining[written:]
-            os.fsync(file_fd)
-            os.close(file_fd)
-            file_fd = -1
-        except BaseException:
-            if file_fd >= 0:
-                try:
-                    os.close(file_fd)
-                except OSError:
-                    pass
-            _unlink_entry(directory_fd, name)
-            raise
-        return name
-    raise FileExistsError("could not create a unique temporary corpus artifact")
-
-
-def _atomic_replace(directory_fd: int, temporary_name: str, artifact_name: str) -> None:
-    os.replace(
-        temporary_name,
-        artifact_name,
-        src_dir_fd=directory_fd,
-        dst_dir_fd=directory_fd,
-    )
 
 
 def _fsync_directory(directory_fd: int) -> None:
@@ -306,12 +286,9 @@ def _fsync_directory(directory_fd: int) -> None:
             raise
 
 
-def _entry_exists(directory_fd: int, name: str) -> bool:
-    try:
-        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    return True
+def _open_directory_entry(directory_fd: int, name: str) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    return os.open(name, flags, dir_fd=directory_fd)
 
 
 def _read_regular_single_link_entry(directory_fd: int, name: str) -> bytes | None:
@@ -341,6 +318,30 @@ def _read_regular_single_link_entry(directory_fd: int, name: str) -> bytes | Non
         os.close(file_fd)
 
 
+def _write_new_file(directory_fd: int, name: str, data: bytes, *, mode: int = 0o600) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    file_fd = os.open(name, flags, mode, dir_fd=directory_fd)
+    try:
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(file_fd, remaining)
+            if written == 0:
+                raise OSError(f"failed to write complete corpus artifact {name}")
+            remaining = remaining[written:]
+        os.fsync(file_fd)
+    finally:
+        os.close(file_fd)
+
+
+def _atomic_replace(directory_fd: int, temporary_name: str, artifact_name: str) -> None:
+    os.replace(
+        temporary_name,
+        artifact_name,
+        src_dir_fd=directory_fd,
+        dst_dir_fd=directory_fd,
+    )
+
+
 def _fcntl_module() -> _FcntlModule:
     try:
         module = importlib.import_module("fcntl")
@@ -354,9 +355,24 @@ def _fcntl_module() -> _FcntlModule:
 
 def _acquire_output_lock(directory_fd: int, output: Path) -> int:
     lock_module = _fcntl_module()
-    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+    created = False
     try:
-        lock_fd = os.open(OUTPUT_LOCK, flags, 0o600, dir_fd=directory_fd)
+        lock_fd = os.open(
+            OUTPUT_LOCK,
+            flags | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        created = True
+    except FileExistsError:
+        try:
+            lock_fd = os.open(OUTPUT_LOCK, flags, dir_fd=directory_fd)
+        except OSError as error:
+            raise ValueError(
+                "symbolic corpus output lock must be a regular single-link file: "
+                f"{output / OUTPUT_LOCK}"
+            ) from error
     except OSError as error:
         raise ValueError(
             f"symbolic corpus output lock must be a regular single-link file: {output / OUTPUT_LOCK}"
@@ -376,6 +392,17 @@ def _acquire_output_lock(directory_fd: int, output: Path) -> int:
                 "symbolic corpus output lock must be a regular single-link file: "
                 f"{output / OUTPUT_LOCK}"
             )
+        os.lseek(lock_fd, 0, os.SEEK_SET)
+        lock_bytes = os.read(lock_fd, len(OUTPUT_LOCK_BYTES) + 1)
+        if created or (lock_bytes == b"" and _root_pair_is_coherent(directory_fd)):
+            os.lseek(lock_fd, 0, os.SEEK_SET)
+            if os.write(lock_fd, OUTPUT_LOCK_BYTES) != len(OUTPUT_LOCK_BYTES):
+                raise OSError("failed to write complete symbolic corpus lock marker")
+            os.fsync(lock_fd)
+        elif lock_bytes != OUTPUT_LOCK_BYTES:
+            raise ValueError(
+                f"symbolic corpus output lock is not tool-owned: {output / OUTPUT_LOCK}"
+            )
     except BaseException:
         os.close(lock_fd)
         raise
@@ -390,62 +417,7 @@ def _release_output_lock(lock_fd: int) -> None:
         os.close(lock_fd)
 
 
-def _is_owned_temporary(name: str) -> bool:
-    prefix = ".ste-compiler-"
-    suffix = ".tmp"
-    if not name.startswith(prefix) or not name.endswith(suffix):
-        return False
-    token = name[len(prefix) : -len(suffix)]
-    return len(token) == 32 and all(character in "0123456789abcdef" for character in token)
-
-
-def _clean_owned_temporary_files(directory_fd: int) -> bool:
-    removed = False
-    for name in os.listdir(directory_fd):
-        if _is_owned_temporary(name):
-            _unlink_entry(directory_fd, name)
-            removed = True
-    return removed
-
-
-def _write_transaction_journal(directory_fd: int, had_previous_pair: bool) -> None:
-    journal = _TransactionJournal(version=1, had_previous_pair=had_previous_pair)
-    journal_bytes = (
-        json.dumps(journal, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
-    ).encode("utf-8")
-    temporary_name = _write_temporary_artifact(directory_fd, journal_bytes)
-    try:
-        _atomic_replace(directory_fd, temporary_name, TRANSACTION_JOURNAL)
-    except BaseException:
-        _unlink_entry(directory_fd, temporary_name)
-        raise
-    _fsync_directory(directory_fd)
-
-
-def _read_transaction_journal(directory_fd: int) -> _TransactionJournal | None:
-    if not _entry_exists(directory_fd, TRANSACTION_JOURNAL):
-        return None
-    journal_bytes = _read_regular_single_link_entry(directory_fd, TRANSACTION_JOURNAL)
-    if journal_bytes is None:
-        raise ValueError("symbolic corpus transaction journal must be a regular single-link file")
-    try:
-        value: object = json.loads(journal_bytes)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("symbolic corpus transaction journal is invalid") from error
-    if (
-        not isinstance(value, dict)
-        or set(value) != TRANSACTION_KEYS
-        or value["version"] != 1
-        or type(value["had_previous_pair"]) is not bool
-    ):
-        raise ValueError("symbolic corpus transaction journal is invalid")
-    return _TransactionJournal(
-        version=1,
-        had_previous_pair=value["had_previous_pair"],
-    )
-
-
-def _final_pair_is_coherent(directory_fd: int) -> bool:
+def _root_pair_is_coherent(directory_fd: int) -> bool:
     corpus_bytes = _read_regular_single_link_entry(directory_fd, "corpus.jsonl")
     manifest_bytes = _read_regular_single_link_entry(directory_fd, "manifest.json")
     return (
@@ -455,128 +427,348 @@ def _final_pair_is_coherent(directory_fd: int) -> bool:
     )
 
 
-def _remove_transaction_metadata(directory_fd: int) -> None:
-    for backup_name in TRANSACTION_BACKUPS.values():
-        _unlink_entry(directory_fd, backup_name)
-    _fsync_directory(directory_fd)
-    _unlink_entry(directory_fd, TRANSACTION_JOURNAL)
-    _clean_owned_temporary_files(directory_fd)
-    _fsync_directory(directory_fd)
+def _stage_token(name: str, prefix: str, suffix: str) -> str | None:
+    if not name.startswith(prefix) or not name.endswith(suffix):
+        return None
+    token = name[len(prefix) : -len(suffix)]
+    return token if _is_hex_token(token) else None
 
 
-def _recover_interrupted_publication(directory_fd: int) -> None:
-    journal = _read_transaction_journal(directory_fd)
-    if journal is None:
-        orphaned_backups = [
-            backup_name
-            for backup_name in TRANSACTION_BACKUPS.values()
-            if _entry_exists(directory_fd, backup_name)
-        ]
-        if orphaned_backups:
+def _remove_owned_stage(
+    parent_fd: int,
+    stage_name: str,
+    *,
+    allowed_entries: frozenset[str],
+) -> None:
+    try:
+        stage_fd = _open_directory_entry(parent_fd, stage_name)
+    except OSError as error:
+        raise ValueError(
+            f"symbolic corpus staging path is not a directory: {stage_name}"
+        ) from error
+    try:
+        entries = set(os.listdir(stage_fd))
+        unexpected = entries - allowed_entries
+        if unexpected:
             raise ValueError(
-                "symbolic corpus output contains transaction backups without a journal"
+                f"symbolic corpus staging directory contains unexpected entries: {stage_name}"
             )
-        if _clean_owned_temporary_files(directory_fd):
-            _fsync_directory(directory_fd)
+        os.fchmod(stage_fd, 0o700)
+        for entry in entries:
+            _unlink_entry(stage_fd, entry)
+        _fsync_directory(stage_fd)
+    finally:
+        os.close(stage_fd)
+    os.rmdir(stage_name, dir_fd=parent_fd)
+    _fsync_directory(parent_fd)
+
+
+def _cleanup_output_staging(output_fd: int, generations_fd: int) -> None:
+    changed = False
+    for name in os.listdir(output_fd):
+        if _stage_token(name, GENERATIONS_STAGE_PREFIX, STAGE_SUFFIX) is not None:
+            _remove_owned_stage(
+                output_fd,
+                name,
+                allowed_entries=frozenset({GENERATIONS_MARKER}),
+            )
+            continue
+        if _stage_token(name, CURRENT_TEMP_PREFIX, ".tmp") is not None:
+            entry = os.stat(name, dir_fd=output_fd, follow_symlinks=False)
+            if not stat.S_ISLNK(entry.st_mode):
+                raise ValueError(f"symbolic corpus selector staging path is invalid: {name}")
+            target = os.readlink(name, dir_fd=output_fd)
+            prefix = f"{GENERATIONS_DIRECTORY}/"
+            generation_id = target[len(prefix) :] if target.startswith(prefix) else ""
+            if "/" in generation_id or not _is_generation_id(generation_id):
+                raise ValueError(f"symbolic corpus selector staging path is invalid: {name}")
+            _validate_generation(generations_fd, generation_id)
+            _unlink_entry(output_fd, name)
+            changed = True
+            continue
+    if changed:
+        _fsync_directory(output_fd)
+
+
+def _cleanup_generation_staging(generations_fd: int) -> None:
+    for name in os.listdir(generations_fd):
+        if _stage_token(name, GENERATION_STAGE_PREFIX, STAGE_SUFFIX) is not None:
+            _remove_owned_stage(
+                generations_fd,
+                name,
+                allowed_entries=frozenset(OUTPUT_ARTIFACTS),
+            )
+
+
+def _create_generations_directory(output_fd: int) -> None:
+    for _ in range(128):
+        stage_name = f"{GENERATIONS_STAGE_PREFIX}{secrets.token_hex(16)}{STAGE_SUFFIX}"
+        try:
+            os.mkdir(stage_name, 0o700, dir_fd=output_fd)
+        except FileExistsError:
+            continue
+        stage_fd = _open_directory_entry(output_fd, stage_name)
+        try:
+            _write_new_file(
+                stage_fd,
+                GENERATIONS_MARKER,
+                GENERATIONS_MARKER_BYTES,
+            )
+            _fsync_directory(stage_fd)
+        finally:
+            os.close(stage_fd)
+        os.rename(
+            stage_name,
+            GENERATIONS_DIRECTORY,
+            src_dir_fd=output_fd,
+            dst_dir_fd=output_fd,
+        )
+        _fsync_directory(output_fd)
         return
+    raise FileExistsError("could not create corpus generations directory")
 
-    if _final_pair_is_coherent(directory_fd):
-        _remove_transaction_metadata(directory_fd)
+
+def _validate_generation(generations_fd: int, generation_id: str) -> tuple[bytes, bytes]:
+    if not _is_generation_id(generation_id):
+        raise ValueError(f"invalid symbolic corpus generation id: {generation_id}")
+    try:
+        generation_fd = _open_directory_entry(generations_fd, generation_id)
+    except OSError as error:
+        raise ValueError(
+            f"symbolic corpus generation must be an immutable directory: {generation_id}"
+        ) from error
+    try:
+        if set(os.listdir(generation_fd)) != set(OUTPUT_ARTIFACTS):
+            raise ValueError(f"symbolic corpus generation has unexpected entries: {generation_id}")
+        corpus_bytes = _read_regular_single_link_entry(generation_fd, "corpus.jsonl")
+        manifest_bytes = _read_regular_single_link_entry(generation_fd, "manifest.json")
+    finally:
+        os.close(generation_fd)
+    if (
+        corpus_bytes is None
+        or manifest_bytes is None
+        or not _is_generated_pair(manifest_bytes, corpus_bytes)
+        or _generation_id(corpus_bytes, manifest_bytes) != generation_id
+    ):
+        raise ValueError(f"symbolic corpus generation is not coherent: {generation_id}")
+    return corpus_bytes, manifest_bytes
+
+
+def _open_generations_directory(
+    output_fd: int,
+    *,
+    create: bool,
+    validate_all: bool,
+) -> int:
+    if not _entry_exists(output_fd, GENERATIONS_DIRECTORY):
+        if not create:
+            raise ValueError("symbolic corpus output does not contain a generations directory")
+        _create_generations_directory(output_fd)
+    try:
+        generations_fd = _open_directory_entry(output_fd, GENERATIONS_DIRECTORY)
+    except OSError as error:
+        raise ValueError(
+            "symbolic corpus generations path must be a tool-owned directory"
+        ) from error
+    try:
+        marker = _read_regular_single_link_entry(generations_fd, GENERATIONS_MARKER)
+        if marker != GENERATIONS_MARKER_BYTES:
+            raise ValueError("symbolic corpus generations directory is not tool-owned")
+        if validate_all:
+            _cleanup_generation_staging(generations_fd)
+            for name in os.listdir(generations_fd):
+                if name != GENERATIONS_MARKER:
+                    _validate_generation(generations_fd, name)
+    except BaseException:
+        os.close(generations_fd)
+        raise
+    return generations_fd
+
+
+def _current_generation_id(
+    output_fd: int,
+    generations_fd: int,
+    *,
+    validate_generation: bool = True,
+) -> str | None:
+    if not _entry_exists(output_fd, CURRENT_SELECTOR):
+        return None
+    entry = os.stat(CURRENT_SELECTOR, dir_fd=output_fd, follow_symlinks=False)
+    if not stat.S_ISLNK(entry.st_mode):
+        raise ValueError("symbolic corpus current selector must be a tool-owned symbolic link")
+    target = os.readlink(CURRENT_SELECTOR, dir_fd=output_fd)
+    prefix = f"{GENERATIONS_DIRECTORY}/"
+    if not target.startswith(prefix):
+        raise ValueError("symbolic corpus current selector has an invalid target")
+    generation_id = target[len(prefix) :]
+    if "/" in generation_id or not _is_generation_id(generation_id):
+        raise ValueError("symbolic corpus current selector has an invalid target")
+    if validate_generation:
+        _validate_generation(generations_fd, generation_id)
+    return generation_id
+
+
+def _preflight_management_paths(output_fd: int) -> None:
+    generations_exists = _entry_exists(output_fd, GENERATIONS_DIRECTORY)
+    current_exists = _entry_exists(output_fd, CURRENT_SELECTOR)
+    if current_exists and not generations_exists:
+        raise ValueError(
+            "symbolic corpus current selector exists without a tool-owned generations directory"
+        )
+    if not generations_exists:
         return
-
-    if journal["had_previous_pair"]:
-        for artifact_name, backup_name in TRANSACTION_BACKUPS.items():
-            if _entry_exists(directory_fd, backup_name):
-                if _read_regular_single_link_entry(directory_fd, backup_name) is None:
-                    raise ValueError(
-                        "symbolic corpus transaction backup must be a regular "
-                        f"single-link file: {backup_name}"
-                    )
-                _unlink_entry(directory_fd, artifact_name)
-                os.replace(
-                    backup_name,
-                    artifact_name,
-                    src_dir_fd=directory_fd,
-                    dst_dir_fd=directory_fd,
-                )
-            elif not _entry_exists(directory_fd, artifact_name):
-                raise ValueError(
-                    "symbolic corpus transaction cannot restore the previous artifact pair"
-                )
-        _fsync_directory(directory_fd)
-    else:
-        for artifact_name in OUTPUT_ARTIFACTS:
-            _unlink_entry(directory_fd, artifact_name)
-        for backup_name in TRANSACTION_BACKUPS.values():
-            _unlink_entry(directory_fd, backup_name)
-        _fsync_directory(directory_fd)
-
-    _unlink_entry(directory_fd, TRANSACTION_JOURNAL)
-    _clean_owned_temporary_files(directory_fd)
-    _fsync_directory(directory_fd)
+    generations_fd = _open_generations_directory(
+        output_fd,
+        create=False,
+        validate_all=False,
+    )
+    try:
+        for name in os.listdir(generations_fd):
+            if name == GENERATIONS_MARKER:
+                continue
+            if _stage_token(name, GENERATION_STAGE_PREFIX, STAGE_SUFFIX) is not None:
+                continue
+            _validate_generation(generations_fd, name)
+        if current_exists:
+            _current_generation_id(output_fd, generations_fd)
+    finally:
+        os.close(generations_fd)
 
 
-def _publish_artifacts(
-    output: Path,
-    source_paths: list[Path],
+def _ensure_generation(
+    generations_fd: int,
+    generation_id: str,
     artifacts: tuple[tuple[str, bytes], ...],
 ) -> None:
+    expected = dict(artifacts)
+    if _entry_exists(generations_fd, generation_id):
+        corpus_bytes, manifest_bytes = _validate_generation(generations_fd, generation_id)
+        if corpus_bytes != expected["corpus.jsonl"] or manifest_bytes != expected["manifest.json"]:
+            raise ValueError(f"symbolic corpus generation id collision: {generation_id}")
+        return
+
+    for _ in range(128):
+        stage_name = f"{GENERATION_STAGE_PREFIX}{secrets.token_hex(16)}{STAGE_SUFFIX}"
+        try:
+            os.mkdir(stage_name, 0o700, dir_fd=generations_fd)
+        except FileExistsError:
+            continue
+        stage_fd = _open_directory_entry(generations_fd, stage_name)
+        try:
+            for artifact_name, data in artifacts:
+                _write_new_file(stage_fd, artifact_name, data, mode=0o444)
+            _fsync_directory(stage_fd)
+            os.fchmod(stage_fd, 0o500)
+        finally:
+            os.close(stage_fd)
+        os.rename(
+            stage_name,
+            generation_id,
+            src_dir_fd=generations_fd,
+            dst_dir_fd=generations_fd,
+        )
+        _fsync_directory(generations_fd)
+        _validate_generation(generations_fd, generation_id)
+        return
+    raise FileExistsError("could not create a unique corpus generation staging directory")
+
+
+def _switch_current_generation(output_fd: int, generation_id: str) -> None:
+    target = f"{GENERATIONS_DIRECTORY}/{generation_id}"
+    for _ in range(128):
+        temporary_name = f"{CURRENT_TEMP_PREFIX}{secrets.token_hex(16)}.tmp"
+        try:
+            os.symlink(target, temporary_name, dir_fd=output_fd)
+        except FileExistsError:
+            continue
+        try:
+            _atomic_replace(output_fd, temporary_name, CURRENT_SELECTOR)
+        finally:
+            _unlink_entry(output_fd, temporary_name)
+        _fsync_directory(output_fd)
+        return
+    raise FileExistsError("could not create a unique corpus current selector")
+
+
+def _publish_generation(
+    output: Path,
+    artifacts: tuple[tuple[str, bytes], ...],
+) -> str:
+    artifact_data = dict(artifacts)
+    generation_id = _generation_id(
+        artifact_data["corpus.jsonl"],
+        artifact_data["manifest.json"],
+    )
     output.mkdir(parents=True, exist_ok=True)
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-    directory_fd = os.open(output, directory_flags)
+    output_fd = os.open(output, directory_flags)
     lock_fd = -1
-    temporary_names: dict[str, str] = {}
+    generations_fd = -1
     try:
-        lock_fd = _acquire_output_lock(directory_fd, output)
-        _recover_interrupted_publication(directory_fd)
-        _reject_output_aliases(source_paths, output)
-        existing = {
-            artifact_name: _entry_exists(directory_fd, artifact_name)
-            for artifact_name in OUTPUT_ARTIFACTS
-        }
-        if any(existing.values()) and not all(existing.values()):
-            raise ValueError(
-                "symbolic corpus output must contain both corpus.jsonl and manifest.json or neither"
-            )
-        had_previous_pair = all(existing.values())
-
-        for artifact_name, data in artifacts:
-            temporary_names[artifact_name] = _write_temporary_artifact(directory_fd, data)
-
-        _write_transaction_journal(directory_fd, had_previous_pair)
-        for artifact_name, _ in artifacts:
-            if not _entry_exists(directory_fd, artifact_name):
-                continue
-            backup_name = TRANSACTION_BACKUPS[artifact_name]
-            os.replace(
-                artifact_name,
-                backup_name,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-            )
-            _fsync_directory(directory_fd)
-
-        for artifact_name, _ in artifacts:
-            temporary_name = temporary_names[artifact_name]
-            _atomic_replace(directory_fd, temporary_name, artifact_name)
-            del temporary_names[artifact_name]
-            _fsync_directory(directory_fd)
-
-        if not _final_pair_is_coherent(directory_fd):
-            raise OSError("published symbolic corpus artifacts are not a coherent pair")
-        _remove_transaction_metadata(directory_fd)
-    except BaseException:
-        if lock_fd >= 0:
-            _recover_interrupted_publication(directory_fd)
-        raise
+        _preflight_management_paths(output_fd)
+        lock_fd = _acquire_output_lock(output_fd, output)
+        generations_fd = _open_generations_directory(
+            output_fd,
+            create=True,
+            validate_all=True,
+        )
+        current_generation = _current_generation_id(output_fd, generations_fd)
+        _cleanup_output_staging(output_fd, generations_fd)
+        _ensure_generation(generations_fd, generation_id, artifacts)
+        if current_generation != generation_id:
+            _switch_current_generation(output_fd, generation_id)
+        return generation_id
     finally:
-        for temporary_name in temporary_names.values():
-            _unlink_entry(directory_fd, temporary_name)
+        if generations_fd >= 0:
+            os.close(generations_fd)
         try:
             if lock_fd >= 0:
                 _release_output_lock(lock_fd)
         finally:
-            os.close(directory_fd)
+            os.close(output_fd)
+
+
+def read_symbolic_corpus(output: Path) -> SymbolicCorpusSnapshot:
+    """Read one pinned immutable corpus generation."""
+
+    _fcntl_module()
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        output_fd = os.open(output, directory_flags)
+    except OSError as error:
+        raise ValueError(f"symbolic corpus output directory is unavailable: {output}") from error
+    generations_fd = -1
+    generation_fd = -1
+    try:
+        generations_fd = _open_generations_directory(
+            output_fd,
+            create=False,
+            validate_all=False,
+        )
+        generation_id = _current_generation_id(
+            output_fd,
+            generations_fd,
+            validate_generation=False,
+        )
+        if generation_id is None:
+            raise ValueError("symbolic corpus output does not have a current generation")
+        generation_fd = _open_directory_entry(generations_fd, generation_id)
+        corpus_bytes = _read_regular_single_link_entry(generation_fd, "corpus.jsonl")
+        manifest_bytes = _read_regular_single_link_entry(generation_fd, "manifest.json")
+        if (
+            corpus_bytes is None
+            or manifest_bytes is None
+            or not _is_generated_pair(manifest_bytes, corpus_bytes)
+        ):
+            raise ValueError(f"symbolic corpus generation is not coherent: {generation_id}")
+        manifest = cast(CorpusManifest, json.loads(manifest_bytes))
+        return SymbolicCorpusSnapshot(generation_id, corpus_bytes, manifest)
+    finally:
+        if generation_fd >= 0:
+            os.close(generation_fd)
+        if generations_fd >= 0:
+            os.close(generations_fd)
+        os.close(output_fd)
 
 
 def export_symbolic_corpus(
@@ -587,7 +779,6 @@ def export_symbolic_corpus(
 ) -> CorpusManifest:
     _fcntl_module()
     root, paths = _input_paths(source, output)
-    _reject_output_aliases(paths, output)
     records: list[TrainingRecord] = []
     document_sources: dict[str, str] = {}
     for path in paths:
@@ -626,9 +817,8 @@ def export_symbolic_corpus(
     manifest_bytes = (
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
-    _publish_artifacts(
+    _publish_generation(
         output,
-        paths,
         (
             ("corpus.jsonl", corpus_bytes),
             ("manifest.json", manifest_bytes),

@@ -107,7 +107,7 @@ def export_corpus(
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     typer.echo(
-        f"Wrote {manifest['record_count']} records to {output / 'corpus.jsonl'} "
+        f"Wrote {manifest['record_count']} records to {output / 'current' / 'corpus.jsonl'} "
         f"(sha256: {manifest['corpus_sha256']})"
     )
 

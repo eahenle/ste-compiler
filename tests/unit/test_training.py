@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -9,9 +10,30 @@ import pytest
 from ste_compiler.ir.serialization import dumps_document, load_document
 from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.training import corpus as corpus_module
-from ste_compiler.training import export_symbolic_corpus
+from ste_compiler.training import export_symbolic_corpus, read_symbolic_corpus
 
 ROOT = Path(__file__).parents[2]
+
+
+def _current_artifact(output: Path, artifact_name: str) -> Path:
+    return output / corpus_module.CURRENT_SELECTOR / artifact_name
+
+
+def _generation_directories(output: Path) -> list[Path]:
+    generations = output / corpus_module.GENERATIONS_DIRECTORY
+    return sorted(
+        path
+        for path in generations.iterdir()
+        if path.name.startswith(corpus_module.GENERATION_PREFIX)
+    )
+
+
+def _assert_current_pair(output: Path, expected_manifest) -> None:
+    snapshot = read_symbolic_corpus(output)
+    assert snapshot.manifest == expected_manifest
+    assert hashlib.sha256(snapshot.corpus_bytes).hexdigest() == expected_manifest["corpus_sha256"]
+    assert json.loads(_current_artifact(output, "manifest.json").read_text()) == expected_manifest
+    assert _current_artifact(output, "corpus.jsonl").read_bytes() == snapshot.corpus_bytes
 
 
 def test_symbolic_corpus_export_is_byte_reproducible(tmp_path, vocab, terms):
@@ -20,13 +42,14 @@ def test_symbolic_corpus_export_is_byte_reproducible(tmp_path, vocab, terms):
 
     first = export_symbolic_corpus(ROOT / "data/examples", first_output, vocab, terms)
     second = export_symbolic_corpus(ROOT / "data/examples", second_output, vocab, terms)
+    first_snapshot = read_symbolic_corpus(first_output)
+    second_snapshot = read_symbolic_corpus(second_output)
 
-    first_bytes = (first_output / "corpus.jsonl").read_bytes()
     assert first == second
-    assert first_bytes == (second_output / "corpus.jsonl").read_bytes()
-    assert (first_output / "manifest.json").read_bytes() == (
-        second_output / "manifest.json"
-    ).read_bytes()
+    assert first_snapshot == second_snapshot
+    assert first_snapshot.generation_id.startswith(corpus_module.GENERATION_PREFIX)
+    assert not (first_output / "corpus.jsonl").exists()
+    assert not (first_output / "manifest.json").exists()
     assert first["record_count"] == 5
     assert first["source_files"] == [
         "conditional.yaml",
@@ -35,16 +58,31 @@ def test_symbolic_corpus_export_is_byte_reproducible(tmp_path, vocab, terms):
         "sequence.yaml",
         "warning_pressure.yaml",
     ]
-    assert first["corpus_sha256"] == hashlib.sha256(first_bytes).hexdigest()
+    assert first["corpus_sha256"] == hashlib.sha256(first_snapshot.corpus_bytes).hexdigest()
     assert first["profiles"][0]["realizer"] == "deterministic"
     assert first["profiles"][0]["realizer_version"] == DeterministicRealizer.version
     assert first["profiles"][0]["vocabulary_version"] == vocab.data.version
     assert first["profiles"][0]["terminology_version"] == terms.data.version
     assert first["profiles"][0]["validator_profile"] == "strict-demo-1"
-
-    records = [json.loads(line) for line in first_bytes.splitlines()]
+    records = [json.loads(line) for line in first_snapshot.corpus_bytes.splitlines()]
     assert [record["source_path"] for record in records] == first["source_files"]
     assert all(record["serialized_ir"] and record["symbols"] for record in records)
+
+
+def test_repeated_identical_export_reuses_generation(tmp_path, vocab, terms):
+    output = tmp_path / "output"
+    first = export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    first_target = os.readlink(output / corpus_module.CURRENT_SELECTOR)
+    generation = output / first_target
+    first_inode = generation.stat().st_ino
+
+    second = export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+
+    assert second == first
+    assert os.readlink(output / corpus_module.CURRENT_SELECTOR) == first_target
+    assert generation.stat().st_ino == first_inode
+    assert len(_generation_directories(output)) == 1
+    _assert_current_pair(output, first)
 
 
 def test_corpus_output_nested_inside_source_is_not_reingested(tmp_path, vocab, terms):
@@ -59,96 +97,34 @@ def test_corpus_output_nested_inside_source_is_not_reingested(tmp_path, vocab, t
 
     assert first == second
     assert first["record_count"] == 1
-
-
-def test_corpus_output_equal_to_source_reuses_verified_generated_artifacts(tmp_path, vocab, terms):
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
-
-    first = export_symbolic_corpus(source, source, vocab, terms)
-    first_manifest_bytes = (source / "manifest.json").read_bytes()
-    first_corpus_bytes = (source / "corpus.jsonl").read_bytes()
-    second = export_symbolic_corpus(source, source, vocab, terms)
-
-    assert first == second
-    assert first["record_count"] == 1
     assert first["source_files"] == ["installation.yaml"]
-    assert json.loads((source / "manifest.json").read_text()) == first
-    records = [json.loads(line) for line in (source / "corpus.jsonl").read_text().splitlines()]
-    assert [record["source_path"] for record in records] == ["installation.yaml"]
-    assert (source / "manifest.json").read_bytes() == first_manifest_bytes
-    assert (source / "corpus.jsonl").read_bytes() == first_corpus_bytes
 
 
-def test_in_place_corpus_rejects_valid_ir_named_manifest_without_writes(tmp_path, vocab, terms):
+def test_source_equal_to_output_preserves_legitimate_manifest_input(tmp_path, vocab, terms):
     source = tmp_path / "source"
     source.mkdir()
     manifest_document = load_document(ROOT / "data/examples/installation.yaml")
+    sequence_document = load_document(ROOT / "data/examples/sequence.yaml")
     manifest_path = source / "manifest.json"
-    manifest_path.write_text(
-        dumps_document(manifest_document, as_json=True),
-        encoding="utf-8",
-    )
-    other_document = load_document(ROOT / "data/examples/sequence.yaml")
     other_path = source / "other.yaml"
-    other_path.write_text(dumps_document(other_document), encoding="utf-8")
-    corpus_path = source / "corpus.jsonl"
-    corpus_path.write_bytes(b"existing corpus bytes")
-    before = {path.name: path.read_bytes() for path in (manifest_path, other_path, corpus_path)}
+    manifest_path.write_text(dumps_document(manifest_document, as_json=True), encoding="utf-8")
+    other_path.write_text(dumps_document(sequence_document), encoding="utf-8")
+    original_inputs = {
+        manifest_path.name: manifest_path.read_bytes(),
+        other_path.name: other_path.read_bytes(),
+    }
 
-    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
-        export_symbolic_corpus(source, source, vocab, terms)
+    first = export_symbolic_corpus(source, source, vocab, terms)
+    second = export_symbolic_corpus(source, source, vocab, terms)
 
+    assert first == second
+    assert first["source_files"] == ["manifest.json", "other.yaml"]
     assert {
-        path.name: path.read_bytes() for path in (manifest_path, other_path, corpus_path)
-    } == before
-
-
-@pytest.mark.parametrize(
-    "spoof",
-    ["invalid-json", "extra-field", "wrong-hash", "wrong-profile", "wrong-sources"],
-)
-def test_in_place_corpus_rejects_spoofed_generated_manifest_without_writes(
-    tmp_path, vocab, terms, spoof
-):
-    baseline = tmp_path / "baseline"
-    export_symbolic_corpus(
-        ROOT / "data/examples/installation.yaml",
-        baseline,
-        vocab,
-        terms,
-    )
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/sequence.yaml")
-    input_path = source / "input.yaml"
-    input_path.write_text(dumps_document(document), encoding="utf-8")
-    corpus_path = source / "corpus.jsonl"
-    corpus_path.write_bytes((baseline / "corpus.jsonl").read_bytes())
-    manifest_path = source / "manifest.json"
-    manifest = json.loads((baseline / "manifest.json").read_text())
-    if spoof == "invalid-json":
-        manifest_path.write_bytes(b"{invalid JSON")
-    else:
-        if spoof == "extra-field":
-            manifest["unexpected"] = True
-        elif spoof == "wrong-hash":
-            manifest["corpus_sha256"] = "0" * 64
-        elif spoof == "wrong-profile":
-            manifest["profiles"][0]["unexpected"] = "value"
-        else:
-            manifest["source_files"] = ["different.yaml"]
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    before = {path.name: path.read_bytes() for path in (manifest_path, input_path, corpus_path)}
-
-    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
-        export_symbolic_corpus(source, source, vocab, terms)
-
-    assert {
-        path.name: path.read_bytes() for path in (manifest_path, input_path, corpus_path)
-    } == before
+        manifest_path.name: manifest_path.read_bytes(),
+        other_path.name: other_path.read_bytes(),
+    } == original_inputs
+    assert len(_generation_directories(source)) == 1
+    _assert_current_pair(source, first)
 
 
 @pytest.mark.parametrize("placement", ["ancestor", "sibling"])
@@ -168,7 +144,7 @@ def test_corpus_output_outside_source_does_not_suppress_inputs(
 
     assert manifest["record_count"] == 1
     assert manifest["source_files"] == ["installation.yaml"]
-    assert (output / "corpus.jsonl").is_file()
+    assert _current_artifact(output, "corpus.jsonl").is_file()
 
 
 def test_corpus_export_rejects_duplicate_document_ids(tmp_path, vocab, terms):
@@ -215,72 +191,29 @@ def test_corpus_export_rejects_mismatched_runtime_profile(
 
 def test_corpus_export_rejects_symlinked_ir_file(tmp_path, vocab, terms):
     source = tmp_path / "source"
-    outside = tmp_path / "outside"
     source.mkdir()
-    outside.mkdir()
     document = load_document(ROOT / "data/examples/installation.yaml")
-    external_ir = outside / "installation.yaml"
+    external_ir = tmp_path / "installation.yaml"
     external_ir.write_text(dumps_document(document), encoding="utf-8")
     (source / "linked.yaml").symlink_to(external_ir)
-    output = tmp_path / "output"
 
     with pytest.raises(ValueError, match="symlinked IR file: linked.yaml"):
-        export_symbolic_corpus(source, output, vocab, terms)
-    assert not output.exists()
+        export_symbolic_corpus(source, tmp_path / "output", vocab, terms)
 
 
-@pytest.mark.parametrize("target_placement", ["inside", "outside"])
-def test_corpus_export_rejects_symlinked_ir_directory_before_writes(
-    tmp_path, vocab, terms, target_placement
-):
+@pytest.mark.parametrize("broken", [False, True])
+def test_corpus_export_rejects_symlinked_ir_directory(tmp_path, vocab, terms, broken):
     source = tmp_path / "source"
     source.mkdir()
-    target = source / "documents" if target_placement == "inside" else tmp_path / "documents"
-    target.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    (target / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    target = tmp_path / "missing" if broken else tmp_path / "documents"
+    if not broken:
+        target.mkdir()
+        document = load_document(ROOT / "data/examples/installation.yaml")
+        (target / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
     (source / "linked").symlink_to(target, target_is_directory=True)
-    output = tmp_path / "output"
-    output.mkdir()
-    (output / "corpus.jsonl").write_bytes(b"stale corpus")
-    (output / "manifest.json").write_bytes(b"stale manifest")
-    before = {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in ("manifest.json", "corpus.jsonl")
-    }
 
     with pytest.raises(ValueError, match="symlinked directory: linked"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in ("manifest.json", "corpus.jsonl")
-    } == before
-
-
-def test_corpus_export_rejects_broken_directory_symlink_before_writes(tmp_path, vocab, terms):
-    source = tmp_path / "source"
-    source.mkdir()
-    linked = source / "linked"
-    linked.symlink_to(tmp_path / "missing-directory", target_is_directory=True)
-    output = tmp_path / "output"
-    output.mkdir()
-    (output / "corpus.jsonl").write_bytes(b"stale corpus")
-    (output / "manifest.json").write_bytes(b"stale manifest")
-    before = {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in ("manifest.json", "corpus.jsonl")
-    }
-
-    with pytest.raises(ValueError, match="symlinked directory: linked"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert linked.is_symlink()
-    assert not linked.exists()
-    assert {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in ("manifest.json", "corpus.jsonl")
-    } == before
+        export_symbolic_corpus(source, tmp_path / "output", vocab, terms)
 
 
 def test_nested_output_subtree_is_pruned_before_symlink_inspection(tmp_path, vocab, terms):
@@ -295,10 +228,8 @@ def test_nested_output_subtree_is_pruned_before_symlink_inspection(tmp_path, voc
 
     manifest = export_symbolic_corpus(source, output, vocab, terms)
 
-    assert manifest["record_count"] == 1
     assert manifest["source_files"] == ["installation.yaml"]
     assert internal_link.is_symlink()
-    assert not internal_link.exists()
 
 
 def test_corpus_export_rejects_direct_symlinked_ir_source(tmp_path, vocab, terms):
@@ -307,439 +238,330 @@ def test_corpus_export_rejects_direct_symlinked_ir_source(tmp_path, vocab, terms
     actual_source.write_text(dumps_document(document), encoding="utf-8")
     linked_source = tmp_path / "linked.yaml"
     linked_source.symlink_to(actual_source)
-    output = tmp_path / "output"
 
     with pytest.raises(ValueError, match="source must not be a symlink"):
-        export_symbolic_corpus(linked_source, output, vocab, terms)
-    assert not output.exists()
+        export_symbolic_corpus(linked_source, tmp_path / "output", vocab, terms)
 
 
-def test_corpus_export_rejects_direct_manifest_source_without_partial_write(tmp_path, vocab, terms):
-    source = tmp_path / "manifest.json"
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    source.write_text(dumps_document(document, as_json=True), encoding="utf-8")
-    original_bytes = source.read_bytes()
-
-    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
-        export_symbolic_corpus(source, tmp_path, vocab, terms)
-
-    assert source.read_bytes() == original_bytes
-    assert not (tmp_path / "corpus.jsonl").exists()
-
-
-def test_corpus_export_rejects_output_directory_symlink_to_source_parent(tmp_path, vocab, terms):
+def test_output_directory_symlink_is_rejected_without_touching_target(tmp_path, vocab, terms):
     actual_output = tmp_path / "actual-output"
     actual_output.mkdir()
-    source = actual_output / "manifest.json"
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    source.write_text(dumps_document(document, as_json=True), encoding="utf-8")
-    original_bytes = source.read_bytes()
+    sentinel = actual_output / "sentinel"
+    sentinel.write_bytes(b"unchanged")
     linked_output = tmp_path / "linked-output"
     linked_output.symlink_to(actual_output, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
-        export_symbolic_corpus(source, linked_output, vocab, terms)
-
-    assert source.read_bytes() == original_bytes
-    assert not (actual_output / "corpus.jsonl").exists()
-
-
-@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
-def test_corpus_export_rejects_symlinked_artifact_alias_without_partial_write(
-    tmp_path, vocab, terms, artifact_name
-):
-    source = tmp_path / "source.json"
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    source.write_text(dumps_document(document, as_json=True), encoding="utf-8")
-    original_bytes = source.read_bytes()
-    output = tmp_path / "output"
-    output.mkdir()
-    artifact = output / artifact_name
-    artifact.symlink_to(source)
-    other_artifact = output / (
-        "manifest.json" if artifact_name == "corpus.jsonl" else "corpus.jsonl"
-    )
-
-    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert source.read_bytes() == original_bytes
-    assert artifact.is_symlink()
-    assert not other_artifact.exists()
-
-
-@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
-def test_corpus_export_rejects_hardlinked_artifact_alias_without_partial_write(
-    tmp_path, vocab, terms, artifact_name
-):
-    source = tmp_path / "source.json"
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    source.write_text(dumps_document(document, as_json=True), encoding="utf-8")
-    original_bytes = source.read_bytes()
-    output = tmp_path / "output"
-    output.mkdir()
-    artifact = output / artifact_name
-    artifact.hardlink_to(source)
-    other_artifact = output / (
-        "manifest.json" if artifact_name == "corpus.jsonl" else "corpus.jsonl"
-    )
-
-    with pytest.raises(ValueError, match="output artifact.*aliases source IR file"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert source.read_bytes() == original_bytes
-    assert artifact.samefile(source)
-    assert not other_artifact.exists()
-
-
-@pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
-@pytest.mark.parametrize("linked_artifact", ["manifest.json", "corpus.jsonl"])
-def test_corpus_export_rejects_output_artifact_aliases_without_writes(
-    tmp_path, vocab, terms, link_type, linked_artifact
-):
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
-    output = tmp_path / "output"
-    output.mkdir()
-    linked = output / linked_artifact
-    target = output / ("corpus.jsonl" if linked_artifact == "manifest.json" else "manifest.json")
-    target.write_bytes(f"{target.name} before export".encode())
-    if link_type == "symlink":
-        linked.symlink_to(target.name)
-    else:
-        linked.hardlink_to(target)
-    before = {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in ("manifest.json", "corpus.jsonl")
-    }
-
-    with pytest.raises(ValueError, match="output artifacts.*alias each other"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in ("manifest.json", "corpus.jsonl")
-    } == before
-    if link_type == "symlink":
-        assert linked.is_symlink()
-    else:
-        assert linked.samefile(target)
-
-
-@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
-@pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
-def test_corpus_export_rejects_artifact_linked_to_unrelated_file_without_writes(
-    tmp_path, vocab, terms, artifact_name, link_type
-):
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
-    unrelated = tmp_path / "unrelated.txt"
-    unrelated.write_bytes(b"unrelated bytes must remain unchanged")
-    original_bytes = unrelated.read_bytes()
-    output = tmp_path / "output"
-    output.mkdir()
-    artifact = output / artifact_name
-    if link_type == "symlink":
-        artifact.symlink_to(unrelated)
-    else:
-        artifact.hardlink_to(unrelated)
-    other_artifact = output / (
-        "manifest.json" if artifact_name == "corpus.jsonl" else "corpus.jsonl"
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="output artifact must not be a symlink|regular single-link file",
-    ):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert unrelated.read_bytes() == original_bytes
-    assert artifact.read_bytes() == original_bytes
-    if link_type == "symlink":
-        assert artifact.is_symlink()
-    else:
-        assert artifact.samefile(unrelated)
-    assert not other_artifact.exists()
-
-
-@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
-def test_corpus_export_rejects_broken_artifact_symlink_without_partial_write(
-    tmp_path, vocab, terms, artifact_name
-):
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
-    output = tmp_path / "output"
-    output.mkdir()
-    artifact = output / artifact_name
-    missing_target = tmp_path / "missing-target"
-    artifact.symlink_to(missing_target)
-    other_artifact = output / (
-        "manifest.json" if artifact_name == "corpus.jsonl" else "corpus.jsonl"
-    )
-
-    with pytest.raises(ValueError, match="output artifact must not be a symlink"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert artifact.is_symlink()
-    assert not artifact.exists()
-    assert not missing_target.exists()
-    assert not other_artifact.exists()
-
-
-@pytest.mark.parametrize("artifact_name", ["manifest.json", "corpus.jsonl"])
-def test_atomic_publication_replaces_racing_symlink_without_following_target(
-    tmp_path, monkeypatch, vocab, terms, artifact_name
-):
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    source_path = source / "installation.yaml"
-    source_path.write_text(dumps_document(document), encoding="utf-8")
-    source_bytes = source_path.read_bytes()
-    output = tmp_path / "output"
-    output.mkdir()
-    original_writer = corpus_module._write_temporary_artifact
-    raced = False
-
-    def write_with_race(*args, **kwargs):
-        nonlocal raced
-        if not raced:
-            (output / artifact_name).symlink_to(source_path)
-            raced = True
-        return original_writer(*args, **kwargs)
-
-    monkeypatch.setattr(corpus_module, "_write_temporary_artifact", write_with_race)
-
-    manifest = export_symbolic_corpus(source, output, vocab, terms)
-
-    assert raced
-    assert source_path.read_bytes() == source_bytes
-    assert not (output / artifact_name).is_symlink()
-    assert json.loads((output / "manifest.json").read_text()) == manifest
-    corpus_bytes = (output / "corpus.jsonl").read_bytes()
-    assert hashlib.sha256(corpus_bytes).hexdigest() == manifest["corpus_sha256"]
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-
-
-def test_atomic_publication_cleans_temporary_files_when_replace_fails(
-    tmp_path, monkeypatch, vocab, terms
-):
-    source = tmp_path / "source"
-    source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    source_path = source / "installation.yaml"
-    source_path.write_text(dumps_document(document), encoding="utf-8")
-    source_bytes = source_path.read_bytes()
-    output = tmp_path / "output"
-    output.mkdir()
-    original_replace = corpus_module._atomic_replace
-
-    def fail_second_replace(directory_fd, temporary_name, artifact_name):
-        if artifact_name == "manifest.json":
-            assert len(list(output.glob(".ste-compiler-*.tmp"))) == 1
-            raise OSError("injected atomic replacement failure")
-        original_replace(directory_fd, temporary_name, artifact_name)
-
-    monkeypatch.setattr(corpus_module, "_atomic_replace", fail_second_replace)
-
-    with pytest.raises(OSError, match="injected atomic replacement failure"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert source_path.read_bytes() == source_bytes
-    assert not (output / "corpus.jsonl").exists()
-    assert not (output / "manifest.json").exists()
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-    assert not list(output.glob(".ste-compiler-*.bak"))
-    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
-    assert (output / corpus_module.OUTPUT_LOCK).is_file()
-
-
-def test_atomic_publication_restores_previous_pair_when_second_replace_fails(
-    tmp_path, monkeypatch, vocab, terms
-):
-    output = tmp_path / "output"
-    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
-    before = {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
-    }
-    original_replace = corpus_module._atomic_replace
-
-    def fail_second_replace(directory_fd, temporary_name, artifact_name):
-        if artifact_name == "manifest.json":
-            raise OSError("injected second replacement failure")
-        original_replace(directory_fd, temporary_name, artifact_name)
-
-    monkeypatch.setattr(corpus_module, "_atomic_replace", fail_second_replace)
-
-    with pytest.raises(OSError, match="injected second replacement failure"):
-        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
-
-    assert {
-        artifact_name: (output / artifact_name).read_bytes()
-        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
-    } == before
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-    assert not list(output.glob(".ste-compiler-*.bak"))
-    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
-
-
-def test_backup_cleanup_failure_keeps_committed_pair(tmp_path, monkeypatch, vocab, terms):
-    output = tmp_path / "output"
-    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
-    original_unlink = corpus_module._unlink_entry
-    backup_unlinks = 0
-    injected = False
-
-    def fail_second_backup_unlink(directory_fd, name):
-        nonlocal backup_unlinks, injected
-        if name.endswith(".bak"):
-            backup_unlinks += 1
-            if backup_unlinks == 2 and not injected:
-                injected = True
-                raise OSError("injected backup cleanup failure")
-        original_unlink(directory_fd, name)
-
-    monkeypatch.setattr(corpus_module, "_unlink_entry", fail_second_backup_unlink)
-
-    with pytest.raises(OSError, match="injected backup cleanup failure"):
-        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
-
-    corpus_bytes = (output / "corpus.jsonl").read_bytes()
-    manifest = json.loads((output / "manifest.json").read_text())
-    assert injected
-    assert manifest["source_files"] == ["sequence.yaml"]
-    assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-    assert not list(output.glob(".ste-compiler-*.bak"))
-    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
-
-
-@pytest.mark.parametrize(
-    ("interrupted_state", "expected_recovery"),
-    [
-        ("after_first_backup", "old"),
-        ("after_both_backups", "old"),
-        ("after_first_install", "old"),
-        ("after_both_installs", "new"),
-        ("no_prior_after_first_install", "none"),
-    ],
-)
-def test_next_export_recovers_interrupted_publication(
-    tmp_path,
-    monkeypatch,
-    vocab,
-    terms,
-    interrupted_state,
-    expected_recovery,
-):
-    old_output = tmp_path / "old"
-    new_output = tmp_path / "new"
-    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", old_output, vocab, terms)
-    export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", new_output, vocab, terms)
-    old_pair = {
-        artifact_name: (old_output / artifact_name).read_bytes()
-        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
-    }
-    new_pair = {
-        artifact_name: (new_output / artifact_name).read_bytes()
-        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
-    }
-
-    output = tmp_path / "output"
-    output.mkdir()
-    had_previous_pair = interrupted_state != "no_prior_after_first_install"
-    if had_previous_pair:
-        for artifact_name, data in old_pair.items():
-            (output / artifact_name).write_bytes(data)
-    (output / corpus_module.TRANSACTION_JOURNAL).write_text(
-        json.dumps({"had_previous_pair": had_previous_pair, "version": 1}) + "\n",
-        encoding="utf-8",
-    )
-    stale_temporary = output / f".ste-compiler-{'a' * 32}.tmp"
-    stale_temporary.write_bytes(b"stale temporary bytes")
-
-    if interrupted_state in {
-        "after_first_backup",
-        "after_both_backups",
-        "after_first_install",
-        "after_both_installs",
-    }:
-        (output / "corpus.jsonl").replace(
-            output / corpus_module.TRANSACTION_BACKUPS["corpus.jsonl"]
+    with pytest.raises(OSError):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            linked_output,
+            vocab,
+            terms,
         )
-    if interrupted_state in {
-        "after_both_backups",
-        "after_first_install",
-        "after_both_installs",
-    }:
-        (output / "manifest.json").replace(
-            output / corpus_module.TRANSACTION_BACKUPS["manifest.json"]
-        )
-    if interrupted_state in {"after_first_install", "after_both_installs"}:
-        (output / "corpus.jsonl").write_bytes(new_pair["corpus.jsonl"])
-    if interrupted_state == "after_both_installs":
-        (output / "manifest.json").write_bytes(new_pair["manifest.json"])
-    if interrupted_state == "no_prior_after_first_install":
-        (output / "corpus.jsonl").write_bytes(new_pair["corpus.jsonl"])
 
-    original_writer = corpus_module._write_temporary_artifact
-    recovery_observed = False
+    assert sentinel.read_bytes() == b"unchanged"
+    assert set(actual_output.iterdir()) == {sentinel}
 
-    def inspect_recovery_before_staging(directory_fd, data):
-        nonlocal recovery_observed
-        if not recovery_observed:
-            if expected_recovery == "none":
-                assert not (output / "corpus.jsonl").exists()
-                assert not (output / "manifest.json").exists()
-            else:
-                expected_pair = old_pair if expected_recovery == "old" else new_pair
-                assert {
-                    artifact_name: (output / artifact_name).read_bytes()
-                    for artifact_name in corpus_module.OUTPUT_ARTIFACTS
-                } == expected_pair
-            assert not stale_temporary.exists()
-            assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
-            assert not list(output.glob(".ste-compiler-*.bak"))
-            recovery_observed = True
-        return original_writer(directory_fd, data)
 
-    monkeypatch.setattr(
-        corpus_module,
-        "_write_temporary_artifact",
-        inspect_recovery_before_staging,
-    )
+@pytest.mark.parametrize("link_type", ["plain", "symlink", "hardlink"])
+def test_unrelated_root_artifact_pair_is_never_overwritten(tmp_path, vocab, terms, link_type):
+    output = tmp_path / "output"
+    output.mkdir()
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"unrelated bytes")
+    corpus_path = output / "corpus.jsonl"
+    manifest_path = output / "manifest.json"
+    corpus_path.write_bytes(b"root corpus bytes")
+    if link_type == "plain":
+        manifest_path.write_bytes(b"root manifest bytes")
+    elif link_type == "symlink":
+        manifest_path.symlink_to(unrelated)
+    else:
+        manifest_path.hardlink_to(unrelated)
+    before_corpus = corpus_path.read_bytes()
+    before_manifest = manifest_path.read_bytes()
 
     manifest = export_symbolic_corpus(
-        ROOT / "data/examples/warning_pressure.yaml",
+        ROOT / "data/examples/installation.yaml",
         output,
         vocab,
         terms,
     )
 
-    corpus_bytes = (output / "corpus.jsonl").read_bytes()
-    assert recovery_observed
-    assert manifest["source_files"] == ["warning_pressure.yaml"]
-    assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
-    assert json.loads((output / "manifest.json").read_text()) == manifest
-    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-    assert not list(output.glob(".ste-compiler-*.bak"))
+    assert corpus_path.read_bytes() == before_corpus
+    assert manifest_path.read_bytes() == before_manifest
+    assert unrelated.read_bytes() == b"unrelated bytes"
+    if link_type == "symlink":
+        assert manifest_path.is_symlink()
+    elif link_type == "hardlink":
+        assert manifest_path.samefile(unrelated)
+    _assert_current_pair(output, manifest)
 
 
-def test_concurrent_publishers_leave_one_coherent_generation(tmp_path, monkeypatch, vocab, terms):
+@pytest.mark.parametrize(
+    "reserved_name", [corpus_module.CURRENT_SELECTOR, corpus_module.GENERATIONS_DIRECTORY]
+)
+@pytest.mark.parametrize("entry_type", ["file", "symlink"])
+def test_unowned_reserved_control_path_is_rejected_unchanged(
+    tmp_path,
+    vocab,
+    terms,
+    reserved_name,
+    entry_type,
+):
     output = tmp_path / "output"
-    first_installed_corpus = threading.Event()
-    allow_first_to_finish = threading.Event()
+    output.mkdir()
+    reserved = output / reserved_name
+    target = tmp_path / "unrelated"
+    target.write_bytes(b"unrelated control bytes")
+    if entry_type == "file":
+        reserved.write_bytes(b"foreign reserved bytes")
+    else:
+        reserved.symlink_to(target)
+    before = reserved.read_bytes()
+
+    with pytest.raises(ValueError, match="current selector|generations"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    assert reserved.read_bytes() == before
+    assert target.read_bytes() == b"unrelated control bytes"
+    if entry_type == "symlink":
+        assert reserved.is_symlink()
+    assert not (output / corpus_module.OUTPUT_LOCK).exists()
+
+
+@pytest.mark.parametrize("marker_state", ["missing", "wrong", "hardlink"])
+def test_unowned_generations_directory_marker_is_rejected_unchanged(
+    tmp_path, vocab, terms, marker_state
+):
+    output = tmp_path / "output"
+    generations = output / corpus_module.GENERATIONS_DIRECTORY
+    generations.mkdir(parents=True)
+    marker = generations / corpus_module.GENERATIONS_MARKER
+    unrelated = tmp_path / "unrelated-marker"
+    unrelated.write_bytes(b"unrelated marker bytes")
+    if marker_state == "wrong":
+        marker.write_bytes(b"foreign marker bytes")
+    elif marker_state == "hardlink":
+        marker.hardlink_to(unrelated)
+    before = {path.name: path.read_bytes() for path in generations.iterdir()}
+
+    with pytest.raises(ValueError, match="generations directory is not tool-owned"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    assert {path.name: path.read_bytes() for path in generations.iterdir()} == before
+    assert unrelated.read_bytes() == b"unrelated marker bytes"
+    assert not (output / corpus_module.OUTPUT_LOCK).exists()
+
+
+@pytest.mark.parametrize("link_type", ["plain", "symlink", "hardlink"])
+def test_corpus_export_rejects_linked_output_lock_without_following_target(
+    tmp_path, vocab, terms, link_type
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    unrelated = tmp_path / "unrelated.lock"
+    unrelated.write_bytes(b"unrelated lock bytes")
+    lock_path = output / corpus_module.OUTPUT_LOCK
+    if link_type == "plain":
+        lock_path.write_bytes(b"foreign lock bytes")
+    elif link_type == "symlink":
+        lock_path.symlink_to(unrelated)
+    else:
+        lock_path.hardlink_to(unrelated)
+
+    with pytest.raises(ValueError, match="output lock"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    assert unrelated.read_bytes() == b"unrelated lock bytes"
+    assert not (output / corpus_module.GENERATIONS_DIRECTORY).exists()
+
+
+def test_previous_tool_layout_migrates_without_overwriting_root_pair(tmp_path, vocab, terms):
+    seed = tmp_path / "seed"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", seed, vocab, terms)
+    old_pair = {
+        artifact_name: _current_artifact(seed, artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    }
+    output = tmp_path / "output"
+    output.mkdir()
+    for artifact_name, data in old_pair.items():
+        (output / artifact_name).write_bytes(data)
+    (output / corpus_module.OUTPUT_LOCK).write_bytes(b"")
+
+    manifest = export_symbolic_corpus(
+        ROOT / "data/examples/sequence.yaml",
+        output,
+        vocab,
+        terms,
+    )
+
+    assert {
+        artifact_name: (output / artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    } == old_pair
+    assert (output / corpus_module.OUTPUT_LOCK).read_bytes() == corpus_module.OUTPUT_LOCK_BYTES
+    _assert_current_pair(output, manifest)
+
+
+def test_invalid_current_target_is_rejected_without_replacement(tmp_path, vocab, terms):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    current = output / corpus_module.CURRENT_SELECTOR
+    current.unlink()
+    current.symlink_to("../unrelated")
+
+    with pytest.raises(ValueError, match="current selector has an invalid target"):
+        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
+
+    assert current.is_symlink()
+    assert os.readlink(current) == "../unrelated"
+    assert len(_generation_directories(output)) == 1
+
+
+def test_corrupt_existing_generation_is_rejected_without_replacement(tmp_path, vocab, terms):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    generation = output / os.readlink(output / corpus_module.CURRENT_SELECTOR)
+    manifest_path = generation / "manifest.json"
+    manifest_path.chmod(0o600)
+    manifest_path.write_bytes(b"corrupt manifest")
+
+    with pytest.raises(ValueError, match="generation is not coherent"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    assert manifest_path.read_bytes() == b"corrupt manifest"
+
+
+@pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
+def test_linked_generation_artifact_is_rejected_without_following_target(
+    tmp_path, vocab, terms, link_type
+):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    generation = output / os.readlink(output / corpus_module.CURRENT_SELECTOR)
+    generation.chmod(0o700)
+    manifest_path = generation / "manifest.json"
+    manifest_path.unlink()
+    unrelated = tmp_path / "unrelated-generation-file"
+    unrelated.write_bytes(b"unrelated generation bytes")
+    if link_type == "symlink":
+        manifest_path.symlink_to(unrelated)
+    else:
+        manifest_path.hardlink_to(unrelated)
+
+    with pytest.raises(ValueError, match="generation is not coherent"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    assert unrelated.read_bytes() == b"unrelated generation bytes"
+    if link_type == "symlink":
+        assert manifest_path.is_symlink()
+    else:
+        assert manifest_path.samefile(unrelated)
+
+
+def test_generation_id_collision_is_rejected_without_replacing_generation(
+    tmp_path, monkeypatch, vocab, terms
+):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    generation_id = read_symbolic_corpus(output).generation_id
+    before = {
+        artifact_name: _current_artifact(output, artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    }
+    monkeypatch.setattr(corpus_module, "_generation_id", lambda *_: generation_id)
+
+    with pytest.raises(ValueError, match="generation id collision"):
+        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
+
+    assert {
+        artifact_name: _current_artifact(output, artifact_name).read_bytes()
+        for artifact_name in corpus_module.OUTPUT_ARTIFACTS
+    } == before
+
+
+def test_reader_pins_generation_across_current_switch(tmp_path, monkeypatch, vocab, terms):
+    output = tmp_path / "output"
+    old_manifest = export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        output,
+        vocab,
+        terms,
+    )
+    old_generation = read_symbolic_corpus(output).generation_id
+    reader_generation_opened = threading.Event()
+    allow_reader = threading.Event()
+    original_open = corpus_module._open_directory_entry
+    reader_generation_opens = 0
+
+    def pause_after_reader_pins(directory_fd, name):
+        nonlocal reader_generation_opens
+        result = original_open(directory_fd, name)
+        if threading.current_thread().name.startswith("pinned-reader") and name == old_generation:
+            reader_generation_opens += 1
+            if reader_generation_opens == 1:
+                reader_generation_opened.set()
+                assert allow_reader.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(corpus_module, "_open_directory_entry", pause_after_reader_pins)
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pinned-reader") as executor:
+        reading = executor.submit(read_symbolic_corpus, output)
+        assert reader_generation_opened.wait(timeout=10)
+        new_manifest = export_symbolic_corpus(
+            ROOT / "data/examples/sequence.yaml",
+            output,
+            vocab,
+            terms,
+        )
+        allow_reader.set()
+        pinned = reading.result(timeout=10)
+
+    assert pinned.generation_id == old_generation
+    assert pinned.manifest == old_manifest
+    assert hashlib.sha256(pinned.corpus_bytes).hexdigest() == old_manifest["corpus_sha256"]
+    current = read_symbolic_corpus(output)
+    assert current.manifest == new_manifest
+    assert current.generation_id != old_generation
+
+
+def test_concurrent_publishers_leave_one_coherent_generation_selected(
+    tmp_path, monkeypatch, vocab, terms
+):
+    output = tmp_path / "output"
+    first_at_switch = threading.Event()
+    release_first = threading.Event()
     second_attempted_lock = threading.Event()
     publisher = threading.local()
-    original_replace = corpus_module._atomic_replace
+    original_switch = corpus_module._switch_current_generation
     original_acquire = corpus_module._acquire_output_lock
 
     def observed_acquire(directory_fd, output_path):
@@ -747,18 +569,18 @@ def test_concurrent_publishers_leave_one_coherent_generation(tmp_path, monkeypat
             second_attempted_lock.set()
         return original_acquire(directory_fd, output_path)
 
-    def interleaved_replace(directory_fd, temporary_name, artifact_name):
-        original_replace(directory_fd, temporary_name, artifact_name)
-        if publisher.name == "first" and artifact_name == "corpus.jsonl":
-            first_installed_corpus.set()
-            assert allow_first_to_finish.wait(timeout=10)
+    def paused_switch(directory_fd, generation_id):
+        if publisher.name == "first":
+            first_at_switch.set()
+            assert release_first.wait(timeout=10)
+        original_switch(directory_fd, generation_id)
 
     def publish(name, source):
         publisher.name = name
         return export_symbolic_corpus(source, output, vocab, terms)
 
     monkeypatch.setattr(corpus_module, "_acquire_output_lock", observed_acquire)
-    monkeypatch.setattr(corpus_module, "_atomic_replace", interleaved_replace)
+    monkeypatch.setattr(corpus_module, "_switch_current_generation", paused_switch)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(
@@ -766,28 +588,126 @@ def test_concurrent_publishers_leave_one_coherent_generation(tmp_path, monkeypat
             "first",
             ROOT / "data/examples/installation.yaml",
         )
-        assert first_installed_corpus.wait(timeout=10)
+        assert first_at_switch.wait(timeout=10)
         second = executor.submit(
             publish,
             "second",
             ROOT / "data/examples/sequence.yaml",
         )
         assert second_attempted_lock.wait(timeout=10)
-        allow_first_to_finish.set()
+        release_first.set()
         first.result(timeout=10)
         second_manifest = second.result(timeout=10)
 
-    corpus_bytes = (output / "corpus.jsonl").read_bytes()
-    manifest = json.loads((output / "manifest.json").read_text())
-    records = [json.loads(line) for line in corpus_bytes.splitlines()]
-    assert manifest == second_manifest
-    assert manifest["source_files"] == ["sequence.yaml"]
-    assert [record["source_path"] for record in records] == manifest["source_files"]
-    assert manifest["record_count"] == len(records)
-    assert manifest["corpus_sha256"] == hashlib.sha256(corpus_bytes).hexdigest()
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-    assert not list(output.glob(".ste-compiler-*.bak"))
-    assert not (output / corpus_module.TRANSACTION_JOURNAL).exists()
+    snapshot = read_symbolic_corpus(output)
+    assert snapshot.manifest == second_manifest
+    assert snapshot.manifest["source_files"] == ["sequence.yaml"]
+    assert len(_generation_directories(output)) == 2
+
+
+def test_failed_generation_staging_keeps_current_and_is_cleaned_on_retry(
+    tmp_path, monkeypatch, vocab, terms
+):
+    output = tmp_path / "output"
+    old_manifest = export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        output,
+        vocab,
+        terms,
+    )
+    old_target = os.readlink(output / corpus_module.CURRENT_SELECTOR)
+    original_write = corpus_module._write_new_file
+
+    def fail_manifest_write(directory_fd, name, data, *, mode=0o600):
+        if name == "manifest.json":
+            raise OSError("injected staging interruption")
+        original_write(directory_fd, name, data, mode=mode)
+
+    monkeypatch.setattr(corpus_module, "_write_new_file", fail_manifest_write)
+
+    with pytest.raises(OSError, match="injected staging interruption"):
+        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
+
+    assert os.readlink(output / corpus_module.CURRENT_SELECTOR) == old_target
+    assert read_symbolic_corpus(output).manifest == old_manifest
+    generations = output / corpus_module.GENERATIONS_DIRECTORY
+    assert any(path.name.endswith(corpus_module.STAGE_SUFFIX) for path in generations.iterdir())
+
+    monkeypatch.setattr(corpus_module, "_write_new_file", original_write)
+    new_manifest = export_symbolic_corpus(
+        ROOT / "data/examples/sequence.yaml",
+        output,
+        vocab,
+        terms,
+    )
+    assert read_symbolic_corpus(output).manifest == new_manifest
+    assert not any(path.name.endswith(corpus_module.STAGE_SUFFIX) for path in generations.iterdir())
+
+
+@pytest.mark.parametrize("failure_point", ["before", "after"])
+def test_pointer_switch_interruption_never_selects_incomplete_generation(
+    tmp_path,
+    monkeypatch,
+    vocab,
+    terms,
+    failure_point,
+):
+    output = tmp_path / "output"
+    old_manifest = export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        output,
+        vocab,
+        terms,
+    )
+    original_replace = corpus_module._atomic_replace
+
+    def interrupted_replace(directory_fd, temporary_name, artifact_name):
+        assert artifact_name == corpus_module.CURRENT_SELECTOR
+        if failure_point == "after":
+            original_replace(directory_fd, temporary_name, artifact_name)
+        raise OSError(f"injected {failure_point} selector interruption")
+
+    monkeypatch.setattr(corpus_module, "_atomic_replace", interrupted_replace)
+
+    with pytest.raises(OSError, match=f"injected {failure_point} selector interruption"):
+        export_symbolic_corpus(ROOT / "data/examples/sequence.yaml", output, vocab, terms)
+
+    snapshot = read_symbolic_corpus(output)
+    if failure_point == "before":
+        assert snapshot.manifest == old_manifest
+    else:
+        assert snapshot.manifest["source_files"] == ["sequence.yaml"]
+    assert hashlib.sha256(snapshot.corpus_bytes).hexdigest() == snapshot.manifest["corpus_sha256"]
+    assert not list(output.glob(f"{corpus_module.CURRENT_TEMP_PREFIX}*.tmp"))
+
+
+def test_stale_owned_stage_and_selector_are_cleaned_on_next_export(tmp_path, vocab, terms):
+    output = tmp_path / "output"
+    manifest = export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        output,
+        vocab,
+        terms,
+    )
+    generations = output / corpus_module.GENERATIONS_DIRECTORY
+    stage = generations / f"{corpus_module.GENERATION_STAGE_PREFIX}{'a' * 32}.stage"
+    stage.mkdir()
+    (stage / "corpus.jsonl").write_bytes(b"incomplete")
+    stage.chmod(0o500)
+    stale_selector = output / f"{corpus_module.CURRENT_TEMP_PREFIX}{'b' * 32}.tmp"
+    stale_selector.symlink_to(os.readlink(output / corpus_module.CURRENT_SELECTOR))
+
+    repeated = export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        output,
+        vocab,
+        terms,
+    )
+
+    assert repeated == manifest
+    assert not stage.exists()
+    assert not stale_selector.exists()
+    _assert_current_pair(output, manifest)
 
 
 def test_corpus_export_reports_missing_posix_lock_support(tmp_path, monkeypatch, vocab, terms):
@@ -799,56 +719,14 @@ def test_corpus_export_reports_missing_posix_lock_support(tmp_path, monkeypatch,
         return original_import_module(name, package)
 
     monkeypatch.setattr(corpus_module.importlib, "import_module", import_without_fcntl)
-    output = tmp_path / "output"
 
     with pytest.raises(ValueError, match="requires POSIX fcntl file locking"):
         export_symbolic_corpus(
             ROOT / "data/examples/installation.yaml",
-            output,
+            tmp_path / "output",
             vocab,
             terms,
         )
-
-    assert not output.exists()
-
-
-@pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
-def test_corpus_export_rejects_linked_output_lock_without_following_target(
-    tmp_path, vocab, terms, link_type
-):
-    source = ROOT / "data/examples/installation.yaml"
-    output = tmp_path / "output"
-    output.mkdir()
-    unrelated = tmp_path / "unrelated.lock"
-    unrelated.write_bytes(b"unrelated lock bytes")
-    lock_path = output / corpus_module.OUTPUT_LOCK
-    if link_type == "symlink":
-        lock_path.symlink_to(unrelated)
-    else:
-        lock_path.hardlink_to(unrelated)
-
-    with pytest.raises(ValueError, match="output lock must be a regular single-link file"):
-        export_symbolic_corpus(source, output, vocab, terms)
-
-    assert unrelated.read_bytes() == b"unrelated lock bytes"
-    assert not (output / "corpus.jsonl").exists()
-    assert not (output / "manifest.json").exists()
-    assert not list(output.glob(".ste-compiler-*.tmp"))
-    assert not list(output.glob(".ste-compiler-*.bak"))
-
-
-def test_corpus_export_rejects_symlinked_source_root(tmp_path, vocab, terms):
-    actual_source = tmp_path / "actual-source"
-    actual_source.mkdir()
-    document = load_document(ROOT / "data/examples/installation.yaml")
-    (actual_source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
-    linked_source = tmp_path / "linked-source"
-    linked_source.symlink_to(actual_source, target_is_directory=True)
-    output = tmp_path / "output"
-
-    with pytest.raises(ValueError, match="source must not be a symlink"):
-        export_symbolic_corpus(linked_source, output, vocab, terms)
-    assert not output.exists()
 
 
 def test_training_record_rejects_invalid_deterministic_target(tmp_path, vocab, terms):

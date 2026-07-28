@@ -112,8 +112,8 @@ assert result.exit_code == 0, result.output
         capture_output=True,
         text=True,
     )
-    assert json.loads((corpus / "manifest.json").read_text())["record_count"] == 5
-    assert len((corpus / "corpus.jsonl").read_text().splitlines()) == 5
+    assert json.loads((corpus / "current" / "manifest.json").read_text())["record_count"] == 5
+    assert len((corpus / "current" / "corpus.jsonl").read_text().splitlines()) == 5
 
     reports = tmp_path / "reports"
     subprocess.run(
