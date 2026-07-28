@@ -20,6 +20,7 @@ IR_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
 OUTPUT_ARTIFACTS = ("corpus.jsonl", "manifest.json")
 OUTPUT_LOCK = ".ste-compiler-corpus.lock"
 OUTPUT_LOCK_BYTES = b"ste-compiler-symbolic-corpus-lock-v1\n"
+LOCK_INIT_TEMP_PREFIX = ".ste-compiler-lock-init-"
 CURRENT_SELECTOR = "current"
 GENERATIONS_DIRECTORY = "generations"
 GENERATIONS_MARKER = ".ste-compiler-owned"
@@ -353,26 +354,91 @@ def _fcntl_module() -> _FcntlModule:
     return cast(_FcntlModule, module)
 
 
+def _create_lock_init_temporary(directory_fd: int) -> str:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    for _ in range(128):
+        name = f"{LOCK_INIT_TEMP_PREFIX}{secrets.token_hex(16)}.tmp"
+        try:
+            temporary_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
+        except FileExistsError:
+            continue
+        try:
+            remaining = memoryview(OUTPUT_LOCK_BYTES)
+            while remaining:
+                written = os.write(temporary_fd, remaining)
+                if written == 0:
+                    raise OSError("failed to write complete symbolic corpus lock marker")
+                remaining = remaining[written:]
+            os.fsync(temporary_fd)
+        finally:
+            os.close(temporary_fd)
+        return name
+    raise FileExistsError("could not create a unique corpus lock initializer")
+
+
+def _install_output_lock(directory_fd: int, temporary_name: str) -> None:
+    os.link(
+        temporary_name,
+        OUTPUT_LOCK,
+        src_dir_fd=directory_fd,
+        dst_dir_fd=directory_fd,
+        follow_symlinks=False,
+    )
+    _fsync_directory(directory_fd)
+
+
+def _cleanup_lock_init_temporaries(directory_fd: int, lock_fd: int) -> None:
+    lock_stat = os.fstat(lock_fd)
+    temporary_entries: list[str] = []
+    same_inode_count = 0
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+    for name in os.listdir(directory_fd):
+        if _stage_token(name, LOCK_INIT_TEMP_PREFIX, ".tmp") is None:
+            continue
+        try:
+            temporary_fd = os.open(name, flags, dir_fd=directory_fd)
+        except OSError as error:
+            raise ValueError(f"symbolic corpus lock initializer is invalid: {name}") from error
+        try:
+            opened = os.fstat(temporary_fd)
+            entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            marker = os.read(temporary_fd, len(OUTPUT_LOCK_BYTES) + 1)
+        finally:
+            os.close(temporary_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(entry.st_mode)
+            or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
+            or marker != OUTPUT_LOCK_BYTES
+        ):
+            raise ValueError(f"symbolic corpus lock initializer is invalid: {name}")
+        if (opened.st_dev, opened.st_ino) == (lock_stat.st_dev, lock_stat.st_ino):
+            same_inode_count += 1
+        elif opened.st_nlink != 1:
+            raise ValueError(f"symbolic corpus lock initializer is not single-link: {name}")
+        temporary_entries.append(name)
+
+    if lock_stat.st_nlink != 1 + same_inode_count:
+        raise ValueError("symbolic corpus output lock must be a regular single-link file")
+    for name in temporary_entries:
+        _unlink_entry(directory_fd, name)
+    if temporary_entries:
+        _fsync_directory(directory_fd)
+    if os.fstat(lock_fd).st_nlink != 1:
+        raise ValueError("symbolic corpus output lock must be a regular single-link file")
+
+
 def _acquire_output_lock(directory_fd: int, output: Path) -> int:
     lock_module = _fcntl_module()
     flags = os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
-    created = False
-    try:
-        lock_fd = os.open(
-            OUTPUT_LOCK,
-            flags | os.O_CREAT | os.O_EXCL,
-            0o600,
-            dir_fd=directory_fd,
-        )
-        created = True
-    except FileExistsError:
+    if not _entry_exists(directory_fd, OUTPUT_LOCK):
+        temporary_name = _create_lock_init_temporary(directory_fd)
         try:
-            lock_fd = os.open(OUTPUT_LOCK, flags, dir_fd=directory_fd)
-        except OSError as error:
-            raise ValueError(
-                "symbolic corpus output lock must be a regular single-link file: "
-                f"{output / OUTPUT_LOCK}"
-            ) from error
+            _install_output_lock(directory_fd, temporary_name)
+        except FileExistsError:
+            pass
+    try:
+        lock_fd = os.open(OUTPUT_LOCK, flags, dir_fd=directory_fd)
     except OSError as error:
         raise ValueError(
             f"symbolic corpus output lock must be a regular single-link file: {output / OUTPUT_LOCK}"
@@ -383,9 +449,7 @@ def _acquire_output_lock(directory_fd: int, output: Path) -> int:
         entry = os.stat(OUTPUT_LOCK, dir_fd=directory_fd, follow_symlinks=False)
         if (
             not stat.S_ISREG(opened.st_mode)
-            or opened.st_nlink != 1
             or not stat.S_ISREG(entry.st_mode)
-            or entry.st_nlink != 1
             or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
         ):
             raise ValueError(
@@ -394,15 +458,11 @@ def _acquire_output_lock(directory_fd: int, output: Path) -> int:
             )
         os.lseek(lock_fd, 0, os.SEEK_SET)
         lock_bytes = os.read(lock_fd, len(OUTPUT_LOCK_BYTES) + 1)
-        if created or (lock_bytes == b"" and _root_pair_is_coherent(directory_fd)):
-            os.lseek(lock_fd, 0, os.SEEK_SET)
-            if os.write(lock_fd, OUTPUT_LOCK_BYTES) != len(OUTPUT_LOCK_BYTES):
-                raise OSError("failed to write complete symbolic corpus lock marker")
-            os.fsync(lock_fd)
-        elif lock_bytes != OUTPUT_LOCK_BYTES:
+        if lock_bytes != OUTPUT_LOCK_BYTES:
             raise ValueError(
                 f"symbolic corpus output lock is not tool-owned: {output / OUTPUT_LOCK}"
             )
+        _cleanup_lock_init_temporaries(directory_fd, lock_fd)
     except BaseException:
         os.close(lock_fd)
         raise
@@ -415,16 +475,6 @@ def _release_output_lock(lock_fd: int) -> None:
         lock_module.flock(lock_fd, lock_module.LOCK_UN)
     finally:
         os.close(lock_fd)
-
-
-def _root_pair_is_coherent(directory_fd: int) -> bool:
-    corpus_bytes = _read_regular_single_link_entry(directory_fd, "corpus.jsonl")
-    manifest_bytes = _read_regular_single_link_entry(directory_fd, "manifest.json")
-    return (
-        corpus_bytes is not None
-        and manifest_bytes is not None
-        and _is_generated_pair(manifest_bytes, corpus_bytes)
-    )
 
 
 def _stage_token(name: str, prefix: str, suffix: str) -> str | None:
@@ -759,6 +809,7 @@ def read_symbolic_corpus(output: Path) -> SymbolicCorpusSnapshot:
             corpus_bytes is None
             or manifest_bytes is None
             or not _is_generated_pair(manifest_bytes, corpus_bytes)
+            or _generation_id(corpus_bytes, manifest_bytes) != generation_id
         ):
             raise ValueError(f"symbolic corpus generation is not coherent: {generation_id}")
         manifest = cast(CorpusManifest, json.loads(manifest_bytes))

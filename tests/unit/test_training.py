@@ -403,7 +403,7 @@ def test_previous_tool_layout_migrates_without_overwriting_root_pair(tmp_path, v
     output.mkdir()
     for artifact_name, data in old_pair.items():
         (output / artifact_name).write_bytes(data)
-    (output / corpus_module.OUTPUT_LOCK).write_bytes(b"")
+    (output / corpus_module.OUTPUT_LOCK).write_bytes(corpus_module.OUTPUT_LOCK_BYTES)
 
     manifest = export_symbolic_corpus(
         ROOT / "data/examples/sequence.yaml",
@@ -507,6 +507,26 @@ def test_generation_id_collision_is_rejected_without_replacing_generation(
     } == before
 
 
+def test_reader_rejects_coherent_pair_under_wrong_generation_id(tmp_path, vocab, terms):
+    output = tmp_path / "output"
+    export_symbolic_corpus(ROOT / "data/examples/installation.yaml", output, vocab, terms)
+    snapshot = read_symbolic_corpus(output)
+    wrong_generation_id = f"{corpus_module.GENERATION_PREFIX}{'0' * 64}"
+    assert wrong_generation_id != snapshot.generation_id
+    wrong_generation = output / corpus_module.GENERATIONS_DIRECTORY / wrong_generation_id
+    wrong_generation.mkdir()
+    for artifact_name in corpus_module.OUTPUT_ARTIFACTS:
+        (wrong_generation / artifact_name).write_bytes(
+            _current_artifact(output, artifact_name).read_bytes()
+        )
+    current = output / corpus_module.CURRENT_SELECTOR
+    current.unlink()
+    current.symlink_to(f"{corpus_module.GENERATIONS_DIRECTORY}/{wrong_generation_id}")
+
+    with pytest.raises(ValueError, match="generation is not coherent"):
+        read_symbolic_corpus(output)
+
+
 def test_reader_pins_generation_across_current_switch(tmp_path, monkeypatch, vocab, terms):
     output = tmp_path / "output"
     old_manifest = export_symbolic_corpus(
@@ -602,6 +622,93 @@ def test_concurrent_publishers_leave_one_coherent_generation_selected(
     snapshot = read_symbolic_corpus(output)
     assert snapshot.manifest == second_manifest
     assert snapshot.manifest["source_files"] == ["sequence.yaml"]
+    assert len(_generation_directories(output)) == 2
+
+
+@pytest.mark.parametrize("interruption", ["before_install", "after_install"])
+def test_interrupted_initial_lock_install_is_recovered(
+    tmp_path,
+    monkeypatch,
+    vocab,
+    terms,
+    interruption,
+):
+    output = tmp_path / "output"
+    original_install = corpus_module._install_output_lock
+
+    def interrupted_install(directory_fd, temporary_name):
+        if interruption == "after_install":
+            original_install(directory_fd, temporary_name)
+        raise OSError(f"injected {interruption}")
+
+    monkeypatch.setattr(corpus_module, "_install_output_lock", interrupted_install)
+
+    with pytest.raises(OSError, match=f"injected {interruption}"):
+        export_symbolic_corpus(
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+
+    lock_path = output / corpus_module.OUTPUT_LOCK
+    temporary_pattern = f"{corpus_module.LOCK_INIT_TEMP_PREFIX}*.tmp"
+    if interruption == "before_install":
+        assert not lock_path.exists()
+    else:
+        assert lock_path.read_bytes() == corpus_module.OUTPUT_LOCK_BYTES
+        assert lock_path.stat().st_nlink == 2
+    assert len(list(output.glob(temporary_pattern))) == 1
+
+    monkeypatch.setattr(corpus_module, "_install_output_lock", original_install)
+    manifest = export_symbolic_corpus(
+        ROOT / "data/examples/installation.yaml",
+        output,
+        vocab,
+        terms,
+    )
+
+    assert lock_path.read_bytes() == corpus_module.OUTPUT_LOCK_BYTES
+    assert lock_path.stat().st_nlink == 1
+    assert not list(output.glob(temporary_pattern))
+    _assert_current_pair(output, manifest)
+
+
+def test_concurrent_first_lock_creation_uses_one_valid_winner(tmp_path, monkeypatch, vocab, terms):
+    output = tmp_path / "output"
+    installers_ready = threading.Barrier(2)
+    original_install = corpus_module._install_output_lock
+
+    def racing_install(directory_fd, temporary_name):
+        installers_ready.wait(timeout=10)
+        original_install(directory_fd, temporary_name)
+
+    monkeypatch.setattr(corpus_module, "_install_output_lock", racing_install)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            export_symbolic_corpus,
+            ROOT / "data/examples/installation.yaml",
+            output,
+            vocab,
+            terms,
+        )
+        second = executor.submit(
+            export_symbolic_corpus,
+            ROOT / "data/examples/sequence.yaml",
+            output,
+            vocab,
+            terms,
+        )
+        first.result(timeout=10)
+        second.result(timeout=10)
+
+    lock_path = output / corpus_module.OUTPUT_LOCK
+    assert lock_path.read_bytes() == corpus_module.OUTPUT_LOCK_BYTES
+    assert lock_path.stat().st_nlink == 1
+    assert not list(output.glob(f"{corpus_module.LOCK_INIT_TEMP_PREFIX}*.tmp"))
+    snapshot = read_symbolic_corpus(output)
+    assert snapshot.manifest["source_files"] in [["installation.yaml"], ["sequence.yaml"]]
     assert len(_generation_directories(output)) == 2
 
 
