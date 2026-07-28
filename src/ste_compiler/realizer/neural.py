@@ -8,7 +8,7 @@ from ste_compiler.realizer.base import (
     RealizationConstraints,
     RealizationResult,
 )
-from ste_compiler.realizer.constrained import SymbolicLexicalizer
+from ste_compiler.realizer.constrained import EXACT_PLAN_SYMBOL, SymbolicLexicalizer
 from ste_compiler.realizer.deterministic import DeterministicRealizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.validators.alignment import (
@@ -53,6 +53,9 @@ class NeuralRealizer:
         generated_plan = self.generator.generate_symbols(
             canonical_document_json(document), allowed_symbols
         )
+        generated_symbols = generated_plan.split()
+        if not generated_symbols or generated_symbols[0] != EXACT_PLAN_SYMBOL:
+            raise ValueError(f"generated plan must begin with {EXACT_PLAN_SYMBOL}")
         text = lexicalizer.lexicalize(
             generated_plan,
             allowed_symbols=allowed_symbols,

@@ -416,6 +416,40 @@ def test_neural_realizer_accepts_only_aligned_symbolic_output(vocab, terms):
     assert not SemanticValidator().validate(document, result)
 
 
+def test_neural_realizer_rejects_markerless_legacy_casing_bypass(vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(update={"object": None})
+    lexicalizer = SymbolicLexicalizer(vocab, terms)
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    expected_plan = lexicalizer.symbolize(expected.text)
+    allowed_symbols = frozenset(expected_plan.split())
+    markerless_plan = "WORD_Install PERIOD"
+    assert set(markerless_plan.split()) <= allowed_symbols
+    assert (
+        lexicalizer.lexicalize(
+            markerless_plan,
+            allowed_symbols=allowed_symbols,
+            capitalize_sentences=True,
+        )
+        == expected.text
+    )
+
+    class Generator:
+        model_id = "offline-markerless-casing-generator"
+
+        def generate_symbols(self, serialized_ir, supplied_symbols):
+            del serialized_ir
+            assert supplied_symbols == allowed_symbols
+            return markerless_plan
+
+    with pytest.raises(
+        ValueError,
+        match="must begin with PLAN_EXACT_WHITESPACE_V1",
+    ):
+        NeuralRealizer(Generator()).realize(document, vocab, terms)
+
+
 def test_neural_realizer_rejects_alphabetically_attached_configured_unit(vocab, terms):
     custom_vocab = Vocabulary(vocab.data.model_copy(update={"units": [*vocab.data.units, "°C"]}))
     document = load_document(ROOT / "data/examples/installation.yaml")
