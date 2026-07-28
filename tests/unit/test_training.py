@@ -1,0 +1,177 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from ste_compiler.ir.serialization import dumps_document, load_document
+from ste_compiler.realizer import DeterministicRealizer
+from ste_compiler.training import export_symbolic_corpus
+
+ROOT = Path(__file__).parents[2]
+
+
+def test_symbolic_corpus_export_is_byte_reproducible(tmp_path, vocab, terms):
+    first_output = tmp_path / "first"
+    second_output = tmp_path / "second"
+
+    first = export_symbolic_corpus(ROOT / "data/examples", first_output, vocab, terms)
+    second = export_symbolic_corpus(ROOT / "data/examples", second_output, vocab, terms)
+
+    first_bytes = (first_output / "corpus.jsonl").read_bytes()
+    assert first == second
+    assert first_bytes == (second_output / "corpus.jsonl").read_bytes()
+    assert (first_output / "manifest.json").read_bytes() == (
+        second_output / "manifest.json"
+    ).read_bytes()
+    assert first["record_count"] == 5
+    assert first["source_files"] == [
+        "conditional.yaml",
+        "installation.yaml",
+        "negative.yaml",
+        "sequence.yaml",
+        "warning_pressure.yaml",
+    ]
+    assert first["corpus_sha256"] == hashlib.sha256(first_bytes).hexdigest()
+    assert first["profiles"][0]["realizer"] == "deterministic"
+    assert first["profiles"][0]["realizer_version"] == DeterministicRealizer.version
+    assert first["profiles"][0]["vocabulary_version"] == vocab.data.version
+    assert first["profiles"][0]["terminology_version"] == terms.data.version
+    assert first["profiles"][0]["validator_profile"] == "strict-demo-1"
+
+    records = [json.loads(line) for line in first_bytes.splitlines()]
+    assert [record["source_path"] for record in records] == first["source_files"]
+    assert all(record["serialized_ir"] and record["symbols"] for record in records)
+
+
+def test_corpus_output_nested_inside_source_is_not_reingested(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    output = source / "generated"
+
+    first = export_symbolic_corpus(source, output, vocab, terms)
+    second = export_symbolic_corpus(source, output, vocab, terms)
+
+    assert first == second
+    assert first["record_count"] == 1
+
+
+@pytest.mark.parametrize("placement", ["ancestor", "sibling"])
+def test_corpus_output_outside_source_does_not_suppress_inputs(
+    tmp_path,
+    vocab,
+    terms,
+    placement,
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    output = tmp_path if placement == "ancestor" else tmp_path / "output"
+
+    manifest = export_symbolic_corpus(source, output, vocab, terms)
+
+    assert manifest["record_count"] == 1
+    assert manifest["source_files"] == ["installation.yaml"]
+    assert (output / "corpus.jsonl").is_file()
+
+
+def test_corpus_export_rejects_duplicate_document_ids(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    serialized = dumps_document(document)
+    (source / "first.yaml").write_text(serialized, encoding="utf-8")
+    (source / "second.yaml").write_text(serialized, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate document id.*first.yaml.*second.yaml"):
+        export_symbolic_corpus(source, tmp_path / "output", vocab, terms)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("realizer", "claimed-realizer"),
+        ("realizer_version", "claimed-realizer-version"),
+        ("vocabulary_version", "claimed-vocabulary-version"),
+        ("terminology_version", "claimed-terminology-version"),
+        ("validator_profile", "claimed-validator-profile"),
+    ],
+)
+def test_corpus_export_rejects_mismatched_runtime_profile(
+    tmp_path,
+    vocab,
+    terms,
+    field,
+    invalid_value,
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    setattr(document.metadata, field, invalid_value)
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=rf"metadata does not match the corpus export runtime: {field}=",
+    ):
+        export_symbolic_corpus(source, tmp_path / "output", vocab, terms)
+
+
+def test_corpus_export_rejects_symlinked_ir_file(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    outside = tmp_path / "outside"
+    source.mkdir()
+    outside.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    external_ir = outside / "installation.yaml"
+    external_ir.write_text(dumps_document(document), encoding="utf-8")
+    (source / "linked.yaml").symlink_to(external_ir)
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="symlinked IR file: linked.yaml"):
+        export_symbolic_corpus(source, output, vocab, terms)
+    assert not output.exists()
+
+
+def test_corpus_export_rejects_direct_symlinked_ir_source(tmp_path, vocab, terms):
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    actual_source = tmp_path / "installation.yaml"
+    actual_source.write_text(dumps_document(document), encoding="utf-8")
+    linked_source = tmp_path / "linked.yaml"
+    linked_source.symlink_to(actual_source)
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="source must not be a symlink"):
+        export_symbolic_corpus(linked_source, output, vocab, terms)
+    assert not output.exists()
+
+
+def test_corpus_export_rejects_symlinked_source_root(tmp_path, vocab, terms):
+    actual_source = tmp_path / "actual-source"
+    actual_source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    (actual_source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    linked_source = tmp_path / "linked-source"
+    linked_source.symlink_to(actual_source, target_is_directory=True)
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="source must not be a symlink"):
+        export_symbolic_corpus(linked_source, output, vocab, terms)
+    assert not output.exists()
+
+
+def test_training_record_rejects_invalid_deterministic_target(tmp_path, vocab, terms):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={"manner": " ".join(["fully"] * 30)}
+    )
+    (source / "overlong.yaml").write_text(dumps_document(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="was rejected: SENTENCE_TOO_LONG"):
+        export_symbolic_corpus(source, tmp_path / "output", vocab, terms)

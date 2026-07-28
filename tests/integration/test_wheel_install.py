@@ -69,6 +69,24 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
     assert "WORD_occur" in training_record["allowed_symbols"]
     assert "TERM_hydraulic_pressure|hydraulic%20pressure" in training_record["symbols"]
 
+    corpus = tmp_path / "training"
+    subprocess.run(
+        [
+            *command,
+            "export-symbolic-corpus",
+            str(ROOT / "data/examples"),
+            "--output",
+            str(corpus),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads((corpus / "manifest.json").read_text())["record_count"] == 5
+    assert len((corpus / "corpus.jsonl").read_text().splitlines()) == 5
+
     reports = tmp_path / "reports"
     subprocess.run(
         [*command, "evaluate", "--output", str(reports)],

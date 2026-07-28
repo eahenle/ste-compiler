@@ -11,7 +11,11 @@ from ste_compiler.evaluation import write_reports
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
-from ste_compiler.training import TrainingRecordValidationError, build_training_record
+from ste_compiler.training import (
+    TrainingRecordValidationError,
+    build_training_record,
+    export_symbolic_corpus,
+)
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
 app = typer.Typer(help="Compile semantic IR to auditable STE-inspired controlled English.")
@@ -86,6 +90,25 @@ def plan_symbols(
         typer.echo(json.dumps(record, indent=2))
     else:
         typer.echo(record["symbols"])
+
+
+@app.command("export-symbolic-corpus")
+def export_corpus(
+    source: Annotated[Path, typer.Argument(help="IR file or directory.")],
+    output: Annotated[Path, typer.Option(help="Output directory.")] = Path("training-corpus"),
+) -> None:
+    """Write deterministic JSONL training records and a SHA-256 manifest."""
+
+    vocab, terms = resources()
+    try:
+        manifest = export_symbolic_corpus(source, output, vocab, terms)
+    except (ValidationError, ValueError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    typer.echo(
+        f"Wrote {manifest['record_count']} records to {output / 'corpus.jsonl'} "
+        f"(sha256: {manifest['corpus_sha256']})"
+    )
 
 
 @app.command("validate-text")

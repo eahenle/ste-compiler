@@ -1,3 +1,4 @@
+from .corpus import CorpusManifest, export_symbolic_corpus
 from .records import (
     TrainingRecord,
     TrainingRecordValidationError,
@@ -5,7 +6,9 @@ from .records import (
 )
 
 __all__ = [
+    "CorpusManifest",
     "TrainingRecord",
     "TrainingRecordValidationError",
     "build_training_record",
+    "export_symbolic_corpus",
 ]

@@ -89,6 +89,43 @@ def test_cli_training_plan_rejects_forbidden_alias_consistently_with_compile(tmp
     assert "symbols" not in rejected_report
 
 
+def test_cli_exports_reproducible_symbolic_corpus(tmp_path):
+    output = tmp_path / "training"
+    result = runner.invoke(
+        app,
+        [
+            "export-symbolic-corpus",
+            str(ROOT / "data/examples"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["schema_version"] == "symbolic-corpus-v1"
+    assert manifest["record_count"] == 5
+    assert manifest["corpus_sha256"] in result.stdout
+    assert len((output / "corpus.jsonl").read_text().splitlines()) == 5
+
+
+def test_cli_rejects_mismatched_corpus_profile(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    document = load_document(ROOT / "data/examples/installation.yaml")
+    document.metadata.vocabulary_version = "unloaded-vocabulary"
+    (source / "installation.yaml").write_text(dumps_document(document), encoding="utf-8")
+    output = tmp_path / "training"
+
+    result = runner.invoke(
+        app,
+        ["export-symbolic-corpus", str(source), "--output", str(output)],
+    )
+
+    assert result.exit_code == 1
+    assert "vocabulary_version='unloaded-vocabulary'" in result.stderr
+    assert not output.exists()
+
+
 def test_cli_training_plan_preserves_negative_quantity_symbol(tmp_path):
     document = load_document(ROOT / "data/examples/warning_pressure.yaml")
     instruction = document.sections[0].statements[0]
