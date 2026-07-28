@@ -103,6 +103,68 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["input_ids"]
 
 
+def test_encoder_decoder_overrides_inherited_generation_strategy():
+    tokenizer = CharacterTokenizer()
+    model = CheckingModel(tokenizer, "PERIOD")
+    model.generation_config = SimpleNamespace(
+        do_sample=True,
+        num_beams=8,
+        num_beam_groups=4,
+        num_return_sequences=4,
+        return_dict_in_generate=True,
+        penalty_alpha=0.6,
+        dola_layers="high",
+        constraints=[object()],
+        force_words_ids=[[123]],
+        assistant_model=object(),
+        prompt_lookup_num_tokens=8,
+        min_length=256,
+        min_new_tokens=128,
+    )
+    generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderConfig(
+            model_id="organization/small-seq2seq",
+            revision=MODEL_REVISION,
+            num_beams=2,
+        ),
+        component_loader=lambda config: (tokenizer, model),
+    )
+
+    assert generator.generate_symbols("{}", frozenset({"PERIOD"})) == "PERIOD"
+    assert {
+        name: model.kwargs[name]
+        for name in (
+            "do_sample",
+            "num_beams",
+            "num_beam_groups",
+            "num_return_sequences",
+            "return_dict_in_generate",
+            "penalty_alpha",
+            "dola_layers",
+            "constraints",
+            "force_words_ids",
+            "assistant_model",
+            "prompt_lookup_num_tokens",
+            "min_length",
+            "min_new_tokens",
+        )
+    } == {
+        "do_sample": False,
+        "num_beams": 2,
+        "num_beam_groups": 1,
+        "num_return_sequences": 1,
+        "return_dict_in_generate": False,
+        "penalty_alpha": None,
+        "dola_layers": None,
+        "constraints": None,
+        "force_words_ids": None,
+        "assistant_model": None,
+        "prompt_lookup_num_tokens": None,
+        "min_length": 0,
+        "min_new_tokens": 0,
+    }
+
+
 def test_encoder_decoder_configuration_accepts_hub_repository_id():
     config = EncoderDecoderConfig(model_id="organization/model", revision=MODEL_REVISION)
 
