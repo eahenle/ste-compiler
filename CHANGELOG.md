@@ -16,6 +16,9 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A hash-bound benchmark evidence scaffold with raw prediction schemas, recomputable metrics,
   deterministic reports, and stage-specific failure fixtures that are explicitly not model-quality
   results.
+- A machine-readable 13-scenario example catalog with credential-free CI execution, explicit
+  external gates, custom-resource fixtures, reproducible benchmark-fixture reporting, and an
+  installed-wheel catalog boundary verified outside the source checkout.
 - A credential-free raw-source-to-validated-text reference workflow.
 - Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
   adapter runs, with portable typed identities and untrusted CLI locators kept separate.

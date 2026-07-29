@@ -341,7 +341,13 @@ Human review:
 12. Offline cached operation.
 13. Benchmark reproduction.
 
-Each example has expected output and is executed in CI or scheduled CI.
+Each implemented example has expected output and is executed in CI. Scenarios 3, 8, and 9 remain
+explicitly gated until their provider, released-checkpoint, and comparison-protocol inputs exist.
+
+The machine-readable inventory in [`examples/manifest.yaml`](../examples/manifest.yaml) records the
+current command, fixtures, expected output, CI owner, and any unresolved release gate for every
+scenario. See the [executable example catalog](executable-examples.md) for the tested offline subset
+and the distinction between mechanics coverage and unreleased model or benchmark evidence.
 
 ### Documentation
 

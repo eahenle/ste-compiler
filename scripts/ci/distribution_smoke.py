@@ -19,6 +19,12 @@ WHEEL_SUFFIXES = (
     "ste_compiler/data/demonstration_corpus/v2/source-construction.json",
     "ste_compiler/data/realizers/decoder-only-lora-local-bundle-schema-example.yaml",
     "ste_compiler/data/realizers/encoder-decoder-local-bundle-schema-example.yaml",
+    "ste_compiler/examples/__init__.py",
+    "ste_compiler/examples/custom_resources.py",
+    "ste_compiler/examples/manifest.yaml",
+    "ste_compiler/examples/resources/custom_installation.yaml",
+    "ste_compiler/examples/resources/custom_terminology.yaml",
+    "ste_compiler/examples/resources/custom_vocabulary.yaml",
     ".dist-info/METADATA",
     ".dist-info/entry_points.txt",
 )
@@ -29,7 +35,14 @@ SDIST_SUFFIXES = (
     "/datasets/demonstration-corpus-1/manifest.json",
     "/datasets/demonstration-corpus-2/manifest.json",
     "/docs/v1-implementation-plan.md",
+    "/examples/__init__.py",
+    "/examples/custom_resources.py",
+    "/examples/manifest.yaml",
+    "/examples/resources/custom_installation.yaml",
+    "/examples/resources/custom_terminology.yaml",
+    "/examples/resources/custom_vocabulary.yaml",
     "/scripts/ci/distribution_smoke.py",
+    "/tests/integration/test_executable_examples.py",
 )
 
 
@@ -157,7 +170,14 @@ def _smoke_installed_wheel(wheel: Path, temporary_root: Path) -> None:
         "import socket\n"
         "def _reject(*args, **kwargs):\n"
         "    raise RuntimeError('distribution smoke test forbids network access')\n"
-        "socket.socket.connect = _reject\n",
+        "for _method in ('connect', 'connect_ex', 'sendto', 'sendmsg'):\n"
+        "    if hasattr(socket.socket, _method):\n"
+        "        setattr(socket.socket, _method, _reject)\n"
+        "socket.create_connection = _reject\n"
+        "for _resolver in "
+        "('getaddrinfo', 'gethostbyaddr', 'gethostbyname', 'gethostbyname_ex', 'getnameinfo'):\n"
+        "    if hasattr(socket, _resolver):\n"
+        "        setattr(socket, _resolver, _reject)\n",
         encoding="utf-8",
     )
     _run(
@@ -183,37 +203,52 @@ import pathlib
 import subprocess
 import sys
 
+import yaml
 import ste_compiler
 
 installed, output = map(pathlib.Path, sys.argv[1:])
-assert pathlib.Path(ste_compiler.__file__).is_relative_to(installed)
-command = [sys.executable, "-m", "ste_compiler.cli"]
-help_result = subprocess.run(
-    [*command, "--help"], check=True, capture_output=True, text=True
+package_root = pathlib.Path(ste_compiler.__file__).parent.resolve()
+assert package_root.is_relative_to(installed.resolve())
+
+manifest = yaml.safe_load(
+    (package_root / "examples/manifest.yaml").read_text(encoding="utf-8")
 )
-assert "compile-source" in help_result.stdout
-demo = subprocess.run(
-    [*command, "demo", "--json"], check=True, capture_output=True, text=True
+assert manifest["schema_version"] == "ste-executable-examples-v1"
+assert manifest["distribution"]["wheel_fixture_base"] == "ste_compiler"
+assert manifest["distribution"]["portable_execution"] == ["core-ci"]
+assert [scenario["id"] for scenario in manifest["scenarios"]] == list(range(1, 14))
+network_probe = subprocess.run(
+    [sys.executable, "-c", "import socket; socket.gethostbyname('example.invalid')"],
+    capture_output=True,
+    text=True,
 )
-assert json.loads(demo.stdout)["validation"]["status"] == "accepted"
-subprocess.run(
-    [*command, "build-demonstration-corpus", "--version", "2", "--output", str(output)],
-    check=True,
-)
-verified = subprocess.run(
-    [*command, "verify-demonstration-corpus", str(output)],
+assert network_probe.returncode != 0
+assert "distribution smoke test forbids network access" in network_probe.stderr
+catalog_result = subprocess.run(
+    [sys.executable, "-m", "ste_compiler.examples.catalog_runner", str(output)],
     check=True,
     capture_output=True,
     text=True,
 )
-assert verified.stdout.startswith("Verified 24 records")
+catalog_payload = json.loads(catalog_result.stdout)
+portable = set(manifest["distribution"]["portable_execution"])
+portable_scenarios = [
+    scenario for scenario in manifest["scenarios"] if scenario["execution"] in portable
+]
+assert catalog_payload["execution"] == manifest["distribution"]["portable_execution"]
+assert catalog_payload["scenario_ids"] == [
+    scenario["id"] for scenario in portable_scenarios
+]
+assert catalog_payload["command_count"] == sum(
+    len(scenario["commands"]) for scenario in portable_scenarios
+)
 """
     _run(
         sys.executable,
         "-c",
         script,
         str(installed),
-        str(temporary_root / "corpus-v2"),
+        str(temporary_root / "installed-catalog-output"),
         cwd=temporary_root,
         env=environment,
     )

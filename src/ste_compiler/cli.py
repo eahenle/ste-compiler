@@ -80,6 +80,10 @@ app.add_typer(glossary_app, name="glossary")
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_DATA = Path(__file__).with_name("data")
 DATA_ROOT = PACKAGE_DATA if PACKAGE_DATA.is_dir() else ROOT / "data"
+DEFAULT_VOCABULARY_RELATIVE = Path("demo_vocabulary.yaml")
+DEFAULT_TERMINOLOGY_RELATIVE = Path("demo_terminology.yaml")
+DEMO_SOURCE_RELATIVE = Path("end_to_end/hydraulic_warning.txt")
+DEMO_IR_RELATIVE = Path("end_to_end/hydraulic_warning.ir.yaml")
 CONTROLLED_INPUT_ERRORS = (KeyError, ValidationError, ValueError)
 SOURCE_INPUT_ERRORS = (*CONTROLLED_INPUT_ERRORS, OSError)
 REALIZER_INPUT_ERRORS = (
@@ -106,8 +110,8 @@ def resources(
     vocabulary: Path | None = None, terminology: Path | None = None
 ) -> tuple[Vocabulary, TerminologyRegistry]:
     return (
-        Vocabulary.load(vocabulary or DATA_ROOT / "demo_vocabulary.yaml"),
-        TerminologyRegistry.load(terminology or DATA_ROOT / "demo_terminology.yaml"),
+        Vocabulary.load(vocabulary or DATA_ROOT / DEFAULT_VOCABULARY_RELATIVE),
+        TerminologyRegistry.load(terminology or DATA_ROOT / DEFAULT_TERMINOLOGY_RELATIVE),
     )
 
 
@@ -995,10 +999,9 @@ def compile_source(
 def demo(json_output: bool = typer.Option(False, "--json")) -> None:
     """Run the packaged, credential-free raw-source reference workflow."""
 
-    example_root = DATA_ROOT / "end_to_end"
     run_replay_compilation(
-        example_root / "hydraulic_warning.txt",
-        example_root / "hydraulic_warning.ir.yaml",
+        DATA_ROOT / DEMO_SOURCE_RELATIVE,
+        DATA_ROOT / DEMO_IR_RELATIVE,
         "hydraulic_warning.txt",
         json_output,
     )

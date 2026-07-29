@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import random
-import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -37,11 +36,13 @@ from ste_compiler.training import (
     run_decoder_lora_training,
     run_decoder_lora_training_bundle,
 )
+from tests.executable_example_helpers import example_fixture, forbid_network
 
 ROOT = Path(__file__).parents[2]
-CONFIG = ROOT / "data/training/decoder-only-lora-schema-example.yaml"
-RELEASE = ROOT / "datasets/demonstration-corpus-1"
+CONFIG = example_fixture(7, 0)
+RELEASE = example_fixture(7, 1)
 UNSAFE_SUFFIXES = {".bin", ".ckpt", ".joblib", ".pickle", ".pkl", ".pt", ".pth"}
+pytestmark = pytest.mark.neural
 
 
 def _sha256(path: Path) -> str:
@@ -49,13 +50,7 @@ def _sha256(path: Path) -> str:
 
 
 def _offline(monkeypatch) -> None:
-    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
-
-    def reject_network(*args, **kwargs):
-        raise AssertionError("offline decoder training attempted a network connection")
-
-    monkeypatch.setattr(socket.socket, "connect", reject_network)
+    forbid_network(monkeypatch)
 
 
 def _training_inputs():

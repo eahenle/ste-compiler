@@ -1,0 +1,18 @@
+id: custom-installation
+title: Custom resource example
+sections:
+  - id: procedure
+    kind: procedure
+    statements:
+      - kind: instruction
+        id: install-hatch
+        action:
+          id: install
+          lemma: install
+        object:
+          term_id: access_hatch
+        source_spans:
+          - source_id: custom-installation.txt
+            start: 0
+            end: 25
+            quote: Install the access hatch.

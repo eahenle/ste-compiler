@@ -1,0 +1,17 @@
+version: example-vocabulary-1
+license: MIT; original executable-example vocabulary
+units: []
+structural_tokens: ["."]
+entries:
+  - lemma: install
+    parts_of_speech: [verb]
+    meaning_id: example.install
+    inflections: []
+    example: Install the access hatch.
+    forbidden_confusions: []
+  - lemma: the
+    parts_of_speech: [determiner]
+    meaning_id: example.the
+    inflections: []
+    example: Install the access hatch.
+    forbidden_confusions: []

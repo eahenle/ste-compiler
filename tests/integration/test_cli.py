@@ -23,10 +23,20 @@ from ste_compiler.realizer.constrained import SymbolicLexicalizer
 from ste_compiler.realizer.deterministic import DeterministicRealizer
 from ste_compiler.results import CompileSourceResult, SourceIdentity
 from ste_compiler.training import TrainingRecordValidationError, build_training_record
+from tests.executable_example_helpers import example_scenario, forbid_network
 
 ROOT = Path(__file__).parents[2]
 runner = CliRunner()
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+OFFLINE_EXAMPLE = example_scenario(12)
+OFFLINE_NEURAL_CONFIGS = tuple(
+    ROOT / fixture
+    for fixture in OFFLINE_EXAMPLE["fixtures"]
+    if fixture.startswith("data/realizers/")
+)
+OFFLINE_SOURCE = ROOT / next(
+    fixture for fixture in OFFLINE_EXAMPLE["fixtures"] if fixture.startswith("data/examples/")
+)
 
 
 def test_cli_runs_packaged_end_to_end_demo():
@@ -520,13 +530,19 @@ def test_cli_compile_accepts_versioned_deterministic_config():
     assert len(payload["metadata"]["realizer_config_sha256"]) == 64
 
 
-@pytest.mark.parametrize("architecture", ["encoder-decoder", "decoder-only-lora"])
+@pytest.mark.parametrize(
+    "config",
+    OFFLINE_NEURAL_CONFIGS,
+    ids=[config.stem for config in OFFLINE_NEURAL_CONFIGS],
+)
 def test_cli_routes_neural_configs_offline_through_compiler(
-    architecture,
-    tmp_path,
+    config,
     monkeypatch,
 ):
-    document = load_document(ROOT / "data/examples/negative.yaml")
+    forbid_network(monkeypatch)
+    config_payload = yaml.safe_load(config.read_text(encoding="utf-8"))
+    architecture = config_payload["architecture"]
+    document = load_document(OFFLINE_SOURCE)
     vocabulary, terminology = resources()
     reference = DeterministicRealizer().realize(document, vocabulary, terminology)
     plan = SymbolicLexicalizer(vocabulary, terminology).symbolize(reference.text)
@@ -547,42 +563,25 @@ def test_cli_routes_neural_configs_offline_through_compiler(
         captured["runtime_config"] = runtime_config
         return Generator()
 
-    identity = {"repo_id": "example/model", "revision": "a" * 40}
     if architecture == "encoder-decoder":
         monkeypatch.setattr(
             realizer_factory,
             "TransformersEncoderDecoderSymbolGenerator",
             construct,
         )
-        config_payload = {
-            "schema_version": "ste-realizer-config-v1",
-            "architecture": architecture,
-            "checkpoint": identity,
-        }
     else:
+        assert architecture == "decoder-only-lora"
         monkeypatch.setattr(
             realizer_factory,
             "DecoderOnlyLoRASymbolGenerator",
             construct,
         )
-        config_payload = {
-            "schema_version": "ste-realizer-config-v1",
-            "architecture": architecture,
-            "base_model": identity,
-            "adapter": {
-                "repo_id": "example/adapter",
-                "revision": "b" * 40,
-            },
-            "prompt_profile": "decoder-only-symbol-plan-v1",
-        }
-    config = tmp_path / f"{architecture}.json"
-    config.write_text(json.dumps(config_payload), encoding="utf-8")
 
     result = runner.invoke(
         app,
         [
             "compile",
-            str(ROOT / "data/examples/negative.yaml"),
+            str(OFFLINE_SOURCE),
             "--realizer-config",
             str(config),
             "--json",
@@ -595,6 +594,12 @@ def test_cli_routes_neural_configs_offline_through_compiler(
     assert payload["metadata"]["artifact_mode"] == "offline-cache-only"
     assert json.loads(captured["serialized_ir"])["metadata"]["realizer"] == "deterministic"
     assert captured["runtime_config"].local_files_only is True
+    if architecture == "encoder-decoder":
+        assert captured["runtime_config"].model_id == config_payload["checkpoint"]["repo_id"]
+        assert captured["runtime_config"].revision == config_payload["checkpoint"]["revision"]
+    else:
+        assert captured["runtime_config"].base_model_id == config_payload["base_model"]["repo_id"]
+        assert captured["runtime_config"].adapter_id == config_payload["adapter"]["repo_id"]
 
 
 def test_cli_rejects_invalid_realizer_config_without_traceback(tmp_path):

@@ -1,0 +1,14 @@
+version: example-terminology-1
+license: MIT; original executable-example terminology
+terms:
+  - id: access_hatch
+    canonical_form: access hatch
+    definition: A removable hatch used to access demonstration equipment.
+    domain: example
+    allowed_roles: [technical_noun]
+    aliases: [service hatch]
+    source:
+      type: glossary
+      reference: executable-example-1
+    status: approved
+    version: 1
