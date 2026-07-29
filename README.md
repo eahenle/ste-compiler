@@ -21,7 +21,8 @@ The LLM frontend can only propose schema-validated IR with source spans. It cann
 Causal links are explicit IR nodes with claim-level provenance. The deterministic realizer emits
 each link as two labeled controlled sentences (`Cause: ...` and `Effect: ...`), and semantic
 validation checks their direction, endpoint mappings, feature snapshot, and exact surfaces
-independently.
+independently. Each relation pair is a separate paragraph so it cannot overflow the source
+paragraph's sentence limit.
 
 ## Quick start
 

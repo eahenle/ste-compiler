@@ -1427,6 +1427,7 @@ def test_causal_relation_has_explicit_controlled_realization(vocab, terms):
     assert result.text == (
         "Install the access panel.\n"
         "Inspect the pump.\n"
+        "\n"
         "Cause: Install the access panel.\n"
         "Effect: Inspect the pump."
     )
@@ -1551,6 +1552,23 @@ def test_causal_labels_do_not_break_sentence_limit(vocab, terms):
     assert "SENTENCE_TOO_LONG" in {
         diagnostic.code
         for diagnostic in StructuralValidator(max_sentence_words=25).validate(overlong)
+    }
+
+
+def test_causal_relation_has_its_own_valid_paragraph(vocab, terms):
+    document = _causal_document()
+    for index in range(4):
+        document.sections[0].statements.append(
+            document.sections[0].statements[1].model_copy(update={"id": f"inspect_pump_{index}"})
+        )
+
+    result = DeterministicRealizer().realize(document, vocab, terms)
+
+    paragraphs = result.text.split("\n\n")
+    assert len(re.findall(r"[.!?](?:\s|$)", paragraphs[0])) == 6
+    assert len(re.findall(r"[.!?](?:\s|$)", paragraphs[1])) == 2
+    assert "PARAGRAPH_TOO_LONG" not in {
+        diagnostic.code for diagnostic in StructuralValidator().validate(result.text)
     }
 
 

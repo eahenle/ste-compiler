@@ -119,13 +119,17 @@ class DeterministicRealizer:
                 features = item.model_dump(mode="json")
                 mappings.append(SentenceMapping(len(mappings) + 1, text, (item.id,), features))
                 statement_text[item.id] = text
+        statement_mapping_count = len(mappings)
+        relation_paragraphs: list[str] = []
         for relation in document.causal_relations:
             relation_features = relation.model_dump(mode="json")
+            relation_sentences: list[str] = []
             for role, endpoint_id in (
                 ("Cause", relation.cause_node_id),
                 ("Effect", relation.effect_node_id),
             ):
                 text = self._causal_role(role, statement_text[endpoint_id])
+                relation_sentences.append(text)
                 mappings.append(
                     SentenceMapping(
                         len(mappings) + 1,
@@ -134,5 +138,9 @@ class DeterministicRealizer:
                         {**relation_features, "causal_role": role.casefold()},
                     )
                 )
+            relation_paragraphs.append("\n".join(relation_sentences))
         metadata = {k: str(v) for k, v in document.metadata.model_dump().items()}
-        return RealizationResult("\n".join(m.text for m in mappings), tuple(mappings), metadata)
+        text = "\n".join(mapping.text for mapping in mappings[:statement_mapping_count])
+        if relation_paragraphs:
+            text = "\n\n".join((text, *relation_paragraphs))
+        return RealizationResult(text, tuple(mappings), metadata)
