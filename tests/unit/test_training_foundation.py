@@ -189,6 +189,14 @@ def test_decoder_training_config_requires_base_tokenizer_identity():
         TRAINING_CONFIG_ADAPTER.validate_python(raw)
 
 
+def test_encoder_training_config_requires_base_tokenizer_identity():
+    raw = _encoder_config()
+    raw["tokenizer"] = {**raw["tokenizer"], "revision": "d" * 40}
+
+    with pytest.raises(ValidationError, match="tokenizer identity must match"):
+        TRAINING_CONFIG_ADAPTER.validate_python(raw)
+
+
 def test_decoder_training_config_rejects_duplicate_lora_targets():
     raw = _decoder_config()
     raw["lora"]["target_modules"] = ["q_proj", "q_proj"]

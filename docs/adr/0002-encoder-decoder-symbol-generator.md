@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted as an inference adapter design. No trained model or quality result is shipped.
+Accepted as an inference adapter and smoke-training design. No trained model or quality result is
+shipped.
 
 ## Decision
 
@@ -54,5 +55,13 @@ including for omissions and reordered sentences.
   one-dimensional series of integer token IDs.
 - The adapter does not download or initialize a model until its first generation request. Tests use
   injected fakes and make no network calls.
-- This slice ships no training recipe, checkpoint, benchmark, parameter-count claim, or consumer-GPU
-  result. Those require a pinned corpus manifest and a separately reported experiment.
+- The training smoke path uses deterministic CPU full fine-tuning to exercise the complete model
+  save and reload boundary without an additional adapter format. It preflights the complete
+  released corpus with lossless source and target round trips, appends explicit target EOS, writes
+  safetensors-only atomic output, and records runtime-derived provenance. Model and tokenizer
+  identities are identical for v1; their complete stable-read cache inventory is content-bound
+  before loading. Checkpoint evaluation likewise loads only a private no-follow materialization and
+  requires an externally retained run-manifest digest. It is a pipeline test, not a
+  parameter-count, quality, benchmark, or consumer-GPU result.
+- This slice ships no trained checkpoint or reference-run result. Those require an explicitly
+  selected public base model, a pinned corpus manifest, and a separately reported experiment.

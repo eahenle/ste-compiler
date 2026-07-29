@@ -85,6 +85,12 @@ class EncoderDecoderTrainingConfigV1(CommonTrainingConfigV1):
     max_source_tokens: int = Field(gt=0)
     max_target_tokens: int = Field(gt=0)
 
+    @model_validator(mode="after")
+    def tokenizer_matches_base(self) -> EncoderDecoderTrainingConfigV1:
+        if self.tokenizer != self.base_model:
+            raise ValueError("encoder-decoder tokenizer identity must match the base model")
+        return self
+
 
 class LoRAConfigV1(StrictTrainingModel):
     rank: int = Field(gt=0)

@@ -131,10 +131,10 @@ Status: in progress. Strict versioned configurations now cover both architecture
 artifact identities, seeds, batching, optimizer values, token limits, and architecture-specific
 settings. A race-resistant release reader pins the manifest and train/validation hashes, validates
 the complete release, and rebuilds every deterministic training target before exposing immutable
-split records. The decoder-only track includes a two-step, offline CPU LoRA mechanics trainer with
-an atomic safetensors adapter, runtime-derived run manifest, reload/evaluation hook, generated tiny
-local fixture, CLI, CI, and installed-wheel coverage. The encoder-decoder trainer, checkpoint
-resume, public model selection, and measured reference runs remain.
+split records. Both tracks now include deterministic offline two-step CPU mechanics trainers,
+full-corpus tokenizer and overflow preflight, atomic safetensors-only output, runtime-derived run
+manifests, reload evaluation, CLI, CI, and installed-wheel coverage. Safe resume state, public
+model selection, measured reference runs, and published prediction hashes remain.
 
 ### Shared deliverables
 
