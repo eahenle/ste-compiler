@@ -98,8 +98,9 @@ external measured runs and suitable raw observation fields before they can be cl
 The frozen taxonomy separates:
 
 - frontend schema, required-field, and source-span failures;
-- realizer unauthorized-symbol, incomplete-EOS, and grammar failures;
-- validator semantic, lexical, and false-accept failures.
+- realizer unauthorized-symbol, incomplete-EOS, grammar, and standalone constraint-rejection
+  failures;
+- validator semantic, lexical, structural, and false-accept failures.
 
 Prediction codes must exist in the hash-bound taxonomy and match the observed failure stage. Reports
 include every failed fixture's raw output and notes.

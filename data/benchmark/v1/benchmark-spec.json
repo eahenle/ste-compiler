@@ -60,7 +60,7 @@
     "provenance_coverage_rate",
     "deterministic_repeatability_rate"
   ],
-  "failure_taxonomy_sha256": "16fa4c11b6dcdb90301cc719e9883c293455bcd2a4a98dd929ee457350ade933",
+  "failure_taxonomy_sha256": "03770cddecb193e4f34bb75a041a22d3f457042387ee7f7393dbc6c4f51b7f7e",
   "confidence_interval": "wilson-score-95",
   "seed": 20260729
 }

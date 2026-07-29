@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from ste_compiler.evaluation import (
     BenchmarkSpecV1,
+    FailureTaxonomyV1,
     MetricEstimateV1,
     PredictionRecordV1,
     generate_evidence_report,
@@ -227,6 +228,52 @@ def test_schema_invalid_failure_code_requires_invalid_schema():
         PredictionRecordV1.model_validate(record)
 
 
+def _standalone_constraint_rejection() -> dict:
+    record = json.loads(PREDICTIONS.read_text().splitlines()[2])
+    record["realizer"].update(
+        {
+            "constraint_rejected": True,
+            "eos_completed": True,
+            "exact_symbolic_plan": False,
+            "grammar_valid": True,
+            "unauthorized_symbol_count": 0,
+        }
+    )
+    record["failure_code"] = "realizer.constraint_rejection"
+    return record
+
+
+def test_standalone_constraint_rejection_has_a_frozen_failure_code():
+    taxonomy = FailureTaxonomyV1.model_validate_json(TAXONOMY.read_bytes())
+    record = PredictionRecordV1.model_validate(_standalone_constraint_rejection())
+
+    assert "realizer.constraint_rejection" in {item.code for item in taxonomy.codes}
+    assert record.failure_code == "realizer.constraint_rejection"
+    assert record.realizer.constraint_rejected is True
+
+
+def test_standalone_constraint_rejection_requires_its_specific_failure_code():
+    record = _standalone_constraint_rejection()
+    record["failure_code"] = "realizer.other_failure"
+
+    with pytest.raises(
+        ValidationError,
+        match="standalone constraint rejection requires",
+    ):
+        PredictionRecordV1.model_validate(record)
+
+
+def test_constraint_rejection_code_requires_standalone_constraint_observations():
+    record = _standalone_constraint_rejection()
+    record["realizer"]["unauthorized_symbol_count"] = 1
+
+    with pytest.raises(
+        ValidationError,
+        match="constraint-rejection code requires a standalone",
+    ):
+        PredictionRecordV1.model_validate(record)
+
+
 def test_prediction_schema_rejects_incomplete_success_path():
     record = json.loads(PREDICTIONS.read_text().splitlines()[0])
     record["realizer"] = json.loads(PREDICTIONS.read_text().splitlines()[1])["realizer"]
@@ -280,6 +327,33 @@ def test_false_accept_cannot_be_mislabeled_as_semantic_rejection():
         match="false acceptance requires the validator.false_accept code",
     ):
         PredictionRecordV1.model_validate(accepted)
+
+
+def test_structural_rejection_cannot_be_mislabeled_as_semantic():
+    rejected = json.loads(PREDICTIONS.read_text().splitlines()[3])
+    rejected["validator"]["diagnostic_codes"] = ["SENTENCE_TOO_LONG"]
+
+    with pytest.raises(
+        ValidationError,
+        match="semantic-rejection code requires a semantic diagnostic",
+    ):
+        PredictionRecordV1.model_validate(rejected)
+
+    rejected["failure_code"] = "validator.structural_rejection"
+    prediction = PredictionRecordV1.model_validate(rejected)
+
+    assert prediction.failure_code == "validator.structural_rejection"
+
+
+def test_structural_rejection_code_requires_a_structural_diagnostic():
+    rejected = json.loads(PREDICTIONS.read_text().splitlines()[3])
+    rejected["failure_code"] = "validator.structural_rejection"
+
+    with pytest.raises(
+        ValidationError,
+        match="structural-rejection code requires a structural diagnostic",
+    ):
+        PredictionRecordV1.model_validate(rejected)
 
 
 def test_external_measured_system_requires_artifact_manifest_identity():

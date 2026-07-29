@@ -50,6 +50,32 @@ SUPPORTED_METRICS: Final = (
     "provenance_coverage_rate",
     "deterministic_repeatability_rate",
 )
+LEXICAL_DIAGNOSTIC_PREFIXES: Final = (
+    "LEXICAL_",
+    "TERMINOLOGY_",
+    "UNAUTHORIZED_",
+    "VOCABULARY_",
+)
+STRUCTURAL_DIAGNOSTIC_CODES: Final = frozenset(
+    {
+        "AMBIGUOUS_PRONOUN",
+        "PARAGRAPH_TOO_LONG",
+        "PASSIVE_VOICE",
+        "SENTENCE_TOO_LONG",
+    }
+)
+SEMANTIC_DIAGNOSTIC_CODES: Final = frozenset(
+    {
+        "CAUSAL_RELATION_NOT_PRESERVED",
+        "CONDITION_NOT_PRESERVED",
+        "HAZARD_NOT_PRESERVED",
+        "NEGATION_NOT_PRESERVED",
+        "QUANTITY_NOT_PRESERVED",
+        "REQUIRED_NODE_OMITTED",
+        "TEMPORAL_RELATION_NOT_PRESERVED",
+        "UNSUPPORTED_SEMANTIC_CHANGE",
+    }
+)
 EvidenceKind = Literal["deterministic_fixture", "external_measured"]
 FailureStage = Literal["none", "frontend", "realizer", "validator"]
 
@@ -344,6 +370,22 @@ class PredictionRecordV1(StrictEvidenceModel):
             and self.realizer.grammar_valid is not False
         ):
             raise ValueError("grammar-invalid code requires invalid grammar")
+        standalone_constraint_rejection = (
+            self.realizer.status == "failed"
+            and self.realizer.constraint_rejected is True
+            and self.realizer.grammar_valid is True
+            and self.realizer.eos_completed is True
+            and self.realizer.unauthorized_symbol_count == 0
+        )
+        if (
+            self.failure_code == "realizer.constraint_rejection"
+            and not standalone_constraint_rejection
+        ):
+            raise ValueError("constraint-rejection code requires a standalone constraint rejection")
+        if standalone_constraint_rejection and self.failure_code != "realizer.constraint_rejection":
+            raise ValueError(
+                "a standalone constraint rejection requires the realizer.constraint_rejection code"
+            )
         if self.failure_code == "validator.false_accept" and not (
             self.validator.status == "accepted" and not self.validator.gold_should_accept
         ):
@@ -357,16 +399,24 @@ class PredictionRecordV1(StrictEvidenceModel):
         if self.failure_code in {
             "validator.semantic_rejection",
             "validator.lexical_rejection",
+            "validator.structural_rejection",
         } and not (self.validator.status == "rejected" and self.validator.gold_should_accept):
             raise ValueError("validator-rejection codes require rejection of a gold acceptance")
         lexical_diagnostic = any(
-            code.startswith(("LEXICAL_", "TERMINOLOGY_", "UNAUTHORIZED_", "VOCABULARY_"))
-            for code in self.validator.diagnostic_codes
+            code.startswith(LEXICAL_DIAGNOSTIC_PREFIXES) for code in self.validator.diagnostic_codes
+        )
+        structural_diagnostic = any(
+            code in STRUCTURAL_DIAGNOSTIC_CODES for code in self.validator.diagnostic_codes
+        )
+        semantic_diagnostic = any(
+            code in SEMANTIC_DIAGNOSTIC_CODES for code in self.validator.diagnostic_codes
         )
         if self.failure_code == "validator.lexical_rejection" and not lexical_diagnostic:
             raise ValueError("lexical-rejection code requires a lexical diagnostic")
-        if self.failure_code == "validator.semantic_rejection" and lexical_diagnostic:
-            raise ValueError("semantic-rejection code cannot classify a lexical diagnostic")
+        if self.failure_code == "validator.structural_rejection" and not structural_diagnostic:
+            raise ValueError("structural-rejection code requires a structural diagnostic")
+        if self.failure_code == "validator.semantic_rejection" and not semantic_diagnostic:
+            raise ValueError("semantic-rejection code requires a semantic diagnostic")
         return self
 
 
