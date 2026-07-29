@@ -8,9 +8,9 @@ import hashlib
 import json
 import math
 import os
+import secrets
 import stat
 import sys
-import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Annotated, Final, Literal
@@ -50,11 +50,11 @@ SUPPORTED_METRICS: Final = (
     "provenance_coverage_rate",
     "deterministic_repeatability_rate",
 )
-LEXICAL_DIAGNOSTIC_PREFIXES: Final = (
-    "LEXICAL_",
-    "TERMINOLOGY_",
-    "UNAUTHORIZED_",
-    "VOCABULARY_",
+LEXICAL_DIAGNOSTIC_CODES: Final = frozenset(
+    {
+        "TERMINOLOGY_ALIAS",
+        "UNAUTHORIZED_WORD",
+    }
 )
 STRUCTURAL_DIAGNOSTIC_CODES: Final = frozenset(
     {
@@ -74,6 +74,16 @@ SEMANTIC_DIAGNOSTIC_CODES: Final = frozenset(
         "UNSUPPORTED_SEMANTIC_CHANGE",
     }
 )
+WARNING_DIAGNOSTIC_CODES: Final = frozenset(
+    {
+        "AMBIGUOUS_PRONOUN",
+        "PASSIVE_VOICE",
+    }
+)
+REJECTING_DIAGNOSTIC_CODES: Final = (
+    LEXICAL_DIAGNOSTIC_CODES | STRUCTURAL_DIAGNOSTIC_CODES | SEMANTIC_DIAGNOSTIC_CODES
+)
+VALIDATOR_DIAGNOSTIC_CODES: Final = REJECTING_DIAGNOSTIC_CODES | WARNING_DIAGNOSTIC_CODES
 EvidenceKind = Literal["deterministic_fixture", "external_measured"]
 FailureStage = Literal["none", "frontend", "realizer", "validator"]
 FailureCode = Annotated[
@@ -289,11 +299,13 @@ class ValidatorObservationV1(StrictEvidenceModel):
     def not_run_has_no_diagnostics(self) -> ValidatorObservationV1:
         if self.status == "not_run" and self.diagnostic_codes:
             raise ValueError("a validator that did not run cannot have diagnostics")
+        unknown_codes = set(self.diagnostic_codes) - VALIDATOR_DIAGNOSTIC_CODES
+        if unknown_codes:
+            raise ValueError(
+                "validator diagnostic codes must come from the frozen validation pipeline"
+            )
         rejecting_diagnostic = any(
-            code.startswith(LEXICAL_DIAGNOSTIC_PREFIXES)
-            or code in STRUCTURAL_DIAGNOSTIC_CODES
-            or code in SEMANTIC_DIAGNOSTIC_CODES
-            for code in self.diagnostic_codes
+            code in REJECTING_DIAGNOSTIC_CODES for code in self.diagnostic_codes
         )
         if self.status == "rejected" and not rejecting_diagnostic:
             raise ValueError("a rejected validator observation requires a rejecting diagnostic")
@@ -416,7 +428,7 @@ class PredictionRecordV1(StrictEvidenceModel):
         } and not (self.validator.status == "rejected" and self.validator.gold_should_accept):
             raise ValueError("validator-rejection codes require rejection of a gold acceptance")
         lexical_diagnostic = any(
-            code.startswith(LEXICAL_DIAGNOSTIC_PREFIXES) for code in self.validator.diagnostic_codes
+            code in LEXICAL_DIAGNOSTIC_CODES for code in self.validator.diagnostic_codes
         )
         structural_diagnostic = any(
             code in STRUCTURAL_DIAGNOSTIC_CODES for code in self.validator.diagnostic_codes
@@ -644,6 +656,15 @@ class SystemMetricsV1(StrictEvidenceModel):
             raise ValueError(
                 "validator.false_accept_rate numerator must not exceed accepted validator failures"
             )
+        false_rejections = validator_failures - false_accepts[0]
+        correct_rejections = false_accepts[1] - false_accepts[0]
+        expected_rejections = false_rejections + correct_rejections
+        expected_acceptances = validator_population - expected_rejections
+        if (accepted[0], rejected[0]) != (expected_acceptances, expected_rejections):
+            raise ValueError(
+                "validator accepted and rejected numerators must reconcile with validator "
+                "failures and false-accept counts"
+            )
 
         precision_counts = self._metric_counts("frontend.required_field_precision")
         recall_counts = self._metric_counts("frontend.required_field_recall")
@@ -727,11 +748,23 @@ class ReportManifestV1(StrictEvidenceModel):
     failure_taxonomy_sha256: str = Field(pattern=SHA256_PATTERN)
     prediction_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     predictions_sha256: str = Field(pattern=SHA256_PATTERN)
-    system_artifact_manifest_sha256s: tuple[str, ...]
+    system_artifact_manifest_sha256s: tuple[Annotated[str, Field(pattern=SHA256_PATTERN)], ...]
     artifacts: tuple[FileIdentityV1, ...] = Field(min_length=2, max_length=2)
 
     @model_validator(mode="after")
     def frozen_artifact_inventory(self) -> ReportManifestV1:
+        system_artifacts = self.system_artifact_manifest_sha256s
+        if self.evidence_label == "deterministic_fixture_only":
+            if system_artifacts:
+                raise ValueError(
+                    "deterministic fixture reports must not claim system artifact manifests"
+                )
+        elif not system_artifacts:
+            raise ValueError("external measured reports require system artifact manifest SHA-256s")
+        elif system_artifacts != tuple(sorted(set(system_artifacts))):
+            raise ValueError(
+                "system artifact manifest SHA-256s must be unique and in canonical order"
+            )
         artifact_paths = tuple(artifact.path for artifact in self.artifacts)
         if artifact_paths != ("metrics.json", "report.md"):
             raise ValueError(
@@ -1167,17 +1200,21 @@ def _markdown(
     return "\n".join(lines).encode("utf-8")
 
 
-def _rename_no_replace(source: Path, destination: Path) -> None:
+def _rename_no_replace(
+    parent_descriptor: int,
+    source_name: str,
+    destination_name: str,
+) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
-    source_bytes = os.fsencode(source)
-    destination_bytes = os.fsencode(destination)
+    source_bytes = os.fsencode(source_name)
+    destination_bytes = os.fsencode(destination_name)
     if sys.platform == "darwin":
-        rename = libc.renamex_np
-        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
-        rename.restype = ctypes.c_int
-        result = rename(source_bytes, destination_bytes, 0x00000004)
-    elif sys.platform.startswith("linux"):
-        rename = libc.renameat2
+        try:
+            rename = libc.renameatx_np
+        except AttributeError as error:
+            raise ValueError(
+                "atomic no-replace benchmark report publication is unavailable"
+            ) from error
         rename.argtypes = (
             ctypes.c_int,
             ctypes.c_char_p,
@@ -1186,7 +1223,35 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
             ctypes.c_uint,
         )
         rename.restype = ctypes.c_int
-        result = rename(-100, source_bytes, -100, destination_bytes, 1)
+        result = rename(
+            parent_descriptor,
+            source_bytes,
+            parent_descriptor,
+            destination_bytes,
+            0x00000004,
+        )
+    elif sys.platform.startswith("linux"):
+        try:
+            rename = libc.renameat2
+        except AttributeError as error:
+            raise ValueError(
+                "atomic no-replace benchmark report publication is unavailable"
+            ) from error
+        rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        rename.restype = ctypes.c_int
+        result = rename(
+            parent_descriptor,
+            source_bytes,
+            parent_descriptor,
+            destination_bytes,
+            1,
+        )
     else:
         raise ValueError(
             f"atomic no-replace benchmark report publication is unsupported on {sys.platform}"
@@ -1195,37 +1260,105 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
         return
     error_number = ctypes.get_errno()
     if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
-        raise ValueError(f"benchmark report output was created concurrently: {destination}")
+        raise ValueError(f"benchmark report output was created concurrently: {destination_name}")
     raise ValueError(f"cannot publish benchmark report atomically: {os.strerror(error_number)}")
 
 
-def _publish_report(stage: Path, output: Path) -> None:
+def _write_stage_file(stage_descriptor: int, name: str, content: bytes) -> None:
+    descriptor = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=stage_descriptor,
+    )
     try:
-        for child in stage.iterdir():
-            descriptor = os.open(child, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-        stage_descriptor = os.open(
-            stage,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
-        )
+        remaining = memoryview(content)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written == 0:
+                raise OSError(errno.EIO, "zero-byte write while staging benchmark report")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _create_stage(parent_descriptor: int) -> tuple[str, int]:
+    for _ in range(100):
+        stage_name = f".ste-benchmark-report-{secrets.token_hex(16)}"
         try:
-            os.fsync(stage_descriptor)
-        finally:
-            os.close(stage_descriptor)
-        _rename_no_replace(stage, output)
-        parent_descriptor = os.open(
-            output.parent,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
-        )
+            os.mkdir(stage_name, 0o700, dir_fd=parent_descriptor)
+        except FileExistsError:
+            continue
         try:
-            os.fsync(parent_descriptor)
-        finally:
-            os.close(parent_descriptor)
+            stage_descriptor = os.open(
+                stage_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=parent_descriptor,
+            )
+        except BaseException:
+            os.rmdir(stage_name, dir_fd=parent_descriptor)
+            raise
+        return stage_name, stage_descriptor
+    raise ValueError("cannot allocate a private benchmark report staging directory")
+
+
+def _cleanup_stage(
+    parent_descriptor: int,
+    stage_name: str,
+    stage_descriptor: int,
+    artifact_names: tuple[str, ...],
+) -> None:
+    for artifact_name in artifact_names:
+        try:
+            os.unlink(artifact_name, dir_fd=stage_descriptor)
+        except FileNotFoundError:
+            pass
+    try:
+        named_stage = os.stat(
+            stage_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    opened_stage = os.fstat(stage_descriptor)
+    if (
+        stat.S_ISDIR(named_stage.st_mode)
+        and named_stage.st_dev == opened_stage.st_dev
+        and named_stage.st_ino == opened_stage.st_ino
+    ):
+        os.rmdir(stage_name, dir_fd=parent_descriptor)
+
+
+def _publish_report(
+    parent_descriptor: int,
+    output_name: str,
+    artifacts: tuple[tuple[str, bytes], ...],
+) -> None:
+    stage_name, stage_descriptor = _create_stage(parent_descriptor)
+    published = False
+    artifact_names = tuple(name for name, _ in artifacts)
+    try:
+        for name, content in artifacts:
+            _write_stage_file(stage_descriptor, name, content)
+        os.fsync(stage_descriptor)
+        _rename_no_replace(parent_descriptor, stage_name, output_name)
+        published = True
+        os.fsync(parent_descriptor)
     except OSError as error:
         raise ValueError(f"cannot publish benchmark report atomically: {error}") from error
+    finally:
+        try:
+            if not published:
+                _cleanup_stage(
+                    parent_descriptor,
+                    stage_name,
+                    stage_descriptor,
+                    artifact_names,
+                )
+        finally:
+            os.close(stage_descriptor)
 
 
 def _require_hardened_publication_platform() -> None:
@@ -1234,6 +1367,11 @@ def _require_hardened_publication_platform() -> None:
         or not hasattr(os, "O_DIRECTORY")
         or not hasattr(os, "O_NOFOLLOW")
         or not hasattr(os, "O_CLOEXEC")
+        or not all(
+            operation in os.supports_dir_fd
+            for operation in (os.open, os.mkdir, os.stat, os.unlink, os.rmdir)
+        )
+        or os.stat not in os.supports_follow_symlinks
         or not (sys.platform == "darwin" or sys.platform.startswith("linux"))
     ):
         raise ValueError(
@@ -1366,17 +1504,40 @@ def generate_evidence_report(
         system_artifact_manifest_sha256s=expected_system_manifest_sha256s,
         artifacts=artifacts,
     )
+    if output.name in {"", ".", ".."}:
+        raise ValueError("benchmark report output must name a directory")
     output.parent.mkdir(parents=True, exist_ok=True)
-    if not output.parent.is_dir() or output.parent.is_symlink():
-        raise ValueError(f"benchmark report parent must be a real directory: {output.parent}")
-    with tempfile.TemporaryDirectory(
-        prefix=".ste-benchmark-report-",
-        dir=output.parent,
-    ) as temporary:
-        stage = Path(temporary) / "report"
-        stage.mkdir()
-        (stage / "metrics.json").write_bytes(metrics_bytes)
-        (stage / "report.md").write_bytes(report_bytes)
-        (stage / "report-manifest.json").write_bytes(_canonical_json(report_manifest))
-        _publish_report(stage, output)
+    try:
+        parent_descriptor = os.open(
+            output.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+    except OSError as error:
+        raise ValueError(
+            f"benchmark report parent must be a real directory: {output.parent}"
+        ) from error
+    try:
+        if not stat.S_ISDIR(os.fstat(parent_descriptor).st_mode):
+            raise ValueError(f"benchmark report parent must be a real directory: {output.parent}")
+        try:
+            os.stat(
+                output.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError(f"benchmark report output path must not exist: {output}")
+        _publish_report(
+            parent_descriptor,
+            output.name,
+            (
+                ("metrics.json", metrics_bytes),
+                ("report.md", report_bytes),
+                ("report-manifest.json", _canonical_json(report_manifest)),
+            ),
+        )
+    finally:
+        os.close(parent_descriptor)
     return report_manifest

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -125,10 +126,77 @@ def test_golden_report_manifest_satisfies_standalone_schema():
 
     manifest = ReportManifestV1.model_validate(payload)
 
+    assert manifest.evidence_label == "deterministic_fixture_only"
+    assert manifest.system_artifact_manifest_sha256s == ()
     assert tuple(artifact.path for artifact in manifest.artifacts) == (
         "metrics.json",
         "report.md",
     )
+
+
+def test_report_manifest_rejects_malformed_system_artifact_hash():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    payload["evidence_label"] = "external_measured"
+    payload["system_artifact_manifest_sha256s"] = ["not-a-sha256"]
+
+    with pytest.raises(ValidationError, match="String should match pattern"):
+        ReportManifestV1.model_validate(payload)
+
+
+def test_fixture_report_manifest_rejects_system_artifact_inventory():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    payload["system_artifact_manifest_sha256s"] = ["0" * 64]
+
+    with pytest.raises(
+        ValidationError,
+        match="deterministic fixture reports must not claim system artifact manifests",
+    ):
+        ReportManifestV1.model_validate(payload)
+
+
+def test_external_report_manifest_requires_system_artifact_inventory():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    payload["evidence_label"] = "external_measured"
+
+    with pytest.raises(
+        ValidationError,
+        match="external measured reports require system artifact manifest SHA-256s",
+    ):
+        ReportManifestV1.model_validate(payload)
+
+
+def test_external_report_manifest_rejects_duplicate_system_artifact_hashes():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    payload["evidence_label"] = "external_measured"
+    payload["system_artifact_manifest_sha256s"] = ["0" * 64, "0" * 64]
+
+    with pytest.raises(
+        ValidationError,
+        match="system artifact manifest SHA-256s must be unique and in canonical order",
+    ):
+        ReportManifestV1.model_validate(payload)
+
+
+def test_external_report_manifest_rejects_unsorted_system_artifact_hashes():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    payload["evidence_label"] = "external_measured"
+    payload["system_artifact_manifest_sha256s"] = ["1" * 64, "0" * 64]
+
+    with pytest.raises(
+        ValidationError,
+        match="system artifact manifest SHA-256s must be unique and in canonical order",
+    ):
+        ReportManifestV1.model_validate(payload)
+
+
+def test_external_report_manifest_accepts_canonical_system_artifact_inventory():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    payload["evidence_label"] = "external_measured"
+    payload["system_artifact_manifest_sha256s"] = ["0" * 64, "1" * 64]
+
+    manifest = ReportManifestV1.model_validate(payload)
+
+    assert manifest.system_artifact_manifest_sha256s == ("0" * 64, "1" * 64)
 
 
 @pytest.mark.parametrize(
@@ -537,6 +605,72 @@ def test_system_metrics_schema_bounds_false_accepts_by_accepted_failures():
         evidence_module.SystemMetricsV1.model_validate(system)
 
 
+def test_system_metrics_schema_rejects_validator_outcome_swap_preserving_population():
+    success = PredictionRecordV1.model_validate_json(PREDICTIONS.read_text().splitlines()[0])
+    false_rejection = PredictionRecordV1.model_validate_json(
+        PREDICTIONS.read_text().splitlines()[3]
+    )
+    correct_rejection_payload = json.loads(PREDICTIONS.read_text().splitlines()[3])
+    correct_rejection_payload["validator"]["gold_should_accept"] = False
+    correct_rejection_payload["failure_stage"] = "none"
+    correct_rejection_payload["failure_code"] = None
+    correct_rejection = PredictionRecordV1.model_validate(correct_rejection_payload)
+    system = evidence_module._system_metrics(
+        (success, false_rejection, correct_rejection)
+    ).model_dump(mode="json")
+    assert system["metrics"]["validator.accepted_rate"]["numerator"] == 1
+    assert system["metrics"]["validator.rejected_rate"]["numerator"] == 2
+    _replace_metric_counts(system, "validator.accepted_rate", 2, 3)
+    _replace_metric_counts(system, "validator.rejected_rate", 1, 3)
+
+    with pytest.raises(
+        ValidationError,
+        match="must reconcile with validator failures and false-accept counts",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_rejects_false_accept_tamper_preserving_population():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, "validator.false_accept_rate", 1, 1)
+
+    with pytest.raises(
+        ValidationError,
+        match="must reconcile with validator failures and false-accept counts",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_reconciles_a_correct_rejection_with_no_validator_failure():
+    correct_rejection = json.loads(PREDICTIONS.read_text().splitlines()[3])
+    correct_rejection["validator"]["gold_should_accept"] = False
+    correct_rejection["failure_stage"] = "none"
+    correct_rejection["failure_code"] = None
+
+    system = evidence_module._system_metrics(
+        (PredictionRecordV1.model_validate(correct_rejection),)
+    )
+
+    assert system.failure_stage_counts == {"none": 1}
+    assert system.metrics["validator.accepted_rate"].numerator == 0
+    assert system.metrics["validator.rejected_rate"].numerator == 1
+    assert system.metrics["validator.false_accept_rate"].numerator == 0
+    assert system.metrics["validator.false_accept_rate"].denominator == 1
+
+
+def test_system_metrics_schema_reconciles_zero_validator_failures_and_gold_rejections():
+    success = PredictionRecordV1.model_validate_json(PREDICTIONS.read_text().splitlines()[0])
+
+    system = evidence_module._system_metrics((success,))
+
+    assert system.failure_stage_counts == {"none": 1}
+    assert system.metrics["validator.accepted_rate"].numerator == 1
+    assert system.metrics["validator.rejected_rate"].numerator == 0
+    assert system.metrics["validator.false_accept_rate"].numerator == 0
+    assert system.metrics["validator.false_accept_rate"].denominator == 0
+
+
 def test_system_metrics_schema_binds_exact_plan_to_success_measurements():
     payload = json.loads((EXPECTED / "metrics.json").read_text())
     system = next(iter(payload["systems"].values()))
@@ -824,7 +958,7 @@ def test_validator_failure_stage_distinguishes_correct_rejection_and_false_accep
 
 @pytest.mark.parametrize(
     "diagnostic_code",
-    ("REQUIRED_NODE_OMITTED", "UNAUTHORIZED_WORD", "SENTENCE_TOO_LONG"),
+    tuple(sorted(evidence_module.REJECTING_DIAGNOSTIC_CODES)),
 )
 def test_accepted_validator_observation_rejects_fatal_diagnostics(diagnostic_code):
     accepted = json.loads(PREDICTIONS.read_text().splitlines()[0])
@@ -846,6 +980,23 @@ def test_accepted_validator_observation_allows_warning_diagnostics(warning_code)
 
     assert prediction.validator.status == "accepted"
     assert prediction.validator.diagnostic_codes == (warning_code,)
+
+
+@pytest.mark.parametrize(
+    "diagnostic_code",
+    ("UNAUTHORIZED_BANANA", "LEXICAL_FABRICATED", "UNKNOWN_DIAGNOSTIC"),
+)
+def test_validator_observation_rejects_diagnostics_outside_frozen_pipeline(
+    diagnostic_code,
+):
+    accepted = json.loads(PREDICTIONS.read_text().splitlines()[0])
+    accepted["validator"]["diagnostic_codes"] = [diagnostic_code]
+
+    with pytest.raises(
+        ValidationError,
+        match="diagnostic codes must come from the frozen validation pipeline",
+    ):
+        PredictionRecordV1.model_validate(accepted)
 
 
 @pytest.mark.parametrize(
@@ -1279,9 +1430,9 @@ def test_report_refuses_output_directory_created_during_publication(tmp_path, mo
     output = tmp_path / "report"
     real_rename = evidence_module._rename_no_replace
 
-    def create_destination_then_rename(source, destination):
-        destination.mkdir()
-        real_rename(source, destination)
+    def create_destination_then_rename(parent_descriptor, source_name, destination_name):
+        os.mkdir(destination_name, dir_fd=parent_descriptor)
+        real_rename(parent_descriptor, source_name, destination_name)
 
     monkeypatch.setattr(
         evidence_module,
@@ -1300,7 +1451,7 @@ def test_report_refuses_output_directory_created_during_publication(tmp_path, mo
 def test_report_publication_failure_leaves_no_partial_output(tmp_path, monkeypatch):
     output = tmp_path / "report"
 
-    def fail_rename(source, destination):
+    def fail_rename(parent_descriptor, source_name, destination_name):
         raise OSError("injected atomic publication failure")
 
     monkeypatch.setattr(evidence_module, "_rename_no_replace", fail_rename)
@@ -1310,3 +1461,91 @@ def test_report_publication_failure_leaves_no_partial_output(tmp_path, monkeypat
 
     assert not output.exists()
     assert not list(tmp_path.glob(".ste-benchmark-report-*"))
+
+
+def test_report_refuses_symlink_parent_without_writing_target(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    parent = tmp_path / "parent"
+    parent.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="parent must be a real directory"):
+        _generate(parent / "report")
+
+    assert not list(target.iterdir())
+
+
+def test_report_publication_fails_closed_on_unsupported_platform(monkeypatch):
+    monkeypatch.setattr(evidence_module.sys, "platform", "freebsd")
+
+    with pytest.raises(ValueError, match="requires hardened POSIX directory handles"):
+        evidence_module._require_hardened_publication_platform()
+
+
+def test_report_publication_stays_in_verified_parent_after_path_swap(
+    tmp_path,
+    monkeypatch,
+):
+    parent = tmp_path / "trusted"
+    parent.mkdir()
+    relocated_parent = tmp_path / "relocated-trusted"
+    attacker_parent = tmp_path / "attacker"
+    attacker_parent.mkdir()
+    output = parent / "report"
+    real_rename = evidence_module._rename_no_replace
+
+    def swap_parent_then_rename(parent_descriptor, source_name, destination_name):
+        parent.rename(relocated_parent)
+        parent.symlink_to(attacker_parent, target_is_directory=True)
+        real_rename(parent_descriptor, source_name, destination_name)
+
+    monkeypatch.setattr(
+        evidence_module,
+        "_rename_no_replace",
+        swap_parent_then_rename,
+    )
+
+    _generate(output)
+
+    assert _files(relocated_parent / "report") == _files(EXPECTED)
+    assert not (attacker_parent / "report").exists()
+    assert not list(relocated_parent.glob(".ste-benchmark-report-*"))
+    assert not list(attacker_parent.glob(".ste-benchmark-report-*"))
+
+
+def test_concurrent_output_and_parent_swap_clean_up_only_verified_parent(
+    tmp_path,
+    monkeypatch,
+):
+    parent = tmp_path / "trusted"
+    parent.mkdir()
+    relocated_parent = tmp_path / "relocated-trusted"
+    attacker_parent = tmp_path / "attacker"
+    attacker_parent.mkdir()
+    output = parent / "report"
+    real_rename = evidence_module._rename_no_replace
+
+    def swap_parent_create_output_then_rename(
+        parent_descriptor,
+        source_name,
+        destination_name,
+    ):
+        parent.rename(relocated_parent)
+        parent.symlink_to(attacker_parent, target_is_directory=True)
+        os.mkdir(destination_name, dir_fd=parent_descriptor)
+        real_rename(parent_descriptor, source_name, destination_name)
+
+    monkeypatch.setattr(
+        evidence_module,
+        "_rename_no_replace",
+        swap_parent_create_output_then_rename,
+    )
+
+    with pytest.raises(ValueError, match="output was created concurrently"):
+        _generate(output)
+
+    assert (relocated_parent / "report").is_dir()
+    assert not list((relocated_parent / "report").iterdir())
+    assert not (attacker_parent / "report").exists()
+    assert not list(relocated_parent.glob(".ste-benchmark-report-*"))
+    assert not list(attacker_parent.glob(".ste-benchmark-report-*"))
