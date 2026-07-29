@@ -98,6 +98,13 @@ def test_fixture_report_reconstructs_byte_for_byte(tmp_path):
     assert "Deterministic fixture evidence only" in report
     assert "not model-quality measurements" in report
     assert "No external measured runs are included" in report
+    assert (
+        "| Failure code | Count |\n"
+        "| --- | ---: |\n"
+        "| `frontend.schema_invalid` | 1 |\n"
+        "| `realizer.unauthorized_symbol` | 1 |\n"
+        "| `validator.semantic_rejection` | 1 |"
+    ) in report
 
 
 @pytest.mark.parametrize(
@@ -356,6 +363,19 @@ def test_structural_rejection_code_requires_a_structural_diagnostic():
         PredictionRecordV1.model_validate(rejected)
 
 
+@pytest.mark.parametrize("warning_code", ("AMBIGUOUS_PRONOUN", "PASSIVE_VOICE"))
+def test_warning_only_structural_diagnostics_cannot_claim_rejection(warning_code):
+    rejected = json.loads(PREDICTIONS.read_text().splitlines()[3])
+    rejected["validator"]["diagnostic_codes"] = [warning_code]
+    rejected["failure_code"] = "validator.structural_rejection"
+
+    with pytest.raises(
+        ValidationError,
+        match="structural-rejection code requires a structural diagnostic",
+    ):
+        PredictionRecordV1.model_validate(rejected)
+
+
 def test_external_measured_system_requires_artifact_manifest_identity():
     specification = json.loads(SPECIFICATION.read_text())
     specification["evidence_label"] = "external_measured"
@@ -530,6 +550,85 @@ def test_failure_examples_identify_each_system_for_the_same_case():
         assert heading in report
         assert f"System: `{system_id}`" in report
     assert report.count(f"Case: `{first_failure['case_id']}`") == 2
+
+
+def test_failure_code_tables_are_sorted_and_attributed_to_each_system():
+    specification = json.loads(SPECIFICATION.read_text())
+    first_system_id = specification["systems"][0]["system_id"]
+    second_system_id = "second-failure-fixture-v1"
+    specification["systems"].append(
+        {
+            **specification["systems"][0],
+            "system_id": second_system_id,
+        }
+    )
+    spec = BenchmarkSpecV1.model_validate(specification)
+    predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
+    first_system_records = (
+        predictions[2],
+        predictions[1],
+    )
+    second_system_records = tuple(
+        {
+            **predictions[index],
+            "system_id": second_system_id,
+        }
+        for index in (3, 1)
+    )
+    records = tuple(
+        PredictionRecordV1.model_validate(record)
+        for record in (*first_system_records, *second_system_records)
+    )
+    metrics = evidence_module.recompute_metrics(
+        spec,
+        records,
+        spec_sha256="0" * 64,
+        prediction_manifest_sha256="1" * 64,
+        predictions_sha256="2" * 64,
+    )
+
+    report = evidence_module._markdown(spec, metrics, records).decode()
+    first_section = report.split(f"## System `{first_system_id}`", 1)[1].split(
+        f"## System `{second_system_id}`",
+        1,
+    )[0]
+    second_section = report.split(f"## System `{second_system_id}`", 1)[1].split(
+        "## Uncensored deterministic failure fixtures",
+        1,
+    )[0]
+
+    assert (
+        "| Failure code | Count |\n"
+        "| --- | ---: |\n"
+        "| `frontend.schema_invalid` | 1 |\n"
+        "| `realizer.unauthorized_symbol` | 1 |"
+    ) in first_section
+    assert "| `validator.semantic_rejection` |" not in first_section
+    assert (
+        "| Failure code | Count |\n"
+        "| --- | ---: |\n"
+        "| `frontend.schema_invalid` | 1 |\n"
+        "| `validator.semantic_rejection` | 1 |"
+    ) in second_section
+    assert "| `realizer.unauthorized_symbol` |" not in second_section
+
+
+def test_failure_code_table_explicitly_reports_an_empty_system():
+    specification = json.loads(SPECIFICATION.read_text())
+    spec = BenchmarkSpecV1.model_validate(specification)
+    success = PredictionRecordV1.model_validate_json(PREDICTIONS.read_text().splitlines()[0])
+    records = (success,)
+    metrics = evidence_module.recompute_metrics(
+        spec,
+        records,
+        spec_sha256="0" * 64,
+        prediction_manifest_sha256="1" * 64,
+        predictions_sha256="2" * 64,
+    )
+
+    report = evidence_module._markdown(spec, metrics, records).decode()
+
+    assert ("| Failure code | Count |\n| --- | ---: |\n| _(none observed)_ | 0 |") in report
 
 
 def test_report_rejects_dataset_manifest_mismatch(tmp_path):

@@ -58,9 +58,7 @@ LEXICAL_DIAGNOSTIC_PREFIXES: Final = (
 )
 STRUCTURAL_DIAGNOSTIC_CODES: Final = frozenset(
     {
-        "AMBIGUOUS_PRONOUN",
         "PARAGRAPH_TOO_LONG",
-        "PASSIVE_VOICE",
         "SENTENCE_TOO_LONG",
     }
 )
@@ -901,6 +899,18 @@ def _markdown(
         )
         for stage, count in system_metrics.failure_stage_counts.items():
             lines.append(f"| `{stage}` | {count} |")
+        lines.extend(
+            [
+                "",
+                "| Failure code | Count |",
+                "| --- | ---: |",
+            ]
+        )
+        if system_metrics.failure_code_counts:
+            for code, count in system_metrics.failure_code_counts.items():
+                lines.append(f"| `{code}` | {count} |")
+        else:
+            lines.append("| _(none observed)_ | 0 |")
         lines.append("")
     failure_heading = (
         "## Uncensored deterministic failure fixtures"

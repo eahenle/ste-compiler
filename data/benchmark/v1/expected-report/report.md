@@ -43,6 +43,12 @@ Claim scope:
 | `realizer` | 1 |
 | `validator` | 1 |
 
+| Failure code | Count |
+| --- | ---: |
+| `frontend.schema_invalid` | 1 |
+| `realizer.unauthorized_symbol` | 1 |
+| `validator.semantic_rejection` | 1 |
+
 ## Uncensored deterministic failure fixtures
 
 ### System `failure-taxonomy-fixture-v1` — case `adversarial_ambiguity` — `frontend.schema_invalid`
