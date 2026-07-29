@@ -1,6 +1,11 @@
 # Architecture
 
-The manual frontend safely loads YAML/JSON into strict Pydantic models. The optional provider-neutral LLM frontend requests a `Document`, validates it, requires quoted provenance spans, feeds validation errors back for bounded retries, and never returns surface prose.
+The manual frontend safely loads YAML/JSON into strict Pydantic models. The optional
+provider-neutral LLM frontend requests a `Document`, validates it, requires quoted provenance
+spans, verifies their source identity, bounds, and exact source substrings, feeds validation errors
+back for bounded retries, and never returns surface prose. The packaged offline replay frontend
+passes a gold proposal through that same boundary for credential-free end-to-end reproduction. It
+is identified as `offline-replay` and does not claim to perform extraction.
 
 The IR explicitly represents actors, actions, referents, conditions/exceptions, negation, before/after relations, quantities/units/tolerances, hazards, provenance, references, causal links, and unresolved ambiguity. Section kinds distinguish procedure, description, warning, caution, and note.
 

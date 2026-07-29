@@ -8,10 +8,87 @@ from typer.testing import CliRunner
 from ste_compiler.cli import app
 from ste_compiler.ir.models import Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document
+from ste_compiler.results import CompileSourceResult
 from ste_compiler.training import TrainingRecordValidationError, build_training_record
 
 ROOT = Path(__file__).parents[2]
 runner = CliRunner()
+
+
+def test_cli_runs_packaged_end_to_end_demo():
+    result = runner.invoke(app, ["demo", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    CompileSourceResult.model_validate(payload)
+    assert payload["schema_version"] == "compile-source-v1"
+    assert payload["source"]["id"] == "hydraulic_warning.txt"
+    assert payload["metadata"]["frontend"] == "offline-replay"
+    assert payload["metadata"]["realizer"] == "deterministic"
+    assert payload["validation"] == {"status": "accepted", "violations": []}
+    assert payload["ir"]["sections"][0]["statements"][0]["id"] == "stop_pressure"
+    assert payload["text"].startswith("Warning: injury can occur")
+
+
+def test_cli_prints_versioned_compile_source_json_schema():
+    result = runner.invoke(app, ["schema", "compile-source"])
+
+    assert result.exit_code == 0, result.output
+    schema = json.loads(result.stdout)
+    assert schema["title"] == "CompileSourceResult"
+    assert schema["properties"]["schema_version"]["const"] == "compile-source-v1"
+    assert schema["properties"]["source"]["$ref"].endswith("/SourceIdentity")
+    assert schema["required"] == [
+        "source",
+        "text",
+        "mappings",
+        "validation",
+        "metadata",
+        "ir",
+    ]
+
+
+def test_cli_compiles_raw_source_with_verified_replay_fixture():
+    example_root = ROOT / "data/end_to_end"
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(example_root / "hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(example_root / "hydraulic_warning.ir.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "compile-source-v1"
+    assert len(payload["source"]["sha256"]) == 64
+    assert payload["metadata"]["frontend"] == "offline-replay"
+    assert payload["validation"]["status"] == "accepted"
+
+
+def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
+    example_root = ROOT / "data/end_to_end"
+    changed = tmp_path / "hydraulic_warning.txt"
+    changed.write_text(
+        (example_root / "hydraulic_warning.txt").read_text().replace("injury", "damage")
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(changed),
+            "--ir-fixture",
+            str(example_root / "hydraulic_warning.ir.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "quote does not match the source" in result.stderr
+    assert "Traceback" not in result.output
 
 
 def test_cli_realize_and_validate():

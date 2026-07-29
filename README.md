@@ -24,6 +24,10 @@ Requires Python 3.12+.
 
 ```bash
 python -m pip install -e '.[dev]'
+ste-compiler demo --json
+ste-compiler compile-source data/end_to_end/hydraulic_warning.txt \
+  --ir-fixture data/end_to_end/hydraulic_warning.ir.yaml \
+  --json
 ste-compiler validate-ir data/examples/conditional.yaml
 ste-compiler realize data/examples/sequence.yaml --metadata
 ste-compiler plan-symbols data/examples/warning_pressure.yaml --json
@@ -36,6 +40,13 @@ pytest
 ```
 
 `compile` rejects critical validation failures with a nonzero exit status. YAML uses `safe_load`, models reject unknown fields, no input is evaluated as code, and external providers are optional and inactive by default.
+
+`demo` is the credential-free end-to-end reference workflow. It reads packaged raw source, replays
+a checked-in gold IR proposal through the same schema and provenance boundary used by an LLM
+frontend, verifies every quoted source span against exact character offsets, realizes controlled
+text, and runs the validators. Replay is deliberately identified as `offline-replay`; it
+demonstrates the full compiler boundary without claiming that a model extracted the gold IR.
+`compile-source` exposes the same workflow for an explicit raw-source and IR-fixture pair.
 
 ## Extension points
 
@@ -61,4 +72,7 @@ model-quality claim.
 
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 
-See [architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the ADRs for assumptions and limitations.
+See the [end-to-end demo](docs/end-to-end-demo.md),
+[V1 implementation plan](docs/v1-implementation-plan.md),
+[architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the ADRs for assumptions
+and limitations.

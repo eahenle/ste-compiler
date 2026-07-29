@@ -82,9 +82,11 @@ assert result.exit_code == 0, result.output
             (
                 "from ste_compiler.realizer import "
                 "DecoderOnlyLoRAConfig, DecoderOnlyLoRAError, "
-                "DecoderOnlyLoRASymbolGenerator; "
+                "DecoderOnlyLoRASymbolGenerator, EncoderDecoderConfig, "
+                "EncoderDecoderError, TransformersEncoderDecoderSymbolGenerator; "
                 "assert DecoderOnlyLoRAConfig and DecoderOnlyLoRAError "
-                "and DecoderOnlyLoRASymbolGenerator"
+                "and DecoderOnlyLoRASymbolGenerator and EncoderDecoderConfig "
+                "and EncoderDecoderError and TransformersEncoderDecoderSymbolGenerator"
             ),
         ],
         cwd=tmp_path,
@@ -94,6 +96,19 @@ assert result.exit_code == 0, result.output
         text=True,
     )
     assert not public_import.stderr
+
+    demo = subprocess.run(
+        [*command, "demo", "--json"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    demo_payload = json.loads(demo.stdout)
+    assert demo_payload["schema_version"] == "compile-source-v1"
+    assert demo_payload["metadata"]["frontend"] == "offline-replay"
+    assert demo_payload["validation"]["status"] == "accepted"
 
     realized = subprocess.run(
         [*command, "realize", str(ROOT / "data/examples/negative.yaml")],
