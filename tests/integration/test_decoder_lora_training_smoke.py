@@ -345,6 +345,47 @@ def test_decoder_bundle_publication_rejects_stage_modification_after_preflight(
     assert not list(tmp_path.glob(".changed-stage.stage-*"))
 
 
+def test_decoder_removes_invalid_output_after_post_rename_verification_failure(
+    tmp_path,
+    monkeypatch,
+):
+    _offline(monkeypatch)
+    config, release = _training_inputs()
+    model_snapshot = tmp_path / "model"
+    output = tmp_path / "invalid-published"
+    prepare_decoder_smoke_fixture(config, release, model_snapshot)
+    snapshot_digest = model_snapshot_manifest_sha256(model_snapshot)
+    real_verify = decoder_training.verify_artifact_bundle
+
+    def mutate_published_then_verify(root, expected_manifest_sha256):
+        if root == output:
+            (root / decoder_training.ARTIFACT_MANIFEST_NAME).write_bytes(b"changed after rename\n")
+        return real_verify(root, expected_manifest_sha256)
+
+    monkeypatch.setattr(
+        decoder_training,
+        "verify_artifact_bundle",
+        mutate_published_then_verify,
+    )
+
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match="published artifact bundle does not match",
+    ):
+        run_decoder_lora_training_bundle(
+            config,
+            release,
+            model_snapshot,
+            snapshot_digest,
+            output,
+            source_checkout=ROOT,
+            evaluation_command="ste-compiler evaluate-decoder-lora ...",
+        )
+
+    assert not output.exists()
+    assert not list(tmp_path.glob(".invalid-published.stage-*"))
+
+
 def test_decoder_fixture_is_content_bound_and_refuses_existing_output(
     tmp_path,
     monkeypatch,

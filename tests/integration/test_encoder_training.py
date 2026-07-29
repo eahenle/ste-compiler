@@ -516,6 +516,42 @@ def test_bundle_publication_rejects_stage_swap_after_preflight(
     assert not list(tmp_path.glob(".bundle-result.stage-*"))
 
 
+def test_encoder_removes_invalid_output_after_post_rename_verification_failure(
+    tmp_path,
+    tiny_snapshot,
+    monkeypatch,
+):
+    _, config = _config(tmp_path)
+    output = tmp_path / "invalid-published"
+    real_verify = training_module.verify_artifact_bundle
+
+    def mutate_published_then_verify(root, expected_manifest_sha256):
+        if root == output:
+            (root / training_module.ARTIFACT_MANIFEST_NAME).write_bytes(b"changed after rename\n")
+        return real_verify(root, expected_manifest_sha256)
+
+    monkeypatch.setattr(
+        training_module,
+        "verify_artifact_bundle",
+        mutate_published_then_verify,
+    )
+
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="published artifact bundle does not match",
+    ):
+        run_encoder_decoder_training_bundle(
+            config,
+            RELEASE,
+            output,
+            source_root=ROOT,
+            dependency_lock=ROOT / "uv.lock",
+        )
+
+    assert not output.exists()
+    assert not list(tmp_path.glob(".invalid-published.stage-*"))
+
+
 def test_installed_wheel_runs_offline_encoder_training(tmp_path, tiny_snapshot):
     snapshot, _ = tiny_snapshot
     config_path, _ = _config(tmp_path)

@@ -667,6 +667,25 @@ def _assert_pinned_output_directory(
         raise DecoderLoRATrainingError(f"training output changed during {operation}: {directory}")
 
 
+def _remove_invalid_pinned_output(
+    output: Path,
+    pinned: _PinnedOutputDirectory,
+) -> None:
+    """Remove a failed publication only while its directory identity remains pinned."""
+
+    _assert_pinned_output_directory(
+        output,
+        pinned,
+        operation="invalid artifact cleanup",
+    )
+    shutil.rmtree(output)
+    parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
 def _atomic_output_directory(
     output: Path,
     builder: Callable[[Path], Any],
@@ -719,6 +738,8 @@ def _atomic_output_directory(
     except BaseException:
         if stage.exists():
             shutil.rmtree(stage)
+        elif pinned_stage is not None and output.exists():
+            _remove_invalid_pinned_output(output, pinned_stage)
         raise
     finally:
         if pinned_stage is not None:

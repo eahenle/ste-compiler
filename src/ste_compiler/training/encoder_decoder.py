@@ -1542,6 +1542,23 @@ def _run_encoder_decoder_training(
             run_manifest=manifest,
             artifact_manifest_sha256=preflight.artifact_manifest_sha256,
         )
+    except BaseException:
+        if installed and pinned_stage is not None and output.exists():
+            _assert_pinned_output_directory(
+                output,
+                pinned_stage,
+                operation="invalid artifact cleanup",
+            )
+            shutil.rmtree(output)
+            parent_fd = os.open(
+                output.parent,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC,
+            )
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        raise
     finally:
         if pinned_stage is not None:
             os.close(pinned_stage.descriptor)
