@@ -40,6 +40,8 @@ ste-compiler plan-symbols data/examples/warning_pressure.yaml --json
 ste-compiler export-symbolic-corpus data/examples --output training-corpus
 ste-compiler build-demonstration-corpus --output demonstration-corpus
 ste-compiler verify-demonstration-corpus demonstration-corpus
+ste-compiler build-demonstration-corpus --version 2 --output demonstration-corpus-2
+ste-compiler verify-demonstration-corpus demonstration-corpus-2
 ste-compiler validate-training-config data/training/encoder-decoder-schema-example.yaml --json
 ste-compiler verify-training-release \
   data/training/encoder-decoder-schema-example.yaml \
@@ -80,9 +82,11 @@ offsets, realizes controlled text, and runs the validators. Replay is deliberate
 extracted the gold IR. `compile-source` exposes the same workflow for an explicit raw-source and
 IR-fixture pair.
 
-`build-demonstration-corpus` reconstructs the licensed, frozen dataset release from packaged
-construction inputs. `verify-demonstration-corpus` independently reconstructs it and requires
-byte-for-byte identity. See [the corpus guide](docs/demonstration-corpus.md).
+`build-demonstration-corpus` reconstructs a licensed, frozen dataset release from packaged
+construction inputs. Version 1 is the default wheel-bundled smoke sample; `--version 2` selects the
+expanded benchmark-contract demonstration. `verify-demonstration-corpus` independently
+reconstructs either release and requires byte-for-byte identity. See
+[the corpus guide](docs/demonstration-corpus.md).
 
 The optional `.[encoder-training]` extra supplies a deterministic offline CPU smoke trainer for a
 pinned encoder-decoder model and tokenizer. It performs complete tokenizer and overflow preflight,

@@ -832,6 +832,40 @@ def test_cli_reconstructs_demonstration_corpus(tmp_path):
     assert "Traceback" not in repeated.output
 
 
+def test_cli_reconstructs_demonstration_corpus_v2(tmp_path):
+    output = tmp_path / "demonstration-corpus-2"
+
+    result = runner.invoke(
+        app,
+        [
+            "build-demonstration-corpus",
+            "--version",
+            "2",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["dataset_version"] == "demonstration-corpus-2"
+    assert manifest["record_count"] == 24
+    assert manifest["split_counts"] == {
+        "adversarial": 4,
+        "test": 4,
+        "train": 12,
+        "validation": 4,
+    }
+    assert manifest["construction_sha256"] in result.stdout
+
+    verified = runner.invoke(
+        app,
+        ["verify-demonstration-corpus", str(output)],
+    )
+    assert verified.exit_code == 0, verified.output
+    assert "Verified 24 records" in verified.stdout
+
+
 def _training_config_payload() -> dict[str, object]:
     identity = {"repo_id": "example/tiny-model", "revision": "a" * 40}
     return {

@@ -2,7 +2,7 @@ import hashlib
 import json
 import shlex
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 from pydantic import ValidationError
@@ -328,22 +328,28 @@ def export_corpus(
 @app.command("build-demonstration-corpus")
 def build_corpus_release(
     output: Annotated[
-        Path,
+        Path | None,
         typer.Option(help="Empty output directory for the reconstructed release."),
-    ] = Path("demonstration-corpus-v1"),
+    ] = None,
+    version: Annotated[
+        Literal["1", "2"],
+        typer.Option(help="Versioned demonstration-corpus construction to build."),
+    ] = "1",
 ) -> None:
     """Reconstruct the licensed, split demonstration dataset."""
 
-    construction = DATA_ROOT / "demonstration_corpus/v1/source-construction.json"
-    terminology_path = DATA_ROOT / "demonstration_corpus/v1/terminology.yaml"
+    corpus_root = DATA_ROOT / f"demonstration_corpus/v{version}"
+    construction = corpus_root / "source-construction.json"
+    terminology_path = corpus_root / "terminology.yaml"
+    destination = output or Path(f"demonstration-corpus-v{version}")
     vocab, terms = resources(terminology=terminology_path)
     try:
-        manifest = build_demonstration_corpus(construction, output, vocab, terms)
+        manifest = build_demonstration_corpus(construction, destination, vocab, terms)
     except SOURCE_INPUT_ERRORS as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     typer.echo(
-        f"Wrote {manifest['record_count']} records to {output} "
+        f"Wrote {manifest['record_count']} records to {destination} "
         f"(construction sha256: {manifest['construction_sha256']})"
     )
 

@@ -1,9 +1,14 @@
 # Demonstration corpus
 
-`datasets/demonstration-corpus-1` is the first separately consumable dataset release for the
-project. It contains 12 original, synthetic technical examples under the MIT license. It does not
-contain ASD-STE100 text, rules, or vocabulary and does not claim training adequacy, certification,
-or production quality.
+The repository contains two separately consumable, byte-reproducible dataset releases:
+
+- `datasets/demonstration-corpus-1` is the 12-record wheel-bundled smoke sample.
+- `datasets/demonstration-corpus-2` is the 24-record benchmark-contract demonstration with broader
+  terminology and source-boundary coverage.
+
+Both releases contain only original, synthetic technical examples under the MIT license. They do
+not contain ASD-STE100 text, rules, or vocabulary and do not claim training adequacy,
+certification, production quality, or statistically meaningful model-quality measurement.
 
 The records are frozen into four purpose-specific splits:
 
@@ -14,6 +19,11 @@ The records are frozen into four purpose-specific splits:
 | `test` | 3 | Held-out semantic compositions |
 | `adversarial` | 3 | Ambiguity, Unicode, temporal, causal, and reference boundaries |
 
+Corpus 2 freezes 12 train, 4 validation, 4 compositional-test, and 4 adversarial records. Its
+additional records exercise canonical, alias, and deprecated terminology handling; uppercase,
+colon, and tab boundaries; and a held-out negation-plus-condition-plus-quantity composition. The
+normative contract is in [demonstration-corpus-v2-spec.md](demonstration-corpus-v2-spec.md).
+
 ## Reconstruct and verify
 
 The construction input and terminology snapshot are packaged in the wheel. Reconstruct the release
@@ -22,6 +32,13 @@ without network access:
 ```bash
 ste-compiler build-demonstration-corpus --output rebuilt-corpus
 ste-compiler verify-demonstration-corpus rebuilt-corpus
+```
+
+Build corpus 2 by selecting its packaged construction inputs:
+
+```bash
+ste-compiler build-demonstration-corpus --version 2 --output rebuilt-corpus-2
+ste-compiler verify-demonstration-corpus rebuilt-corpus-2
 ```
 
 `verify-demonstration-corpus` reloads the embedded vocabulary, terminology, and construction
@@ -56,8 +73,7 @@ deterministic realization, symbolization, and the validation pipeline before wri
 
 ## Scope
 
-This is deliberately a small demonstration corpus. It is sufficient to exercise the complete data
-contract and the project’s neural smoke paths, but it is not enough to establish model quality.
-The corpus includes a source-grounded causal relation with an explicit controlled realization.
-Phase 1 remains open for benchmark-scale expansion, exhaustive schema-negative examples, and a
-versioned release attachment suitable for independent download.
+These are deliberately small demonstration corpora. They exercise the complete data contract and
+the project’s neural smoke paths, but they are not enough to establish model quality. Corpus 2
+makes the benchmark shape and acceptance gates executable; benchmark-scale source expansion and a
+downloadable GitHub release attachment remain before Phase 1 is complete.

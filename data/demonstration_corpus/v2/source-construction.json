@@ -1,0 +1,896 @@
+{
+  "schema_version": "demonstration-corpus-construction-v1",
+  "dataset_version": "demonstration-corpus-2",
+  "seed": 2718,
+  "provenance": {
+    "license_id": "MIT",
+    "origin": "original synthetic benchmark examples authored for ste-compiler",
+    "vocabulary": {
+      "version": "demo-3",
+      "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
+      "origin": "original demonstration vocabulary authored for ste-compiler",
+      "sha256": "a64d2c9b98923be00e766c93d0ab976807b80f88cd7d5ee1d97c5f1feeefc8d5"
+    },
+    "terminology": {
+      "version": "demonstration-corpus-2",
+      "license": "MIT; original demonstration terminology, not ASD-STE100 terminology",
+      "origin": "original demonstration terminology authored for ste-compiler",
+      "sha256": "3e6a760921b6d8b698040f7be10e40a23cf25ad31579dfd590af7b4078863f9f"
+    }
+  },
+  "records": [
+    {
+      "id": "train_install_panel",
+      "split": "train",
+      "source_id": "train_install_panel.txt",
+      "source_text": "Install the access panel.",
+      "source_quotes": {
+        "install_panel": "Install the access panel."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_install_panel",
+        "title": "Install an access panel",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "install_panel",
+                "action": {"id": "install", "lemma": "install"},
+                "object": {"term_id": "access_panel"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_negative_valve",
+      "split": "train",
+      "source_id": "train_negative_valve.txt",
+      "source_text": "Do not open the shutoff valve.",
+      "source_quotes": {
+        "keep_valve_closed": "Do not open the shutoff valve."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_negative_valve",
+        "title": "Keep a valve closed",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "keep_valve_closed",
+                "action": {"id": "open", "lemma": "open"},
+                "object": {"term_id": "shutoff_valve"},
+                "negated": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_conditional_close",
+      "split": "train",
+      "source_id": "train_conditional_close.txt",
+      "source_text": "Close the shutoff valve if hydraulic pressure is high.",
+      "source_quotes": {
+        "close_high_pressure": "Close the shutoff valve if hydraulic pressure is high."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_conditional_close",
+        "title": "Conditional valve closure",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "close_high_pressure",
+                "action": {"id": "close", "lemma": "close"},
+                "object": {"term_id": "shutoff_valve"},
+                "conditions": [
+                  {
+                    "id": "pressure_high",
+                    "subject": {"term_id": "hydraulic_pressure"},
+                    "predicate": "is",
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_panel_sequence",
+      "split": "train",
+      "source_id": "train_panel_sequence.txt",
+      "source_text": "Disconnect the access panel before the test and after the check.",
+      "source_quotes": {
+        "disconnect_panel": "Disconnect the access panel before the test and after the check."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_panel_sequence",
+        "title": "Panel sequence",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "disconnect_panel",
+                "action": {"id": "disconnect", "lemma": "disconnect"},
+                "object": {"term_id": "access_panel"},
+                "temporal_relations": [
+                  {"relation": "before", "event": "the test"},
+                  {"relation": "after", "event": "the check"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "validation_caution_fastener",
+      "split": "validation",
+      "source_id": "validation_caution_fastener.txt",
+      "source_text": "Damage can occur when hydraulic pressure is not less than 10 MPa. The operator must tighten the bolt to 10 mm with a tolerance of 1 mm.",
+      "source_quotes": {
+        "tighten_fastener": "Damage can occur when hydraulic pressure is not less than 10 MPa. The operator must tighten the bolt to 10 mm with a tolerance of 1 mm."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "validation_caution_fastener",
+        "title": "Fastener caution",
+        "sections": [
+          {
+            "id": "caution",
+            "kind": "caution",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "tighten_fastener",
+                "actor": {"id": "operator", "name": "operator"},
+                "action": {"id": "tighten", "lemma": "tighten"},
+                "object": {"id": "bolt", "name": "bolt"},
+                "quantity_constraints": [
+                  {
+                    "property": "length",
+                    "quantity": {
+                      "value": 10,
+                      "unit": "mm",
+                      "tolerance": 1,
+                      "comparator": "equal"
+                    }
+                  }
+                ],
+                "hazards": [
+                  {
+                    "id": "damage_threshold",
+                    "severity": "caution",
+                    "consequence": "damage",
+                    "threshold": {
+                      "value": 10,
+                      "unit": "MPa",
+                      "comparator": "at_least"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "validation_connect_cable",
+      "split": "validation",
+      "source_id": "validation_connect_cable.txt",
+      "source_text": "Connect the cable to the equipment slowly to prevent damage.",
+      "source_quotes": {
+        "connect_cable": "Connect the cable to the equipment slowly to prevent damage."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "validation_connect_cable",
+        "title": "Cable connection",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "connect_cable",
+                "action": {"id": "connect", "lemma": "connect"},
+                "object": {"id": "cable", "name": "cable"},
+                "indirect_object": {"id": "equipment", "name": "equipment"},
+                "manner": "slowly",
+                "purpose": "prevent damage"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "test_warning_pressure",
+      "split": "test",
+      "source_id": "test_warning_pressure.txt",
+      "source_text": "Stop the hydraulic pressure if it is more than 20 MPa because injury can occur.",
+      "source_quotes": {
+        "stop_pressure": "Stop the hydraulic pressure if it is more than 20 MPa because injury can occur."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "test_warning_pressure",
+        "title": "Pressure warning",
+        "sections": [
+          {
+            "id": "warning",
+            "kind": "warning",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "stop_pressure",
+                "action": {"id": "stop", "lemma": "stop"},
+                "object": {"term_id": "hydraulic_pressure"},
+                "conditions": [
+                  {
+                    "id": "pressure_above_limit",
+                    "subject": {"term_id": "hydraulic_pressure"},
+                    "predicate": "is",
+                    "value": {
+                      "value": 20,
+                      "unit": "MPa",
+                      "comparator": "more_than"
+                    }
+                  }
+                ],
+                "hazards": [
+                  {
+                    "id": "injury_threshold",
+                    "severity": "warning",
+                    "consequence": "injury",
+                    "threshold": {
+                      "value": 20,
+                      "unit": "MPa",
+                      "comparator": "more_than"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "test_exception_shutdown",
+      "split": "test",
+      "source_id": "test_exception_shutdown.txt",
+      "source_text": "Do not operate the pump if hydraulic pressure is less than 5 MPa, except when the unit is safe.",
+      "source_quotes": {
+        "do_not_operate": "Do not operate the pump if hydraulic pressure is less than 5 MPa, except when the unit is safe."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "test_exception_shutdown",
+        "title": "Conditional shutdown exception",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "do_not_operate",
+                "action": {"id": "operate", "lemma": "operate"},
+                "object": {"id": "pump", "name": "pump"},
+                "negated": true,
+                "conditions": [
+                  {
+                    "id": "low_pressure",
+                    "subject": {"term_id": "hydraulic_pressure"},
+                    "predicate": "is",
+                    "value": {
+                      "value": 5,
+                      "unit": "MPa",
+                      "comparator": "less_than"
+                    }
+                  },
+                  {
+                    "id": "safe_exception",
+                    "subject": {"id": "unit", "name": "unit"},
+                    "predicate": "is",
+                    "value": "safe",
+                    "exception": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "test_multisection_state",
+      "split": "test",
+      "source_id": "test_multisection_state.txt",
+      "source_text": "Hydraulic pressure is not more than 15 MPa. The unit is safe.\nKeep the access panel fully tight.",
+      "source_quotes": {
+        "pressure_state": "Hydraulic pressure is not more than 15 MPa.",
+        "safe_state": "The unit is safe.",
+        "keep_panel": "Keep the access panel fully tight."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "test_multisection_state",
+        "title": "System state and procedure",
+        "sections": [
+          {
+            "id": "description",
+            "kind": "description",
+            "statements": [
+              {
+                "kind": "state",
+                "id": "pressure_state",
+                "subject": {"term_id": "hydraulic_pressure"},
+                "predicate": "is",
+                "value": {
+                  "value": 15,
+                  "unit": "MPa",
+                  "comparator": "at_most"
+                }
+              },
+              {
+                "kind": "state",
+                "id": "safe_state",
+                "subject": {"id": "unit", "name": "unit"},
+                "predicate": "is",
+                "value": "safe"
+              }
+            ]
+          },
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "keep_panel",
+                "action": {"id": "keep", "lemma": "keep"},
+                "object": {"term_id": "access_panel"},
+                "manner": "fully tight"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "adversarial_ambiguity",
+      "split": "adversarial",
+      "source_id": "adversarial_ambiguity.txt",
+      "source_text": "NOTE: Set the switch to ON or OFF.",
+      "source_quotes": {
+        "set_switch": "Set the switch to ON or OFF.",
+        "switch_position": "ON or OFF"
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "adversarial_ambiguity",
+        "title": "Ambiguous switch state",
+        "sections": [
+          {
+            "id": "note",
+            "kind": "note",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "set_switch",
+                "action": {"id": "set", "lemma": "set"},
+                "object": {"id": "switch", "name": "switch"},
+                "required": false
+              }
+            ]
+          }
+        ],
+        "ambiguities": [
+          {
+            "id": "switch_position",
+            "description": "The required switch position is unresolved.",
+            "alternatives": ["on", "off"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "adversarial_unicode_term",
+      "split": "adversarial",
+      "source_id": "adversarial_unicode_term.txt",
+      "source_text": "Install the access panel to the café area.",
+      "source_quotes": {
+        "install_unicode_area": "Install the access panel to the café area."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "adversarial_unicode_term",
+        "title": "Unicode terminology",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "install_unicode_area",
+                "action": {"id": "install", "lemma": "install"},
+                "object": {"term_id": "access_panel"},
+                "indirect_object": {"term_id": "cafe_area"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "adversarial_reference_sequence",
+      "split": "adversarial",
+      "source_id": "adversarial_reference_sequence.txt",
+      "source_text": "Open the access panel before the test.\nOpening the access panel causes inspection of the pump.\nInspect the pump.",
+      "source_quotes": {
+        "open_panel": "Open the access panel before the test.",
+        "inspect_pump": "Inspect the pump.",
+        "open_panel_causes_inspection": "Opening the access panel causes inspection of the pump."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "adversarial_reference_sequence",
+        "title": "Procedure with a reference",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "open_panel",
+                "action": {"id": "open", "lemma": "open"},
+                "object": {"term_id": "access_panel"},
+                "temporal_relations": [
+                  {"relation": "before", "event": "the test"}
+                ]
+              },
+              {
+                "kind": "instruction",
+                "id": "inspect_pump",
+                "action": {"id": "inspect", "lemma": "inspect"},
+                "object": {"id": "pump", "name": "pump"}
+              }
+            ]
+          }
+        ],
+        "references": [
+          {
+            "target": "synthetic-manual-section-1",
+            "label": "system manual"
+          }
+        ],
+        "causal_relations": [
+          {
+            "id": "open_panel_causes_inspection",
+            "cause_node_id": "open_panel",
+            "effect_node_id": "inspect_pump"
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_attach_cover",
+      "split": "train",
+      "source_id": "train_attach_cover.txt",
+      "source_text": "The operator must attach the cover to the assembly.",
+      "source_quotes": {
+        "attach_cover": "The operator must attach the cover to the assembly."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_attach_cover",
+        "title": "Cover attachment",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "attach_cover",
+                "actor": {"id": "operator", "name": "operator"},
+                "action": {"id": "attach", "lemma": "attach"},
+                "object": {"id": "cover", "name": "cover"},
+                "indirect_object": {"id": "assembly", "name": "assembly"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_remove_filter",
+      "split": "train",
+      "source_id": "train_remove_filter.txt",
+      "source_text": "Remove the filter slowly.",
+      "source_quotes": {
+        "remove_filter": "Remove the filter slowly."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_remove_filter",
+        "title": "Filter removal",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "remove_filter",
+                "action": {"id": "remove", "lemma": "remove"},
+                "object": {"id": "filter", "name": "filter"},
+                "manner": "slowly"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_service_door",
+      "split": "train",
+      "source_id": "train_service_door.txt",
+      "source_text": "Inspect the service door.",
+      "source_quotes": {
+        "inspect_service_door": "Inspect the service door."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_service_door",
+        "title": "Service door inspection",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "inspect_service_door",
+                "action": {"id": "inspect", "lemma": "inspect"},
+                "object": {"term_id": "service_door"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_alias_supply",
+      "split": "train",
+      "source_id": "train_alias_supply.txt",
+      "source_text": "Disconnect the electrical supply.",
+      "source_quotes": {
+        "disconnect_supply": "Disconnect the electrical supply."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_alias_supply",
+        "title": "Terminology alias normalization",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "disconnect_supply",
+                "action": {"id": "disconnect", "lemma": "disconnect"},
+                "object": {"term_id": "power_supply"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_deprecated_panel",
+      "split": "train",
+      "source_id": "train_deprecated_panel.txt",
+      "source_text": "Remove the old panel.",
+      "source_quotes": {
+        "remove_legacy_panel": "Remove the old panel."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_deprecated_panel",
+        "title": "Deprecated terminology replacement",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "remove_legacy_panel",
+                "action": {"id": "remove", "lemma": "remove"},
+                "object": {"term_id": "legacy_panel"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_description_power",
+      "split": "train",
+      "source_id": "train_description_power.txt",
+      "source_text": "The power supply is off.",
+      "source_quotes": {
+        "power_off": "The power supply is off."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_description_power",
+        "title": "Power state",
+        "sections": [
+          {
+            "id": "description",
+            "kind": "description",
+            "statements": [
+              {
+                "kind": "state",
+                "id": "power_off",
+                "subject": {"term_id": "power_supply"},
+                "predicate": "is",
+                "value": "off"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_warning_fire",
+      "split": "train",
+      "source_id": "train_warning_fire.txt",
+      "source_text": "Fire can occur. Stop the pump.",
+      "source_quotes": {
+        "stop_pump_for_fire": "Fire can occur. Stop the pump."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_warning_fire",
+        "title": "Pump fire warning",
+        "sections": [
+          {
+            "id": "warning",
+            "kind": "warning",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "stop_pump_for_fire",
+                "action": {"id": "stop", "lemma": "stop"},
+                "object": {"id": "pump", "name": "pump"},
+                "hazards": [
+                  {
+                    "id": "fire_hazard",
+                    "severity": "warning",
+                    "consequence": "fire"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train_optional_condition",
+      "split": "train",
+      "source_id": "train_optional_condition.txt",
+      "source_text": "Operate the unit when the indicator is on.",
+      "source_quotes": {
+        "operate_when_on": "Operate the unit when the indicator is on."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "train_optional_condition",
+        "title": "Conditional operation",
+        "sections": [
+          {
+            "id": "note",
+            "kind": "note",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "operate_when_on",
+                "action": {"id": "operate", "lemma": "operate"},
+                "object": {"id": "unit", "name": "unit"},
+                "conditions": [
+                  {
+                    "id": "indicator_on",
+                    "subject": {"id": "indicator", "name": "indicator"},
+                    "predicate": "is",
+                    "value": "on"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "validation_cable_length",
+      "split": "validation",
+      "source_id": "validation_cable_length.txt",
+      "source_text": "The cable is 5 m.",
+      "source_quotes": {
+        "cable_length": "The cable is 5 m."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "validation_cable_length",
+        "title": "Cable length",
+        "sections": [
+          {
+            "id": "description",
+            "kind": "description",
+            "statements": [
+              {
+                "kind": "state",
+                "id": "cable_length",
+                "subject": {"id": "cable", "name": "cable"},
+                "predicate": "is",
+                "value": {
+                  "value": 5,
+                  "unit": "m",
+                  "comparator": "equal"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "validation_filter_sequence",
+      "split": "validation",
+      "source_id": "validation_filter_sequence.txt",
+      "source_text": "Clean the filter. Install the filter.",
+      "source_quotes": {
+        "clean_filter": "Clean the filter.",
+        "install_filter": "Install the filter."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "validation_filter_sequence",
+        "title": "Filter replacement sequence",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "clean_filter",
+                "action": {"id": "clean", "lemma": "clean"},
+                "object": {"id": "filter", "name": "filter"}
+              },
+              {
+                "kind": "instruction",
+                "id": "install_filter",
+                "action": {"id": "install", "lemma": "install"},
+                "object": {"id": "filter", "name": "filter"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "test_negated_quantity_condition",
+      "split": "test",
+      "source_id": "test_negated_quantity_condition.txt",
+      "source_text": "If hydraulic pressure is at least 8 MPa, do not open the shutoff valve to more than 2 mm.",
+      "source_quotes": {
+        "hold_valve_position": "If hydraulic pressure is at least 8 MPa, do not open the shutoff valve to more than 2 mm."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "test_negated_quantity_condition",
+        "title": "Negated conditional quantity holdout",
+        "sections": [
+          {
+            "id": "procedure",
+            "kind": "procedure",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "hold_valve_position",
+                "action": {"id": "open", "lemma": "open"},
+                "object": {"term_id": "shutoff_valve"},
+                "negated": true,
+                "conditions": [
+                  {
+                    "id": "pressure_at_least_eight",
+                    "subject": {"term_id": "hydraulic_pressure"},
+                    "predicate": "is",
+                    "value": {
+                      "value": 8,
+                      "unit": "MPa",
+                      "comparator": "at_least"
+                    }
+                  }
+                ],
+                "quantity_constraints": [
+                  {
+                    "property": "position",
+                    "quantity": {
+                      "value": 2,
+                      "unit": "mm",
+                      "comparator": "more_than"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "adversarial_tab_casing",
+      "split": "adversarial",
+      "source_id": "adversarial_tab_casing.txt",
+      "source_text": "WARNING:\tThe OPERATOR must disconnect the power supply slowly.",
+      "source_quotes": {
+        "disconnect_power_slowly": "WARNING:\tThe OPERATOR must disconnect the power supply slowly."
+      },
+      "license_id": "MIT",
+      "document": {
+        "id": "adversarial_tab_casing",
+        "title": "Tab and casing boundary",
+        "sections": [
+          {
+            "id": "warning",
+            "kind": "warning",
+            "statements": [
+              {
+                "kind": "instruction",
+                "id": "disconnect_power_slowly",
+                "actor": {"id": "operator", "name": "operator"},
+                "action": {"id": "disconnect", "lemma": "disconnect"},
+                "object": {"term_id": "power_supply"},
+                "manner": "slowly"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

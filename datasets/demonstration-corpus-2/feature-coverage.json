@@ -1,0 +1,374 @@
+{
+  "features": {
+    "ambiguity": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "causal_relation": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "condition": {
+      "count": 5,
+      "splits": [
+        "test",
+        "train"
+      ]
+    },
+    "condition.exception": {
+      "count": 1,
+      "splits": [
+        "test"
+      ]
+    },
+    "document.multi_section": {
+      "count": 1,
+      "splits": [
+        "test"
+      ]
+    },
+    "document.multi_statement": {
+      "count": 3,
+      "splits": [
+        "adversarial",
+        "test",
+        "validation"
+      ]
+    },
+    "hazard": {
+      "count": 3,
+      "splits": [
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "instruction.actor": {
+      "count": 3,
+      "splits": [
+        "adversarial",
+        "train",
+        "validation"
+      ]
+    },
+    "instruction.indirect_object": {
+      "count": 3,
+      "splits": [
+        "adversarial",
+        "train",
+        "validation"
+      ]
+    },
+    "instruction.manner": {
+      "count": 4,
+      "splits": [
+        "adversarial",
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "instruction.negated": {
+      "count": 3,
+      "splits": [
+        "test",
+        "train"
+      ]
+    },
+    "instruction.object": {
+      "count": 22,
+      "splits": [
+        "adversarial",
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "instruction.purpose": {
+      "count": 1,
+      "splits": [
+        "validation"
+      ]
+    },
+    "instruction.quantity_constraint": {
+      "count": 2,
+      "splits": [
+        "test",
+        "validation"
+      ]
+    },
+    "instruction.required_false": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "quantity.comparator.at_least": {
+      "count": 2,
+      "splits": [
+        "test",
+        "validation"
+      ]
+    },
+    "quantity.comparator.at_most": {
+      "count": 1,
+      "splits": [
+        "test"
+      ]
+    },
+    "quantity.comparator.equal": {
+      "count": 2,
+      "splits": [
+        "validation"
+      ]
+    },
+    "quantity.comparator.less_than": {
+      "count": 1,
+      "splits": [
+        "test"
+      ]
+    },
+    "quantity.comparator.more_than": {
+      "count": 2,
+      "splits": [
+        "test"
+      ]
+    },
+    "quantity.tolerance": {
+      "count": 1,
+      "splits": [
+        "validation"
+      ]
+    },
+    "quantity.unit": {
+      "count": 6,
+      "splits": [
+        "test",
+        "validation"
+      ]
+    },
+    "reference": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "referent.entity": {
+      "count": 13,
+      "splits": [
+        "adversarial",
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "referent.term": {
+      "count": 15,
+      "splits": [
+        "adversarial",
+        "test",
+        "train"
+      ]
+    },
+    "section.caution": {
+      "count": 1,
+      "splits": [
+        "validation"
+      ]
+    },
+    "section.description": {
+      "count": 3,
+      "splits": [
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "section.note": {
+      "count": 2,
+      "splits": [
+        "adversarial",
+        "train"
+      ]
+    },
+    "section.procedure": {
+      "count": 16,
+      "splits": [
+        "adversarial",
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "section.warning": {
+      "count": 3,
+      "splits": [
+        "adversarial",
+        "test",
+        "train"
+      ]
+    },
+    "source.casing_upper": {
+      "count": 2,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "source.punctuation_colon": {
+      "count": 2,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "source.unicode": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "source.whitespace_newline": {
+      "count": 2,
+      "splits": [
+        "adversarial",
+        "test"
+      ]
+    },
+    "source.whitespace_tab": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
+    "source_span.quote": {
+      "count": 24,
+      "splits": [
+        "adversarial",
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "state.value.quantity": {
+      "count": 2,
+      "splits": [
+        "test",
+        "validation"
+      ]
+    },
+    "state.value.string": {
+      "count": 2,
+      "splits": [
+        "test",
+        "train"
+      ]
+    },
+    "statement.instruction": {
+      "count": 22,
+      "splits": [
+        "adversarial",
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "statement.state": {
+      "count": 3,
+      "splits": [
+        "test",
+        "train",
+        "validation"
+      ]
+    },
+    "temporal.after": {
+      "count": 1,
+      "splits": [
+        "train"
+      ]
+    },
+    "temporal.before": {
+      "count": 2,
+      "splits": [
+        "adversarial",
+        "train"
+      ]
+    },
+    "terminology.alias_surface": {
+      "count": 2,
+      "splits": [
+        "train"
+      ]
+    },
+    "terminology.canonical_reference": {
+      "count": 15,
+      "splits": [
+        "adversarial",
+        "test",
+        "train"
+      ]
+    },
+    "terminology.canonical_surface": {
+      "count": 13,
+      "splits": [
+        "adversarial",
+        "test",
+        "train"
+      ]
+    },
+    "terminology.deprecated_reference": {
+      "count": 1,
+      "splits": [
+        "train"
+      ]
+    }
+  },
+  "missing_features": [],
+  "required_features": [
+    "ambiguity",
+    "causal_relation",
+    "condition",
+    "condition.exception",
+    "document.multi_section",
+    "document.multi_statement",
+    "hazard",
+    "instruction.actor",
+    "instruction.indirect_object",
+    "instruction.manner",
+    "instruction.negated",
+    "instruction.object",
+    "instruction.purpose",
+    "instruction.required_false",
+    "quantity.comparator.at_least",
+    "quantity.comparator.at_most",
+    "quantity.comparator.equal",
+    "quantity.comparator.less_than",
+    "quantity.comparator.more_than",
+    "quantity.tolerance",
+    "reference",
+    "referent.entity",
+    "referent.term",
+    "section.caution",
+    "section.description",
+    "section.note",
+    "section.procedure",
+    "section.warning",
+    "source.casing_upper",
+    "source.punctuation_colon",
+    "source.unicode",
+    "source.whitespace_newline",
+    "source.whitespace_tab",
+    "state.value.quantity",
+    "state.value.string",
+    "statement.instruction",
+    "statement.state",
+    "temporal.after",
+    "temporal.before",
+    "terminology.alias_surface",
+    "terminology.canonical_surface",
+    "terminology.deprecated_reference"
+  ],
+  "schema_version": "feature-coverage-v1"
+}

@@ -71,11 +71,12 @@ raw-source examples remain.
 
 ## Phase 1: Complete the demonstration corpus
 
-Status: in progress. `demonstration-corpus-1` now provides 12 original MIT-licensed records with
-frozen splits, raw source and gold IR, deterministic text and symbolic plans, resource snapshots,
-feature coverage, leakage checks, licensing, manifests, checksums, byte-for-byte reconstruction,
-and source-grounded causal-relation realization and validation. Benchmark-scale expansion,
-exhaustive schema-negative coverage, and publication as a versioned downloadable release remain.
+Status: in progress. `demonstration-corpus-2` now provides a 24-record, original MIT-licensed
+benchmark-contract demonstration with frozen 12/4/4/4 splits, raw source and gold IR,
+deterministic text and symbolic plans, resource snapshots, expanded terminology and boundary
+coverage, leakage checks, licensing, manifests, checksums, and byte-for-byte reconstruction.
+Benchmark-scale source expansion, exhaustive nested-IR schema-negative mutation coverage, and
+publication as a versioned downloadable release remain.
 
 ### Deliverables
 
