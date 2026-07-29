@@ -180,7 +180,6 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
     )
     dependency_names = dict(first_manifest.package.dependencies)
     assert {
-        "accelerate",
         "huggingface-hub",
         "numpy",
         "safetensors",
