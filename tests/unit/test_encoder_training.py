@@ -203,6 +203,48 @@ def test_model_tokenizer_compatibility_rejects_vocabulary_mismatch():
         )
 
 
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"pad_token_id": None}, "model must define pad_token_id"),
+        ({"decoder_start_token_id": None}, "model must define decoder_start_token_id"),
+    ],
+)
+def test_model_tokenizer_compatibility_requires_decoder_special_tokens(
+    updates,
+    message,
+):
+    class SizedTokenizer:
+        pad_token_id = 0
+        eos_token_id = 1
+        unk_token_id = None
+        model_max_length = 100_000
+
+        def __len__(self):
+            return 4
+
+    model_config = {
+        "vocab_size": 4,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+        "unk_token_id": None,
+        "decoder_start_token_id": 0,
+        **updates,
+    }
+    model = SimpleNamespace(
+        config=SimpleNamespace(**model_config),
+        get_input_embeddings=lambda: SimpleNamespace(num_embeddings=4),
+        get_output_embeddings=lambda: SimpleNamespace(num_embeddings=4),
+    )
+
+    with pytest.raises(EncoderDecoderTrainingError, match=message):
+        training_module._validate_model_tokenizer_compatibility(
+            SizedTokenizer(),
+            model,
+            _config(),
+        )
+
+
 def test_source_provenance_rejects_dirty_or_unbound_checkout(tmp_path, monkeypatch):
     lock = tmp_path / "uv.lock"
     lock.write_text("version = 1\n")
@@ -243,6 +285,27 @@ def test_trainer_rejects_existing_output_before_loading_optional_runtime(tmp_pat
 
     assert sentinel.read_bytes() == b"unchanged"
     assert set(output.iterdir()) == {sentinel}
+
+
+def test_trainer_rejects_unsupported_publication_before_loading_runtime(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(training_module.sys, "platform", "freebsd14")
+    monkeypatch.setattr(
+        training_module,
+        "_load_neural_runtime",
+        lambda: pytest.fail("runtime must not load before publication preflight"),
+    )
+
+    with pytest.raises(EncoderDecoderTrainingError, match="unsupported on freebsd14"):
+        run_encoder_decoder_training(
+            _config(),
+            RELEASE,
+            tmp_path / "output",
+            source_root=ROOT,
+            dependency_lock=ROOT / "uv.lock",
+        )
 
 
 def test_no_replace_publication_preserves_concurrent_destination(tmp_path):

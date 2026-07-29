@@ -470,15 +470,33 @@ def _validate_model_tokenizer_compatibility(
         raise EncoderDecoderTrainingError(
             "model and tokenizer vocabulary capacities do not match exactly"
         )
-    for name in ("pad_token_id", "eos_token_id", "unk_token_id"):
+    for name in ("pad_token_id", "eos_token_id"):
         token_id = getattr(tokenizer, name, None)
         model_token_id = getattr(model.config, name, None)
         if token_id is None or isinstance(token_id, bool):
             raise EncoderDecoderTrainingError(f"tokenizer must define {name}")
         if int(token_id) < 0 or int(token_id) >= vocabulary_size:
             raise EncoderDecoderTrainingError(f"tokenizer {name} exceeds model vocabulary")
+        if name == "pad_token_id" and (model_token_id is None or isinstance(model_token_id, bool)):
+            raise EncoderDecoderTrainingError("model must define pad_token_id")
         if model_token_id is not None and int(model_token_id) != int(token_id):
             raise EncoderDecoderTrainingError(f"model and tokenizer {name} values do not match")
+    unknown_token_id = getattr(tokenizer, "unk_token_id", None)
+    model_unknown_token_id = getattr(model.config, "unk_token_id", None)
+    if unknown_token_id is not None:
+        if isinstance(unknown_token_id, bool) or not 0 <= int(unknown_token_id) < vocabulary_size:
+            raise EncoderDecoderTrainingError("tokenizer unk_token_id exceeds model vocabulary")
+        if model_unknown_token_id is not None and int(model_unknown_token_id) != int(
+            unknown_token_id
+        ):
+            raise EncoderDecoderTrainingError(
+                "model and tokenizer unk_token_id values do not match"
+            )
+    decoder_start_token_id = getattr(model.config, "decoder_start_token_id", None)
+    if decoder_start_token_id is None or isinstance(decoder_start_token_id, bool):
+        raise EncoderDecoderTrainingError("model must define decoder_start_token_id")
+    if not 0 <= int(decoder_start_token_id) < vocabulary_size:
+        raise EncoderDecoderTrainingError("model decoder_start_token_id exceeds model vocabulary")
     tokenizer_limit = getattr(tokenizer, "model_max_length", None)
     if (
         isinstance(tokenizer_limit, int)
@@ -1015,6 +1033,22 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
     )
 
 
+def _require_no_replace_publication() -> None:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if sys.platform == "darwin":
+            rename = libc.renamex_np
+        elif sys.platform.startswith("linux"):
+            rename = libc.renameat2
+        else:
+            raise AttributeError
+        del rename
+    except (AttributeError, OSError) as error:
+        raise EncoderDecoderTrainingError(
+            f"atomic no-replace publication is unsupported on {sys.platform}"
+        ) from error
+
+
 def _run_encoder_decoder_training(
     config: EncoderDecoderTrainingConfigV1,
     release_path: Path,
@@ -1146,6 +1180,7 @@ def run_encoder_decoder_training(
     output = output.absolute()
     if output.exists() or output.is_symlink():
         raise EncoderDecoderTrainingError(f"training output must not already exist: {output}")
+    _require_no_replace_publication()
     runtime_modules = _load_neural_runtime()
     with _isolated_deterministic_runtime(runtime_modules[0], config.seed):
         return _run_encoder_decoder_training(
