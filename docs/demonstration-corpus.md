@@ -12,7 +12,7 @@ The records are frozen into four purpose-specific splits:
 | `train` | 4 | Basic realization patterns |
 | `validation` | 2 | Model and configuration selection |
 | `test` | 3 | Held-out semantic compositions |
-| `adversarial` | 3 | Ambiguity, Unicode, causality, and reference boundaries |
+| `adversarial` | 3 | Ambiguity, Unicode, temporal, and reference boundaries |
 
 ## Reconstruct and verify
 
@@ -56,5 +56,6 @@ realization, symbolization, and the validation pipeline before writing any relea
 
 This is deliberately a small demonstration corpus. It is sufficient to exercise the complete data
 contract and the project’s neural smoke paths, but it is not enough to establish model quality.
-Phase 1 remains open for benchmark-scale expansion, exhaustive schema-negative examples, and a
-versioned release attachment suitable for independent download.
+Phase 1 remains open for faithful causal-relation realization, benchmark-scale expansion,
+exhaustive schema-negative examples, and a versioned release attachment suitable for independent
+download.

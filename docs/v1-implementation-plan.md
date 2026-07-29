@@ -75,7 +75,8 @@ Status: in progress. `demonstration-corpus-1` now provides 12 original MIT-licen
 frozen splits, raw source and gold IR, deterministic text and symbolic plans, resource snapshots,
 feature coverage, leakage checks, licensing, manifests, checksums, and byte-for-byte reconstruction
 and verification. Benchmark-scale expansion, exhaustive schema-negative coverage, and publication
-as a versioned downloadable release remain.
+as a versioned downloadable release remain. Causal-relation coverage is intentionally deferred
+until the realizer preserves that relation in controlled text.
 
 ### Deliverables
 

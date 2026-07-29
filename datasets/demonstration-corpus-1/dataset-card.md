@@ -13,4 +13,4 @@ This small, synthetic corpus demonstrates auditable technical-source to semantic
 - `test`: 3 records
 - `adversarial`: 3 records
 
-The release covers 39 machine-reported semantic features. All records are schema-validated, deterministically realized, symbolized, and validated during construction. Test and adversarial records are evaluation-only.
+The release covers 38 machine-reported semantic features. All records are schema-validated, deterministically realized, symbolized, and validated during construction. Test and adversarial records are evaluation-only.

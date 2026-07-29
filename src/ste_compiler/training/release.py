@@ -56,7 +56,6 @@ EXPECTED_RELEASE_FILES = frozenset(
 REQUIRED_FEATURES = frozenset(
     {
         "ambiguity",
-        "causal_relation",
         "condition",
         "condition.exception",
         "document.multi_section",
@@ -104,6 +103,7 @@ class ConstructionRecord(StrictConstructionModel):
     split: Split
     source_id: str = Field(min_length=1, pattern=r"\S")
     source_text: str = Field(min_length=1)
+    source_quotes: dict[str, str]
     license_id: str = Field(min_length=1, pattern=r"\S")
     document: dict[str, object]
 
@@ -149,12 +149,29 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _source_span(source_id: str, source_text: str) -> dict[str, object]:
+def _source_span(record: ConstructionRecord, node_id: str) -> dict[str, object]:
+    try:
+        quote = record.source_quotes[node_id]
+    except KeyError as error:
+        raise ValueError(
+            f"construction record {record.id!r} has no source quote for {node_id!r}"
+        ) from error
+    if not quote.strip():
+        raise ValueError(
+            f"construction record {record.id!r} has a blank source quote for {node_id!r}"
+        )
+    start = record.source_text.find(quote)
+    if start < 0:
+        raise ValueError(
+            f"construction record {record.id!r} quote for {node_id!r} is not in the source"
+        )
+    if record.source_text.find(quote, start + 1) >= 0:
+        raise ValueError(f"construction record {record.id!r} quote for {node_id!r} is not unique")
     return {
-        "source_id": source_id,
-        "start": 0,
-        "end": len(source_text),
-        "quote": source_text,
+        "source_id": record.source_id,
+        "start": start,
+        "end": start + len(quote),
+        "quote": quote,
     }
 
 
@@ -167,21 +184,39 @@ def _materialize_document(
     sections = raw.get("sections")
     if not isinstance(sections, list):
         raise TypeError(f"construction record {record.id!r} document must contain sections")
-    span = _source_span(record.source_id, record.source_text)
+    node_ids: set[str] = set()
     for section in sections:
         if not isinstance(section, dict) or not isinstance(section.get("statements"), list):
             raise TypeError(f"construction record {record.id!r} contains an invalid section")
         for statement in section["statements"]:
             if not isinstance(statement, dict):
                 raise TypeError(f"construction record {record.id!r} contains an invalid statement")
-            statement["source_spans"] = [span]
+            node_id = statement.get("id")
+            if not isinstance(node_id, str):
+                raise TypeError(f"construction record {record.id!r} has a statement without an id")
+            if node_id in node_ids:
+                raise ValueError(f"construction record {record.id!r} repeats node id {node_id!r}")
+            node_ids.add(node_id)
+            statement["source_spans"] = [_source_span(record, node_id)]
     ambiguities = raw.get("ambiguities", [])
     if not isinstance(ambiguities, list):
         raise TypeError(f"construction record {record.id!r} ambiguities must be a list")
     for ambiguity in ambiguities:
         if not isinstance(ambiguity, dict):
             raise TypeError(f"construction record {record.id!r} contains an invalid ambiguity")
-        ambiguity["source_spans"] = [span]
+        node_id = ambiguity.get("id")
+        if not isinstance(node_id, str):
+            raise TypeError(f"construction record {record.id!r} has an ambiguity without an id")
+        if node_id in node_ids:
+            raise ValueError(f"construction record {record.id!r} repeats node id {node_id!r}")
+        node_ids.add(node_id)
+        ambiguity["source_spans"] = [_source_span(record, node_id)]
+    unexpected_quotes = sorted(record.source_quotes.keys() - node_ids)
+    if unexpected_quotes:
+        raise ValueError(
+            f"construction record {record.id!r} has source quotes for unknown nodes: "
+            + ", ".join(unexpected_quotes)
+        )
 
     raw["metadata"] = ReproducibilityMetadata(
         frontend=CONSTRUCTION_FRONTEND,
@@ -238,8 +273,6 @@ def _document_features(document: Document, source_text: str) -> tuple[str, ...]:
         features.add("source.whitespace_tab")
     if document.ambiguities:
         features.add("ambiguity")
-    if document.causal_relations:
-        features.add("causal_relation")
     if document.references:
         features.add("reference")
 

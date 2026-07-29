@@ -82,6 +82,7 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
     terms = _corpus_terms()
     record_ids: set[str] = set()
     source_hashes: set[str] = set()
+    records_by_id: dict[str, dict[str, object]] = {}
     for split in ("train", "validation", "test", "adversarial"):
         records = [json.loads(line) for line in files[f"{split}.jsonl"].splitlines()]
         for record in records:
@@ -89,6 +90,7 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
             assert record["split"] == split
             assert record["record_id"] not in record_ids
             record_ids.add(record["record_id"])
+            records_by_id[record["record_id"]] = record
             source = record["source"]
             source_bytes = source["text"].encode()
             assert source["sha256"] == hashlib.sha256(source_bytes).hexdigest()
@@ -106,10 +108,32 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
                     span = statement.source_spans[0]
                     assert source["text"][span.start : span.end] == span.quote
 
+    multi = Document.model_validate(records_by_id["test_multisection_state"]["ir"])
+    multi_quotes = [
+        statement.source_spans[0].quote
+        for section in multi.sections
+        for statement in section.statements
+    ]
+    assert multi_quotes == [
+        "Hydraulic pressure is not more than 15 MPa.",
+        "The unit is safe.",
+        "Keep the access panel fully tight.",
+    ]
+    assert all(
+        quote != records_by_id["test_multisection_state"]["source"]["text"]
+        for quote in multi_quotes
+    )
+
+    ambiguity = Document.model_validate(records_by_id["adversarial_ambiguity"]["ir"])
+    assert ambiguity.ambiguities[0].source_spans[0].quote == "ON or OFF"
+
 
 def test_release_rejects_cross_split_source_duplicates(tmp_path, vocab):
     construction = json.loads(CONSTRUCTION.read_text())
     construction["records"][4]["source_text"] = construction["records"][0]["source_text"]
+    construction["records"][4]["source_quotes"]["tighten_fastener"] = construction["records"][0][
+        "source_text"
+    ]
     tampered = tmp_path / "construction.json"
     tampered.write_text(json.dumps(construction))
 

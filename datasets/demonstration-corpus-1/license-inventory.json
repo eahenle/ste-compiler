@@ -70,8 +70,8 @@
     {
       "license_id": "MIT",
       "origin": "original synthetic example authored for ste-compiler",
-      "record_id": "adversarial_causal_reference",
-      "source_id": "adversarial_causal_reference.txt"
+      "record_id": "adversarial_reference_sequence",
+      "source_id": "adversarial_reference_sequence.txt"
     }
   ],
   "resources": [
