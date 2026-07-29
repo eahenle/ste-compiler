@@ -7,6 +7,7 @@ import json
 import tempfile
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -94,6 +95,23 @@ REQUIRED_FEATURES = frozenset(
         "temporal.before",
     }
 )
+V2_REQUIRED_FEATURES = REQUIRED_FEATURES | frozenset(
+    {
+        "source.casing_upper",
+        "source.punctuation_colon",
+        "source.whitespace_tab",
+        "terminology.alias_surface",
+        "terminology.canonical_surface",
+        "terminology.deprecated_reference",
+    }
+)
+V2_RECORD_COUNT = 24
+V2_SPLIT_COUNTS = {
+    "train": 12,
+    "validation": 4,
+    "test": 4,
+    "adversarial": 4,
+}
 
 
 class StrictConstructionModel(BaseModel):
@@ -269,11 +287,16 @@ def materialize_construction_document(
     return document
 
 
-def _referent_feature(referent: EntityRef | TermReference | None, features: set[str]) -> None:
+def _referent_feature(
+    referent: EntityRef | TermReference | None,
+    features: set[str],
+    term_ids: set[str],
+) -> None:
     if isinstance(referent, EntityRef):
         features.add("referent.entity")
     elif isinstance(referent, TermReference):
         features.add("referent.term")
+        term_ids.add(referent.term_id)
 
 
 def _quantity_features(quantity: Quantity, features: set[str]) -> None:
@@ -283,17 +306,22 @@ def _quantity_features(quantity: Quantity, features: set[str]) -> None:
         features.add("quantity.tolerance")
 
 
-def _condition_features(condition: Condition, features: set[str]) -> None:
+def _condition_features(condition: Condition, features: set[str], term_ids: set[str]) -> None:
     features.add("condition")
-    _referent_feature(condition.subject, features)
+    _referent_feature(condition.subject, features, term_ids)
     if condition.exception:
         features.add("condition.exception")
     if isinstance(condition.value, Quantity):
         _quantity_features(condition.value, features)
 
 
-def document_features(document: Document, source_text: str) -> tuple[str, ...]:
+def document_features(
+    document: Document,
+    source_text: str,
+    terminology: TerminologyRegistry | None = None,
+) -> tuple[str, ...]:
     features: set[str] = set()
+    term_ids: set[str] = set()
     statements = [statement for section in document.sections for statement in section.statements]
     if len(document.sections) > 1:
         features.add("document.multi_section")
@@ -305,6 +333,14 @@ def document_features(document: Document, source_text: str) -> tuple[str, ...]:
         features.add("source.whitespace_newline")
     if "\t" in source_text:
         features.add("source.whitespace_tab")
+    if terminology is not None:
+        if ":" in source_text:
+            features.add("source.punctuation_colon")
+        if any(
+            len(token.strip(".,:;!?()[]{}")) > 1 and token.strip(".,:;!?()[]{}").isupper()
+            for token in source_text.split()
+        ):
+            features.add("source.casing_upper")
     if document.ambiguities:
         features.add("ambiguity")
     if document.references:
@@ -320,9 +356,9 @@ def document_features(document: Document, source_text: str) -> tuple[str, ...]:
                 if span.quote is not None:
                     features.add("source_span.quote")
             if isinstance(statement, Instruction):
-                _referent_feature(statement.actor, features)
-                _referent_feature(statement.object, features)
-                _referent_feature(statement.indirect_object, features)
+                _referent_feature(statement.actor, features, term_ids)
+                _referent_feature(statement.object, features, term_ids)
+                _referent_feature(statement.indirect_object, features, term_ids)
                 if statement.actor is not None:
                     features.add("instruction.actor")
                 if statement.object is not None:
@@ -338,7 +374,7 @@ def document_features(document: Document, source_text: str) -> tuple[str, ...]:
                 if not statement.required:
                     features.add("instruction.required_false")
                 for condition in statement.conditions:
-                    _condition_features(condition, features)
+                    _condition_features(condition, features, term_ids)
                 for relation in statement.temporal_relations:
                     features.add(f"temporal.{relation.relation}")
                 for constraint in statement.quantity_constraints:
@@ -349,12 +385,25 @@ def document_features(document: Document, source_text: str) -> tuple[str, ...]:
                     if hazard.threshold is not None:
                         _quantity_features(hazard.threshold, features)
             elif isinstance(statement, StateAssertion):
-                _referent_feature(statement.subject, features)
+                _referent_feature(statement.subject, features, term_ids)
                 if isinstance(statement.value, Quantity):
                     features.add("state.value.quantity")
                     _quantity_features(statement.value, features)
                 else:
                     features.add("state.value.string")
+    if terminology is not None:
+        normalized_source = unicodedata.normalize("NFKC", source_text).casefold()
+        raw_terms = {term.id: term for term in terminology.data.terms}
+        for term_id in term_ids:
+            raw_term = raw_terms[term_id]
+            if raw_term.status == "deprecated":
+                features.add("terminology.deprecated_reference")
+            resolved = terminology.get(term_id)
+            features.add("terminology.canonical_reference")
+            if resolved.canonical_form.casefold() in normalized_source:
+                features.add("terminology.canonical_surface")
+            if any(alias.casefold() in normalized_source for alias in raw_term.aliases):
+                features.add("terminology.alias_surface")
     return tuple(sorted(features))
 
 
@@ -376,6 +425,38 @@ def feature_composition(features: tuple[str, ...]) -> tuple[str, ...]:
         "temporal.",
     )
     return tuple(feature for feature in features if feature.startswith(prefixes))
+
+
+def validate_release_profile(
+    dataset_version: str,
+    split_counts: Mapping[str, int],
+    observed_features: set[str],
+) -> frozenset[str]:
+    """Validate version-specific frozen split and feature requirements."""
+
+    required_features = (
+        V2_REQUIRED_FEATURES if dataset_version == "demonstration-corpus-2" else REQUIRED_FEATURES
+    )
+    missing_features = sorted(required_features - observed_features)
+    if missing_features:
+        raise ValueError(
+            "demonstration corpus is missing required features: " + ", ".join(missing_features)
+        )
+    if dataset_version == "demonstration-corpus-2":
+        record_count = sum(split_counts.values())
+        if record_count != V2_RECORD_COUNT:
+            raise ValueError(
+                f"demonstration-corpus-2 requires exactly {V2_RECORD_COUNT} records; "
+                f"received {record_count}"
+            )
+        if split_counts != V2_SPLIT_COUNTS:
+            details = ", ".join(
+                f"{split}={split_counts.get(split, 0)} (expected {count})"
+                for split, count in V2_SPLIT_COUNTS.items()
+                if split_counts.get(split) != count
+            )
+            raise ValueError("demonstration-corpus-2 split counts are not frozen: " + details)
+    return required_features
 
 
 def _resource_artifacts(
@@ -432,15 +513,21 @@ def _dataset_card(
     split_counts: dict[str, int],
     feature_count: int,
 ) -> bytes:
+    scope = (
+        "This synthetic benchmark-contract demonstration exercises expanded terminology and "
+        "source-boundary coverage. It is not a statistical model-quality benchmark."
+        if construction.dataset_version == "demonstration-corpus-2"
+        else "This small, synthetic corpus demonstrates auditable technical-source to semantic-IR "
+        "to controlled-text workflows."
+    )
     return (
         "# ste-compiler demonstration corpus\n\n"
         f"Version: `{construction.dataset_version}`\n"
         f"License: `{construction.provenance.license_id}`\n"
         f"Origin: {construction.provenance.origin}\n"
         f"Construction seed: `{construction.seed}`\n\n"
-        "This small, synthetic corpus demonstrates auditable technical-source to semantic-IR to "
-        "controlled-text workflows. It is not ASD-STE100 data, does not reproduce the standard or "
-        "its dictionary, and is not evidence of certification or production model quality.\n\n"
+        f"{scope} It is not ASD-STE100 data, does not reproduce the standard or its dictionary, "
+        "and is not evidence of certification or production model quality.\n\n"
         "## Splits\n\n"
         + "\n".join(f"- `{split}`: {split_counts[split]} records" for split in SPLITS)
         + "\n\n"
@@ -527,7 +614,11 @@ def build_demonstration_corpus(
                 f"invalid construction record {source_record.id!r}: {error}"
             ) from error
         training_record = build_training_record(document, vocabulary, terminology)
-        features = document_features(document, source_record.source_text)
+        features = document_features(
+            document,
+            source_record.source_text,
+            terminology if construction.dataset_version == "demonstration-corpus-2" else None,
+        )
         for feature in features:
             coverage[feature] += 1
             feature_splits[feature].add(source_record.split)
@@ -596,15 +687,15 @@ def build_demonstration_corpus(
             "evaluation compositions duplicate training compositions: "
             + ", ".join(leaked_compositions)
         )
-    missing_features = sorted(REQUIRED_FEATURES - coverage.keys())
-    if missing_features:
-        raise ValueError(
-            "demonstration corpus is missing required features: " + ", ".join(missing_features)
-        )
     split_counts = {split: len(split_records[split]) for split in SPLITS}
     empty_splits = [split for split, count in split_counts.items() if count == 0]
     if empty_splits:
         raise ValueError("demonstration corpus has empty splits: " + ", ".join(empty_splits))
+    required_features = validate_release_profile(
+        construction.dataset_version,
+        split_counts,
+        set(coverage),
+    )
 
     artifacts: dict[str, bytes] = {
         f"{split}.jsonl": b"".join(_canonical_json(record) for record in split_records[split])
@@ -642,7 +733,7 @@ def build_demonstration_corpus(
     artifacts["feature-coverage.json"] = _canonical_json(
         {
             "schema_version": "feature-coverage-v1",
-            "required_features": sorted(REQUIRED_FEATURES),
+            "required_features": sorted(required_features),
             "missing_features": [],
             "features": {
                 feature: {

@@ -28,6 +28,7 @@ from .release import (
     materialize_construction_document,
     normalized_source,
     validate_construction_provenance,
+    validate_release_profile,
 )
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -383,7 +384,7 @@ def read_training_release(
         raise ValueError("training release record IDs must be unique")
     if len(set(source_ids)) != len(source_ids):
         raise ValueError("training release source IDs must be unique")
-    actual_split_counts = {split: len(records[split]) for split in SPLIT_NAMES}
+    actual_split_counts: dict[str, int] = {split: len(records[split]) for split in SPLIT_NAMES}
     if manifest.split_counts != actual_split_counts or manifest.record_count != sum(
         actual_split_counts.values()
     ):
@@ -474,7 +475,13 @@ def read_training_release(
                     "its construction input"
                 )
             _validate_source_spans(record)
-            if document_features(record.ir, record.source.text) != record.features:
+            feature_terminology = (
+                terminology if manifest.dataset_version == "demonstration-corpus-2" else None
+            )
+            if (
+                document_features(record.ir, record.source.text, feature_terminology)
+                != record.features
+            ):
                 raise ValueError(
                     f"training release record {record.record_id!r} has invalid semantic features"
                 )
@@ -495,6 +502,17 @@ def read_training_release(
                     f"training release record {record.record_id!r} does not match its "
                     "deterministic training target"
                 )
+
+    validate_release_profile(
+        manifest.dataset_version,
+        actual_split_counts,
+        {
+            feature
+            for split in SPLIT_NAMES
+            for record in records[split]
+            for feature in record.features
+        },
+    )
 
     return TrainingReleaseSnapshot(
         manifest=TrainingReleaseManifestV1(

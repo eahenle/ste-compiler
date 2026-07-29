@@ -9,8 +9,10 @@ from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import canonical_document_json
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.training import (
+    CorpusSelectionV1,
     build_demonstration_corpus,
     build_training_record,
+    read_training_release,
     verify_demonstration_corpus,
 )
 from ste_compiler.training.release import feature_composition
@@ -19,10 +21,17 @@ ROOT = Path(__file__).parents[2]
 CONSTRUCTION = ROOT / "data/demonstration_corpus/v1/source-construction.json"
 TERMINOLOGY = ROOT / "data/demonstration_corpus/v1/terminology.yaml"
 RELEASE = ROOT / "datasets/demonstration-corpus-1"
+V2_CONSTRUCTION = ROOT / "data/demonstration_corpus/v2/source-construction.json"
+V2_TERMINOLOGY = ROOT / "data/demonstration_corpus/v2/terminology.yaml"
+V2_RELEASE = ROOT / "datasets/demonstration-corpus-2"
 
 
 def _corpus_terms() -> TerminologyRegistry:
     return TerminologyRegistry.load(TERMINOLOGY)
+
+
+def _v2_corpus_terms() -> TerminologyRegistry:
+    return TerminologyRegistry.load(V2_TERMINOLOGY)
 
 
 def _release_files(root: Path) -> dict[str, bytes]:
@@ -49,6 +58,179 @@ def test_demonstration_corpus_reconstructs_byte_for_byte(tmp_path, vocab):
         "adversarial": 3,
     }
     assert _release_files(output) == _release_files(RELEASE)
+
+
+def test_demonstration_corpus_v2_reconstructs_byte_for_byte(tmp_path, vocab):
+    output = tmp_path / "release"
+
+    manifest = build_demonstration_corpus(
+        V2_CONSTRUCTION,
+        output,
+        vocab,
+        _v2_corpus_terms(),
+    )
+
+    assert manifest["dataset_version"] == "demonstration-corpus-2"
+    assert manifest["seed"] == 2718
+    assert manifest["record_count"] == 24
+    assert manifest["split_counts"] == {
+        "train": 12,
+        "validation": 4,
+        "test": 4,
+        "adversarial": 4,
+    }
+    coverage = json.loads((output / "feature-coverage.json").read_text())
+    assert {
+        "source.casing_upper",
+        "source.punctuation_colon",
+        "source.whitespace_tab",
+        "terminology.alias_surface",
+        "terminology.canonical_surface",
+        "terminology.deprecated_reference",
+    } <= set(coverage["required_features"])
+    assert coverage["missing_features"] == []
+    test_records = [json.loads(line) for line in (output / "test.jsonl").read_text().splitlines()]
+    holdout = next(
+        record
+        for record in test_records
+        if record["record_id"] == "test_negated_quantity_condition"
+    )
+    instruction = holdout["ir"]["sections"][0]["statements"][0]
+    assert holdout["source"]["text"] == (
+        "If hydraulic pressure is at least 8 MPa, do not open the shutoff valve to more than 2 mm."
+    )
+    assert instruction["negated"] is True
+    assert instruction["conditions"][0]["value"]["comparator"] == "at_least"
+    assert instruction["quantity_constraints"][0]["quantity"]["comparator"] == "more_than"
+    assert holdout["text"] == (
+        "If hydraulic pressure is not less than 8 MPa, do not open the shutoff valve "
+        "to more than 2 mm."
+    )
+    assert _release_files(output) == _release_files(V2_RELEASE)
+
+
+def test_demonstration_corpus_v2_enforces_benchmark_profile(tmp_path, vocab):
+    construction = json.loads(V2_CONSTRUCTION.read_text())
+    construction["records"] = [
+        record for record in construction["records"] if record["id"] != "train_attach_cover"
+    ]
+    undersized = tmp_path / "construction.json"
+    undersized.write_text(json.dumps(construction))
+
+    with pytest.raises(ValueError, match="requires exactly 24 records; received 23"):
+        build_demonstration_corpus(
+            undersized,
+            tmp_path / "release",
+            vocab,
+            _v2_corpus_terms(),
+        )
+
+
+def test_demonstration_corpus_v2_enforces_frozen_split_counts(tmp_path, vocab):
+    construction = json.loads(V2_CONSTRUCTION.read_text())
+    next(record for record in construction["records"] if record["id"] == "train_attach_cover")[
+        "split"
+    ] = "validation"
+    rebalanced = tmp_path / "construction.json"
+    rebalanced.write_text(json.dumps(construction))
+
+    with pytest.raises(
+        ValueError,
+        match="split counts are not frozen: train=11.*validation=5",
+    ):
+        build_demonstration_corpus(
+            rebalanced,
+            tmp_path / "release",
+            vocab,
+            _v2_corpus_terms(),
+        )
+
+
+def test_demonstration_corpus_v2_is_a_valid_hash_pinned_training_release():
+    manifest_bytes = (V2_RELEASE / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    artifacts = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
+    selection = CorpusSelectionV1(
+        dataset_version="demonstration-corpus-2",
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        train_sha256=artifacts["train.jsonl"]["sha256"],
+        validation_sha256=artifacts["validation.jsonl"]["sha256"],
+    )
+
+    snapshot = read_training_release(V2_RELEASE, selection)
+
+    assert snapshot.manifest.record_count == 24
+    assert len(snapshot.train) == 12
+    assert len(snapshot.validation) == 4
+
+
+def test_hash_pinned_reader_enforces_v2_required_feature_profile(tmp_path):
+    release = tmp_path / "release"
+    shutil.copytree(V2_RELEASE, release)
+    records = [json.loads(line) for line in (release / "train.jsonl").read_text().splitlines()]
+    deprecated = next(
+        record for record in records if record["record_id"] == "train_deprecated_panel"
+    )
+    deprecated["ir"]["sections"][0]["statements"][0]["object"]["term_id"] = "access_panel"
+    deprecated["serialized_ir"] = canonical_document_json(Document.model_validate(deprecated["ir"]))
+    deprecated["features"].remove("terminology.deprecated_reference")
+    deprecated["features"].remove("terminology.alias_surface")
+    train_bytes = b"".join(
+        (
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode()
+        for record in records
+    )
+    (release / "train.jsonl").write_bytes(train_bytes)
+    construction = json.loads((release / "source-construction.json").read_text())
+    construction_record = next(
+        record for record in construction["records"] if record["id"] == "train_deprecated_panel"
+    )
+    construction_record["document"]["sections"][0]["statements"][0]["object"]["term_id"] = (
+        "access_panel"
+    )
+    construction_bytes = (
+        json.dumps(construction, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode()
+    (release / "source-construction.json").write_bytes(construction_bytes)
+
+    manifest = json.loads((release / "manifest.json").read_text())
+    train_artifact = next(
+        artifact for artifact in manifest["artifacts"] if artifact["path"] == "train.jsonl"
+    )
+    train_artifact["sha256"] = hashlib.sha256(train_bytes).hexdigest()
+    train_artifact["bytes"] = len(train_bytes)
+    construction_artifact = next(
+        artifact
+        for artifact in manifest["artifacts"]
+        if artifact["path"] == "source-construction.json"
+    )
+    construction_artifact["sha256"] = hashlib.sha256(construction_bytes).hexdigest()
+    construction_artifact["bytes"] = len(construction_bytes)
+    manifest["construction_sha256"] = construction_artifact["sha256"]
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode()
+    (release / "manifest.json").write_bytes(manifest_bytes)
+    checksums = "".join(
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+        for path in sorted(release.iterdir())
+        if path.name != "checksums.sha256"
+    )
+    (release / "checksums.sha256").write_text(checksums)
+    selection = CorpusSelectionV1(
+        dataset_version="demonstration-corpus-2",
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        train_sha256=train_artifact["sha256"],
+        validation_sha256=next(
+            artifact["sha256"]
+            for artifact in manifest["artifacts"]
+            if artifact["path"] == "validation.jsonl"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="missing required features.*deprecated_reference"):
+        read_training_release(release, selection)
 
 
 def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):

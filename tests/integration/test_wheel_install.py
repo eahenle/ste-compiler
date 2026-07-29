@@ -229,6 +229,38 @@ assert result.exit_code == 0, result.output
         text=True,
     )
 
+    demonstration_corpus_v2 = tmp_path / "demonstration-corpus-2"
+    subprocess.run(
+        [
+            *command,
+            "build-demonstration-corpus",
+            "--version",
+            "2",
+            "--output",
+            str(demonstration_corpus_v2),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    release_manifest_v2 = json.loads((demonstration_corpus_v2 / "manifest.json").read_text())
+    assert release_manifest_v2["dataset_version"] == "demonstration-corpus-2"
+    assert release_manifest_v2["record_count"] == 24
+    subprocess.run(
+        [
+            *command,
+            "verify-demonstration-corpus",
+            str(demonstration_corpus_v2),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
     training_config = installed / "ste_compiler/data/training/encoder-decoder-schema-example.yaml"
     decoder_config = installed / "ste_compiler/data/training/decoder-only-lora-schema-example.yaml"
     assert training_config.is_file()

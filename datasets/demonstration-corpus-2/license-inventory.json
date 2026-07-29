@@ -1,0 +1,166 @@
+{
+  "dataset_version": "demonstration-corpus-2",
+  "entries": [
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_install_panel",
+      "source_id": "train_install_panel.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_negative_valve",
+      "source_id": "train_negative_valve.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_conditional_close",
+      "source_id": "train_conditional_close.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_panel_sequence",
+      "source_id": "train_panel_sequence.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "validation_caution_fastener",
+      "source_id": "validation_caution_fastener.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "validation_connect_cable",
+      "source_id": "validation_connect_cable.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "test_warning_pressure",
+      "source_id": "test_warning_pressure.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "test_exception_shutdown",
+      "source_id": "test_exception_shutdown.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "test_multisection_state",
+      "source_id": "test_multisection_state.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "adversarial_ambiguity",
+      "source_id": "adversarial_ambiguity.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "adversarial_unicode_term",
+      "source_id": "adversarial_unicode_term.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "adversarial_reference_sequence",
+      "source_id": "adversarial_reference_sequence.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_attach_cover",
+      "source_id": "train_attach_cover.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_remove_filter",
+      "source_id": "train_remove_filter.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_service_door",
+      "source_id": "train_service_door.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_alias_supply",
+      "source_id": "train_alias_supply.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_deprecated_panel",
+      "source_id": "train_deprecated_panel.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_description_power",
+      "source_id": "train_description_power.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_warning_fire",
+      "source_id": "train_warning_fire.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "train_optional_condition",
+      "source_id": "train_optional_condition.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "validation_cable_length",
+      "source_id": "validation_cable_length.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "validation_filter_sequence",
+      "source_id": "validation_filter_sequence.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "test_negated_quantity_condition",
+      "source_id": "test_negated_quantity_condition.txt"
+    },
+    {
+      "license_id": "MIT",
+      "origin": "original synthetic benchmark examples authored for ste-compiler",
+      "record_id": "adversarial_tab_casing",
+      "source_id": "adversarial_tab_casing.txt"
+    }
+  ],
+  "resources": [
+    {
+      "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
+      "origin": "original demonstration vocabulary authored for ste-compiler",
+      "path": "vocabulary.json",
+      "sha256": "a64d2c9b98923be00e766c93d0ab976807b80f88cd7d5ee1d97c5f1feeefc8d5",
+      "version": "demo-3"
+    },
+    {
+      "license": "MIT; original demonstration terminology, not ASD-STE100 terminology",
+      "origin": "original demonstration terminology authored for ste-compiler",
+      "path": "terminology.json",
+      "sha256": "3e6a760921b6d8b698040f7be10e40a23cf25ad31579dfd590af7b4078863f9f",
+      "version": "demonstration-corpus-2"
+    }
+  ],
+  "schema_version": "license-inventory-v1"
+}
