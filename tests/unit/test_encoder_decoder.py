@@ -108,6 +108,29 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["input_ids"]
 
 
+def test_encoder_decoder_wraps_inference_backend_failure():
+    class BrokenModel(CheckingModel):
+        def generate(self, **kwargs):
+            raise RuntimeError("incompatible tensor shapes")
+
+    tokenizer = CharacterTokenizer()
+    generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderConfig(
+            model_id="organization/small-seq2seq",
+            revision=MODEL_REVISION,
+        ),
+        component_loader=lambda config: (tokenizer, BrokenModel(tokenizer, "PERIOD")),
+    )
+
+    with pytest.raises(
+        EncoderDecoderError,
+        match="inference failed safely",
+    ) as caught:
+        generator.generate_symbols("{}", frozenset({"PERIOD"}))
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
 def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, tmp_path):
     calls = []
     tokenizer = object()

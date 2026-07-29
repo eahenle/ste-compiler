@@ -399,6 +399,18 @@ class DecoderOnlyLoRASymbolGenerator:
         serialized_ir: str,
         allowed_symbols: frozenset[str],
     ) -> str:
+        try:
+            return self._generate_symbols(serialized_ir, allowed_symbols)
+        except DecoderOnlyLoRAError:
+            raise
+        except Exception as error:
+            raise DecoderOnlyLoRAError("decoder-only LoRA inference failed safely") from error
+
+    def _generate_symbols(
+        self,
+        serialized_ir: str,
+        allowed_symbols: frozenset[str],
+    ) -> str:
         grammar = _SymbolTokenGrammar(
             self._tokenizer,
             allowed_symbols,

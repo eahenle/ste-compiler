@@ -333,6 +333,14 @@ class TransformersEncoderDecoderSymbolGenerator:
         return self._components
 
     def generate_symbols(self, serialized_ir: str, allowed_symbols: frozenset[str]) -> str:
+        try:
+            return self._generate_symbols(serialized_ir, allowed_symbols)
+        except (EncoderDecoderError, InvalidSymbolGeneration):
+            raise
+        except Exception as error:
+            raise EncoderDecoderError("encoder-decoder inference failed safely") from error
+
+    def _generate_symbols(self, serialized_ir: str, allowed_symbols: frozenset[str]) -> str:
         tokenizer, model = self._get_components()
         eos_token_id = tokenizer.eos_token_id
         if eos_token_id is None:
