@@ -685,10 +685,10 @@ def _remove_invalid_pinned_output(
     parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         path_metadata = os.stat(output.name, dir_fd=parent_fd, follow_symlinks=False)
-        if (
-            not stat.S_ISDIR(path_metadata.st_mode)
-            or (path_metadata.st_dev, path_metadata.st_ino) != (pinned.device, pinned.inode)
-        ):
+        if not stat.S_ISDIR(path_metadata.st_mode) or (
+            path_metadata.st_dev,
+            path_metadata.st_ino,
+        ) != (pinned.device, pinned.inode):
             raise DecoderLoRATrainingError(
                 f"training output changed during invalid artifact cleanup: {output}"
             )
