@@ -1,0 +1,23 @@
+{
+  "schema_version": "ste-benchmark-prediction-manifest-v1",
+  "benchmark_id": "ste-compiler-pipeline-fixture-1",
+  "benchmark_spec_sha256": "ef0770d8d1c083a0aae112e3f82e73053f5227f0fed9218a48520846eeccac69",
+  "dataset": {
+    "dataset_version": "demonstration-corpus-2",
+    "manifest_sha256": "384264f6327129b535b8cd71b95633649a56ed071a5d0fc37cad1a8978af54fe"
+  },
+  "systems": [
+    {
+      "system_id": "failure-taxonomy-fixture-v1",
+      "evidence_kind": "deterministic_fixture",
+      "artifact_manifest_sha256": null,
+      "description": "Hand-authored deterministic fixture observations for evidence-pipeline tests; not model predictions."
+    }
+  ],
+  "predictions": {
+    "path": "predictions.jsonl",
+    "sha256": "a82e7dc064256c43fc1df72c767bfd171ff3ba5151e823211d479b4921cef956",
+    "bytes": 5202
+  },
+  "record_count": 4
+}
