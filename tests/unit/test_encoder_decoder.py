@@ -111,6 +111,27 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["input_ids"]
 
 
+def test_encoder_decoder_prepare_loads_components_once_before_generation():
+    tokenizer = CharacterTokenizer()
+    model = CheckingModel(tokenizer, "PERIOD")
+    calls = []
+
+    def load(config):
+        calls.append(config)
+        return tokenizer, model
+
+    config = EncoderDecoderConfig(
+        model_id="organization/small-seq2seq",
+        revision=MODEL_REVISION,
+    )
+    generator = TransformersEncoderDecoderSymbolGenerator(config, component_loader=load)
+
+    generator.prepare()
+    generator.prepare()
+
+    assert calls == [config]
+
+
 def test_encoder_decoder_wraps_inference_backend_failure():
     class BrokenModel(CheckingModel):
         def generate(self, **kwargs):

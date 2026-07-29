@@ -13,6 +13,8 @@ from typer.testing import CliRunner
 import ste_compiler.reference_release as release_module
 from ste_compiler.cli import app
 from ste_compiler.realizer import DeterministicRealizer
+from ste_compiler.realizer.decoder_lora import DecoderOnlyLoRAError
+from ste_compiler.realizer.encoder_decoder import EncoderDecoderError
 from ste_compiler.reference_release import (
     REFERENCE_RELEASE_FILES,
     ReferenceReleaseError,
@@ -124,6 +126,122 @@ def _build(tmp_path, monkeypatch):
         output,
     )
     return output, result
+
+
+class _PreparedFailureRealizer:
+    def __init__(self, error_type, *, fail_during):
+        self.error_type = error_type
+        self.fail_during = fail_during
+        self.prepare_calls = 0
+        self.realize_calls = 0
+
+    def prepare(self):
+        self.prepare_calls += 1
+        if self.fail_during == "prepare":
+            raise self.error_type("artifact loading failed")
+
+    def realize(self, document, vocabulary, terminology, constraints=None):
+        self.realize_calls += 1
+        if self.fail_during == "realize":
+            raise self.error_type("generation failed")
+        return DeterministicRealizer().realize(document, vocabulary, terminology)
+
+
+def _install_architecture_failure(monkeypatch, architecture, error_type, *, fail_during):
+    _install_release_seams(monkeypatch)
+    target_config_architecture = f"{architecture}-local-bundle"
+    failing = _PreparedFailureRealizer(error_type, fail_during=fail_during)
+
+    def build(config, **locators):
+        if config.architecture == target_config_architecture:
+            return failing
+        return DeterministicRealizer()
+
+    monkeypatch.setattr(release_module, "build_realizer", build)
+    return failing
+
+
+@pytest.mark.parametrize(
+    ("architecture", "error_type"),
+    (
+        ("encoder-decoder", EncoderDecoderError),
+        ("decoder-only-lora", DecoderOnlyLoRAError),
+    ),
+)
+def test_architecture_generation_errors_become_rejected_predictions(
+    tmp_path,
+    monkeypatch,
+    architecture,
+    error_type,
+):
+    failing = _install_architecture_failure(
+        monkeypatch,
+        architecture,
+        error_type,
+        fail_during="realize",
+    )
+    output = tmp_path / "release"
+
+    build_reference_release(
+        _metadata(),
+        CORPUS,
+        tmp_path / "encoder",
+        ENCODER_DIGEST,
+        tmp_path / "decoder",
+        DECODER_DIGEST,
+        tmp_path / "snapshot",
+        SNAPSHOT_DIGEST,
+        output,
+    )
+
+    predictions = [
+        json.loads(line)
+        for line in (output / f"{architecture}-predictions.jsonl").read_text().splitlines()
+    ]
+    assert failing.prepare_calls == 1
+    assert failing.realize_calls == len(predictions) == 6
+    assert {prediction["outcome"] for prediction in predictions} == {"rejected"}
+    assert {prediction["error_type"] for prediction in predictions} == {error_type.__name__}
+    assert {prediction["error"] for prediction in predictions} == {"generation failed"}
+
+
+@pytest.mark.parametrize(
+    ("architecture", "error_type"),
+    (
+        ("encoder-decoder", EncoderDecoderError),
+        ("decoder-only-lora", DecoderOnlyLoRAError),
+    ),
+)
+def test_architecture_loading_errors_remain_fatal(
+    tmp_path,
+    monkeypatch,
+    architecture,
+    error_type,
+):
+    failing = _install_architecture_failure(
+        monkeypatch,
+        architecture,
+        error_type,
+        fail_during="prepare",
+    )
+    output = tmp_path / "release"
+
+    with pytest.raises(error_type, match="artifact loading failed"):
+        build_reference_release(
+            _metadata(),
+            CORPUS,
+            tmp_path / "encoder",
+            ENCODER_DIGEST,
+            tmp_path / "decoder",
+            DECODER_DIGEST,
+            tmp_path / "snapshot",
+            SNAPSHOT_DIGEST,
+            output,
+        )
+
+    assert failing.prepare_calls == 1
+    assert failing.realize_calls == 0
+    assert not output.exists()
 
 
 def test_dual_architecture_release_is_content_addressed_and_reproducible(

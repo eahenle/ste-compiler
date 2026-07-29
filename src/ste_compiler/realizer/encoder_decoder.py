@@ -459,6 +459,11 @@ class TransformersEncoderDecoderSymbolGenerator:
             self._components = self._component_loader(self.config)
         return self._components
 
+    def prepare(self) -> None:
+        """Load and verify model components before processing any records."""
+
+        self._get_components()
+
     def generate_symbols(self, serialized_ir: str, allowed_symbols: frozenset[str]) -> str:
         try:
             return self._generate_symbols(serialized_ir, allowed_symbols)

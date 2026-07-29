@@ -37,6 +37,13 @@ class NeuralRealizer:
     def __init__(self, generator: SymbolGenerator):
         self.generator = generator
 
+    def prepare(self) -> None:
+        """Eagerly establish an optional generator's artifact trust boundary."""
+
+        prepare = getattr(self.generator, "prepare", None)
+        if callable(prepare):
+            prepare()
+
     def realize(
         self,
         document: Document,

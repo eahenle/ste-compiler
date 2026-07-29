@@ -132,6 +132,8 @@ def test_encoder_local_bundle_factory_requires_and_maps_untrusted_locator(
         run_manifest_sha256="b" * 64,
         artifact_intended_use="mechanics-smoke",
     )
+    prepared = []
+    fake_generator.prepare = lambda: prepared.append(True)
 
     def construct(runtime_config):
         constructed.append(runtime_config)
@@ -158,7 +160,9 @@ def test_encoder_local_bundle_factory_requires_and_maps_untrusted_locator(
             model_snapshot=tmp_path / "snapshot",
         )
 
-    result = factory.build_realizer(config, artifact_bundle=bundle).realize(
+    realizer = factory.build_realizer(config, artifact_bundle=bundle)
+    realizer.prepare()
+    result = realizer.realize(
         document,
         vocab,
         terms,
@@ -171,6 +175,7 @@ def test_encoder_local_bundle_factory_requires_and_maps_untrusted_locator(
     assert runtime_config.max_source_tokens == 321
     assert runtime_config.max_new_tokens == 123
     assert runtime_config.num_beams == 2
+    assert prepared == [True]
     assert result.metadata["artifact_mode"] == "content-addressed-local-bundle"
     assert result.metadata["artifact_manifest_sha256"] == digest
     assert result.metadata["run_manifest_sha256"] == "b" * 64
@@ -284,6 +289,8 @@ def test_decoder_local_bundle_factory_requires_both_locators_and_loads_lazily(
     )
 
     assert not constructed
+    realizer.prepare()
+    assert len(constructed) == 1
     result = realizer.realize(document, vocab, terms)
     assert len(constructed) == 1
     runtime_config = constructed[0]

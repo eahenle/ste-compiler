@@ -27,7 +27,9 @@ from ste_compiler.realizer.config import (
     canonical_realizer_config_json,
     realizer_config_sha256,
 )
+from ste_compiler.realizer.decoder_lora import DecoderOnlyLoRAError
 from ste_compiler.realizer.deterministic import DeterministicRealizer
+from ste_compiler.realizer.encoder_decoder import EncoderDecoderError
 from ste_compiler.realizer.factory import build_realizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.terminology.models import TerminologyData, VocabularyData
@@ -290,7 +292,7 @@ def _prediction(
     document = document.model_copy(update={"metadata": metadata})
     try:
         result = realizer.realize(document, vocabulary, terminology)
-    except ValueError as error:
+    except (ValueError, EncoderDecoderError, DecoderOnlyLoRAError) as error:
         return ReferencePredictionV1(
             schema_version=REFERENCE_PREDICTION_SCHEMA_VERSION,
             architecture=architecture,
@@ -350,6 +352,11 @@ def _prediction_bytes(
     config: RealizerConfigV1,
     realizer: Realizer,
 ) -> bytes:
+    prepare = getattr(realizer, "prepare", None)
+    if callable(prepare):
+        # Local neural loaders are intentionally lazy. Establish their artifact trust
+        # boundaries outside the per-record rejection path so loading failures remain fatal.
+        prepare()
     vocabulary, terminology = _resources(snapshot)
     digest = realizer_config_sha256(config)
     records = (*snapshot.test, *snapshot.adversarial)
