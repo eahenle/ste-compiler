@@ -261,6 +261,36 @@ def test_atomic_output_refuses_destination_created_during_staging(tmp_path):
     assert not list(tmp_path.glob(".output.stage-*"))
 
 
+def test_invalid_output_cleanup_preserves_replacement_path(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    displaced = tmp_path / "displaced"
+    output.mkdir()
+    (output / "original").write_bytes(b"invalid")
+    pinned = decoder_training._open_pinned_output_directory(output)
+    real_assert = decoder_training._assert_pinned_output_directory
+
+    def replace_after_identity_check(directory, pinned_directory, *, operation):
+        real_assert(directory, pinned_directory, operation=operation)
+        output.rename(displaced)
+        output.mkdir()
+        (output / "replacement").write_bytes(b"concurrent")
+
+    monkeypatch.setattr(
+        decoder_training,
+        "_assert_pinned_output_directory",
+        replace_after_identity_check,
+    )
+    try:
+        with pytest.raises(DecoderLoRATrainingError, match="changed during invalid"):
+            decoder_training._remove_invalid_pinned_output(output, pinned)
+    finally:
+        decoder_training.os.close(pinned.descriptor)
+
+    assert (output / "replacement").read_bytes() == b"concurrent"
+    assert displaced.is_dir()
+    assert not list(displaced.iterdir())
+
+
 def test_decoder_bundle_manifest_is_last_and_content_binds_the_complete_run(tmp_path):
     root = tmp_path / "run"
     for relative_path in decoder_training.DECODER_CHECKSUM_FILES:

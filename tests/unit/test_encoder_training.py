@@ -523,3 +523,33 @@ def test_no_replace_publication_preserves_concurrent_destination(tmp_path):
 
     assert (source / "artifact").read_bytes() == b"complete"
     assert (destination / "sentinel").read_bytes() == b"concurrent"
+
+
+def test_invalid_output_cleanup_preserves_replacement_path(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    displaced = tmp_path / "displaced"
+    output.mkdir()
+    (output / "original").write_bytes(b"invalid")
+    pinned = training_module._open_pinned_output_directory(output)
+    real_assert = training_module._assert_pinned_output_directory
+
+    def replace_after_identity_check(directory, pinned_directory, *, operation):
+        real_assert(directory, pinned_directory, operation=operation)
+        output.rename(displaced)
+        output.mkdir()
+        (output / "replacement").write_bytes(b"concurrent")
+
+    monkeypatch.setattr(
+        training_module,
+        "_assert_pinned_output_directory",
+        replace_after_identity_check,
+    )
+    try:
+        with pytest.raises(EncoderDecoderTrainingError, match="changed during invalid"):
+            training_module._remove_invalid_pinned_output(output, pinned)
+    finally:
+        training_module.os.close(pinned.descriptor)
+
+    assert (output / "replacement").read_bytes() == b"concurrent"
+    assert displaced.is_dir()
+    assert not list(displaced.iterdir())

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+import ste_compiler.artifacts as artifacts_module
 from ste_compiler.artifacts import (
     ARTIFACT_MANIFEST_NAME,
     ArtifactBundleManifestV1,
@@ -23,6 +24,26 @@ from ste_compiler.artifacts import (
     read_artifact_manifest_for_routing,
     verify_artifact_bundle,
 )
+
+
+def test_root_enumeration_reserves_one_slot_for_the_colocated_manifest(tmp_path):
+    root = tmp_path / "maximum-root"
+    root.mkdir()
+    for index_value in range(artifacts_module.MAX_ARTIFACT_FILES):
+        (root / f"file-{index_value:04}.json").write_bytes(b"")
+    (root / ARTIFACT_MANIFEST_NAME).write_bytes(b"")
+    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        names = artifacts_module._bounded_directory_names(
+            directory_fd,
+            expected_count=artifacts_module.MAX_ARTIFACT_FILES + 1,
+            operation="enumerate",
+        )
+    finally:
+        os.close(directory_fd)
+
+    assert len(names) == artifacts_module.MAX_ARTIFACT_FILES + 1
+    assert ARTIFACT_MANIFEST_NAME in names
 
 
 def _identity(path: str, data: bytes) -> ArtifactFileV1:

@@ -448,13 +448,15 @@ def _bounded_directory_names(
     expected_count: int,
     operation: str,
 ) -> tuple[str, ...]:
-    if expected_count > MAX_ARTIFACT_FILES:
+    # The manifest inventory excludes its colocated trust-manifest file.
+    directory_limit = MAX_ARTIFACT_FILES + 1
+    if expected_count > directory_limit:
         raise ArtifactVerificationError("artifact directory exceeds the file-count limit")
     names: list[str] = []
     try:
         with os.scandir(directory_fd) as entries:
             for entry in entries:
-                if len(names) >= expected_count or len(names) >= MAX_ARTIFACT_FILES:
+                if len(names) >= expected_count or len(names) >= directory_limit:
                     raise ArtifactVerificationError(
                         "artifact directory does not match the manifest file set"
                     )

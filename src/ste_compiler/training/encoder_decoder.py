@@ -28,7 +28,9 @@ from typing import Any, BinaryIO, Final, cast
 
 from ste_compiler.artifacts import (
     ARTIFACT_MANIFEST_NAME,
+    MAX_ARTIFACT_FILES,
     MAX_ARTIFACT_MANIFEST_BYTES,
+    MAX_ARTIFACT_PATH_DEPTH,
     ArtifactBundleManifestV1,
     ArtifactFileV1,
     ArtifactVerificationError,
@@ -1285,6 +1287,75 @@ def _assert_pinned_output_directory(
         )
 
 
+def _clear_pinned_directory(directory_fd: int, remaining_entries: list[int]) -> None:
+    """Delete entries relative to an already pinned directory, never through a path."""
+
+    while True:
+        try:
+            with os.scandir(directory_fd) as entries:
+                entry = next(entries, None)
+        except OSError as error:
+            raise EncoderDecoderTrainingError(
+                "cannot enumerate invalid pinned artifact output"
+            ) from error
+        if entry is None:
+            return
+        if remaining_entries[0] <= 0:
+            raise EncoderDecoderTrainingError(
+                "invalid pinned artifact output exceeds the cleanup entry limit"
+            )
+        remaining_entries[0] -= 1
+        name = entry.name
+        try:
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if stat.S_ISDIR(metadata.st_mode):
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    _clear_pinned_directory(child_fd, remaining_entries)
+                finally:
+                    os.close(child_fd)
+                os.rmdir(name, dir_fd=directory_fd)
+            else:
+                os.unlink(name, dir_fd=directory_fd)
+        except OSError as error:
+            raise EncoderDecoderTrainingError(
+                "cannot remove invalid pinned artifact output"
+            ) from error
+
+
+def _remove_invalid_pinned_output(
+    output: Path,
+    pinned: _PinnedOutputDirectory,
+) -> None:
+    """Remove a failed publication only through its pinned directory descriptor."""
+
+    _assert_pinned_output_directory(
+        output,
+        pinned,
+        operation="invalid artifact cleanup",
+    )
+    remaining_entries = (MAX_ARTIFACT_FILES + 1) * (MAX_ARTIFACT_PATH_DEPTH + 1)
+    _clear_pinned_directory(pinned.descriptor, [remaining_entries])
+    parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        path_metadata = os.stat(output.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(path_metadata.st_mode)
+            or (path_metadata.st_dev, path_metadata.st_ino) != (pinned.device, pinned.inode)
+        ):
+            raise EncoderDecoderTrainingError(
+                f"training output changed during invalid artifact cleanup: {output}"
+            )
+        os.rmdir(output.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
 def _write_bytes(path: Path, data: bytes) -> None:
     with path.open("xb") as handle:
         if handle.write(data) != len(data):
@@ -1544,20 +1615,7 @@ def _run_encoder_decoder_training(
         )
     except BaseException:
         if installed and pinned_stage is not None and output.exists():
-            _assert_pinned_output_directory(
-                output,
-                pinned_stage,
-                operation="invalid artifact cleanup",
-            )
-            shutil.rmtree(output)
-            parent_fd = os.open(
-                output.parent,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC,
-            )
-            try:
-                os.fsync(parent_fd)
-            finally:
-                os.close(parent_fd)
+            _remove_invalid_pinned_output(output, pinned_stage)
         raise
     finally:
         if pinned_stage is not None:
