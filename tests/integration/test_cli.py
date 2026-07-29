@@ -29,7 +29,10 @@ def test_cli_runs_packaged_end_to_end_demo():
     assert payload["metadata"]["realizer"] == "deterministic"
     assert payload["validation"] == {"status": "accepted", "violations": []}
     assert payload["ir"]["sections"][0]["statements"][0]["id"] == "stop_pressure"
-    assert payload["text"].startswith("Warning: injury can occur")
+    assert payload["text"] == (
+        "Warning: injury can occur when hydraulic pressure is more than 20 MPa.\n"
+        "If hydraulic pressure is more than 20 MPa, stop the hydraulic pressure."
+    )
 
 
 def test_cli_prints_versioned_compile_source_json_schema():
@@ -96,6 +99,26 @@ def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
 
     assert result.exit_code == 1
     assert "quote does not match the source" in result.stderr
+    assert "Traceback" not in result.output
+
+
+def test_cli_replay_rejects_malformed_yaml_without_traceback(tmp_path):
+    example_root = ROOT / "data/end_to_end"
+    malformed = tmp_path / "malformed.yaml"
+    malformed.write_text("sections: [unterminated")
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(example_root / "hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(malformed),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "invalid replay IR fixture" in result.stderr
     assert "Traceback" not in result.output
 
 

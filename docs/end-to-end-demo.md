@@ -29,7 +29,7 @@ The text result is:
 
 ```text
 Warning: injury can occur when hydraulic pressure is more than 20 MPa.
-Stop the hydraulic pressure to more than 20 MPa.
+If hydraulic pressure is more than 20 MPa, stop the hydraulic pressure.
 accepted
 ```
 

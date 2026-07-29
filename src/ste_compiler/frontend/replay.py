@@ -19,12 +19,15 @@ class ReplayIRProvider:
     @classmethod
     def from_path(cls, path: Path) -> "ReplayIRProvider":
         suffix = path.suffix.casefold()
-        if suffix == ".json":
-            raw: object = json.loads(path.read_text(encoding="utf-8"))
-        elif suffix in {".yaml", ".yml"}:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        else:
-            raise ValueError(f"unsupported replay IR file type: {path.suffix or '<none>'}")
+        try:
+            if suffix == ".json":
+                raw: object = json.loads(path.read_text(encoding="utf-8"))
+            elif suffix in {".yaml", ".yml"}:
+                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            else:
+                raise ValueError(f"unsupported replay IR file type: {path.suffix or '<none>'}")
+        except (json.JSONDecodeError, yaml.YAMLError) as error:
+            raise ValueError(f"invalid replay IR fixture: {error}") from error
         if not isinstance(raw, dict) or not all(isinstance(key, str) for key in raw):
             raise ValueError("replay IR fixture must contain a string-keyed object")
         return cls(raw)

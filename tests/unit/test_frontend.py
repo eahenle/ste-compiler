@@ -93,6 +93,11 @@ def test_replay_provider_rejects_unsupported_or_non_object_fixtures(tmp_path):
     with pytest.raises(ValueError, match="string-keyed object"):
         ReplayIRProvider.from_path(sequence)
 
+    malformed = tmp_path / "malformed.yaml"
+    malformed.write_text("sections: [unterminated")
+    with pytest.raises(ValueError, match="invalid replay IR fixture"):
+        ReplayIRProvider.from_path(malformed)
+
 
 def test_llm_frontend_rejects_blank_provider_identity():
     class Provider:

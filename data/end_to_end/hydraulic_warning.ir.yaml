@@ -16,9 +16,12 @@ sections:
       start: 0
       end: 79
       quote: Stop the hydraulic pressure if it is more than 20 MPa because injury can occur.
-    quantity_constraints:
-    - property: pressure
-      quantity:
+    conditions:
+    - id: pressure_above_threshold
+      subject:
+        term_id: hydraulic_pressure
+      predicate: is
+      value:
         value: 20
         unit: MPa
         comparator: more_than
