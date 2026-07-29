@@ -20,19 +20,23 @@ from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.training import (
     DecoderLoRATrainingError,
     DecoderOnlyLoRATrainingConfigV1,
+    EncoderDecoderTrainingConfigV1,
     TrainingRecordValidationError,
     TrainingReleaseSnapshot,
     build_demonstration_corpus,
     build_training_record,
     evaluate_decoder_lora_adapter,
+    evaluate_encoder_decoder_checkpoint,
     export_symbolic_corpus,
     load_training_config,
     model_snapshot_manifest_sha256,
     prepare_decoder_smoke_fixture,
     read_training_release,
     run_decoder_lora_training,
+    run_encoder_decoder_training,
     training_config_sha256,
     verify_demonstration_corpus,
+    verify_safe_encoder_decoder_checkpoint,
 )
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
@@ -477,6 +481,102 @@ def evaluate_decoder_lora(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         typer.echo(f"Decoder LoRA validation loss: {validation_loss}")
+
+
+@app.command("train-encoder-decoder")
+def train_encoder_decoder(
+    config_path: Path,
+    release: Path,
+    output: Annotated[
+        Path,
+        typer.Option(help="New output directory for the atomic safe checkpoint."),
+    ],
+    source_root: Annotated[
+        Path,
+        typer.Option(help="Git checkout used to derive package commit and dirty state."),
+    ] = Path("."),
+    dependency_lock: Annotated[
+        Path,
+        typer.Option(help="Exact dependency lock file hashed into the run manifest."),
+    ] = Path("uv.lock"),
+    cache_dir: Annotated[
+        Path | None,
+        typer.Option(help="Optional local Hugging Face cache directory."),
+    ] = None,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run deterministic offline CPU encoder-decoder training."""
+
+    try:
+        config = load_training_config(config_path)
+        if not isinstance(config, EncoderDecoderTrainingConfigV1):
+            raise typer.BadParameter(
+                "training config architecture must be encoder-decoder",
+                param_hint="config_path",
+            )
+        manifest = run_encoder_decoder_training(
+            config,
+            release,
+            output,
+            source_root=source_root,
+            dependency_lock=dependency_lock,
+            cache_dir=cache_dir,
+        )
+        run_manifest_sha256 = next(
+            identity.sha256
+            for identity in verify_safe_encoder_decoder_checkpoint(output)
+            if identity.path == "run-manifest.json"
+        )
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    if json_output:
+        payload = manifest.model_dump(mode="json")
+        payload["run_manifest_sha256"] = run_manifest_sha256
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Wrote {manifest.optimizer_steps}-step encoder-decoder checkpoint to {output} "
+            f"(config sha256: {manifest.training_config_sha256}; "
+            f"run manifest sha256: {run_manifest_sha256})"
+        )
+
+
+@app.command("evaluate-encoder-decoder-checkpoint")
+def evaluate_encoder_decoder(
+    config_path: Path,
+    release: Path,
+    checkpoint: Path,
+    run_manifest_sha256: Annotated[
+        str,
+        typer.Option(
+            help="Externally retained SHA-256 of checkpoint/run-manifest.json.",
+        ),
+    ],
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Reload and score one safe checkpoint on the pinned validation split."""
+
+    try:
+        config = load_training_config(config_path)
+        if not isinstance(config, EncoderDecoderTrainingConfigV1):
+            raise typer.BadParameter(
+                "training config architecture must be encoder-decoder",
+                param_hint="config_path",
+            )
+        metrics = evaluate_encoder_decoder_checkpoint(
+            config,
+            release,
+            checkpoint,
+            run_manifest_sha256,
+        )
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    if json_output:
+        typer.echo(metrics.model_dump_json(indent=2))
+    else:
+        typer.echo(f"Validation loss: {metrics.mean_loss:.6f} ({metrics.record_count} records)")
 
 
 @app.command("validate-text")

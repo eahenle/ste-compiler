@@ -2,10 +2,10 @@
 
 Training is being added in architecture-specific slices. The shared foundation is complete: strict,
 versioned configurations and a race-resistant reader bind every run to one immutable corpus
-release. The decoder-only track now includes a deterministic, two-step, offline CPU mechanics
-smoke run over a generated tiny local causal model. It is not a selected public model, a published
-checkpoint, a benchmark, or a model-quality claim. The encoder-decoder trainer and reference runs
-remain future work.
+release. Both architecture tracks now include deterministic offline CPU smoke trainers,
+safetensors-only outputs, runtime-derived run manifests, reload evaluation, and installed-wheel
+coverage. The checked-in configurations select only local test fixtures, not public reference
+models, published checkpoints, benchmarks, or model-quality claims.
 
 ## Configuration identity
 
@@ -153,9 +153,82 @@ step count is rejected instead of silently changing the meaning of the smoke evi
 is content-bound by its own externally supplied manifest digest and must not be substituted for a
 pinned, authorized public base model in a reference experiment.
 
+## Encoder-decoder smoke training
+
+Install the smaller training-specific dependency set:
+
+```bash
+python -m pip install -e '.[encoder-training]'
+```
+
+The trainer takes an encoder-decoder configuration, an exact corpus release, and an empty output
+path:
+
+```bash
+ste-compiler train-encoder-decoder \
+  path/to/encoder-decoder.yaml \
+  path/to/corpus-release \
+  --output path/to/new-checkpoint \
+  --source-root . \
+  --dependency-lock uv.lock \
+  --cache-dir path/to/prepared-hugging-face-cache \
+  --json
+```
+
+The configured model and tokenizer identities must be identical and name one authorized Hugging
+Face Hub repository at a full 40-character commit. Resolution is local-only: the command neither
+selects a public model nor implicitly downloads one. Prepare the exact snapshot before entering an
+offline environment. The trainer stable-reads every resolved cache file into a private immutable
+materialization, records every file hash and size, and loads only that capture. A normal Hub cache
+layout with snapshot symlinks to content-addressed blobs is supported. Tests create a tiny local
+T5-style fixture rather than relying on a public checkpoint.
+
+Before constructing a training batch, the command verifies the configured corpus identity and
+checks every source and target in all four splits. Both sides must round-trip losslessly and may not
+contain an unknown token. It rejects any source or target that exceeds its configured token limit,
+the tokenizer capacity, or an exposed model position capacity; it never truncates training data.
+Tokenizer vocabulary and special-token IDs must exactly fit the model input and output embeddings.
+Every inventory symbol is tested both at the start of a target and after a literal space, with
+exact tokenizer round trips and without unknown or embedded EOS tokens. Target construction
+appends one explicit EOS token.
+
+Training is a deterministic, CPU-only PyTorch loop with the configured seed, example order,
+effective batch size, gradient accumulation, and exact optimizer-step count. The smoke
+configuration uses full fine-tuning because it exercises the complete encoder-decoder save and
+reload boundary with fewer moving parts than an adapter. It is a pipeline check, not evidence of
+model quality.
+
+The output directory is staged beside its final destination, synchronized, and renamed only after
+training, saving, reload, and validation-loss evaluation succeed. An existing destination is never
+overwritten. Only safetensors model weights are allowed; pickle-capable suffixes, symlinks,
+non-regular files, and multiply linked files fail closed. `run-manifest.json` records canonical
+configuration and corpus identities, the complete base/tokenizer snapshot inventory,
+runtime-derived package and dependency provenance, lock-file hash, optimizer and loss history,
+parameter counts, hardware, duration, peak memory, output hashes, and the evaluation command.
+Training requires a clean Git checkout and proves that its `src/ste_compiler` Python tree matches
+the package that is actually executing.
+
+Reload and verify a completed checkpoint with the same configuration and release:
+
+```bash
+ste-compiler evaluate-encoder-decoder-checkpoint \
+  path/to/encoder-decoder.yaml \
+  path/to/corpus-release \
+  path/to/checkpoint \
+  --run-manifest-sha256 <sha256-reported-by-training> \
+  --json
+```
+
+Retain the externally reported run-manifest digest with the checkpoint publication record.
+Evaluation requires that digest, stable-reads the complete checkpoint through no-follow directory
+handles into a private materialization, rechecks all internal configuration, corpus, training,
+snapshot, package, metric, and output identities, then loads only the private safetensors capture.
+It also requires the recomputed validation metrics to match the recorded metrics. It does not yet
+produce benchmark predictions or a released prediction hash.
+
 ## Remaining training gates
 
-The encoder-decoder architecture still needs its trainer and smoke coverage. Both architectures
-still need documented reference configurations, explicitly selected public base-model repositories
-and immutable revisions, and measured reference runs. Checkpoint resume remains blocked until
-optimizer state can be represented without pickle-capable artifacts.
+Both tracks still need documented single-GPU reference configurations, published model artifacts,
+evaluation predictions, and measured reference runs. Checkpoint resume remains blocked until
+optimizer state can be represented without pickle-capable artifacts. Public reference runs
+additionally require explicitly selected base-model repositories and immutable revisions.

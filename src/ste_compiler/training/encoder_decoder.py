@@ -1,0 +1,1176 @@
+"""Deterministic offline CPU smoke training for encoder-decoder models."""
+
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import importlib
+import importlib.metadata
+import inspect
+import math
+import os
+import platform
+import random
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, BinaryIO, cast
+
+from .config import (
+    ArtifactIdentityV1,
+    EncoderDecoderTrainingConfigV1,
+    canonical_training_config_json,
+    training_config_sha256,
+)
+from .manifest import (
+    RUN_MANIFEST_SCHEMA_VERSION,
+    VALIDATION_SCHEMA_VERSION,
+    CorpusRunIdentityV1,
+    EncoderDecoderRunManifestV1,
+    FileIdentityV1,
+    HardwareProvenanceV1,
+    PackageProvenanceV1,
+    ParameterCountsV1,
+    ValidationMetricsV1,
+    canonical_run_manifest_json,
+    canonical_validation_metrics_json,
+    load_run_manifest,
+)
+from .release_reader import (
+    ReleasedTrainingRecordV1,
+    TrainingReleaseSnapshot,
+    read_training_release,
+)
+
+_SAFE_SNAPSHOT_PATTERNS = [
+    "*.codes",
+    "*.json",
+    "*.merges",
+    "*.model",
+    "*.safetensors",
+    "*.spm",
+    "*.tiktoken",
+    "*.tokenizer",
+    "*.txt",
+    "*.vocab",
+]
+_PROHIBITED_MODEL_SUFFIXES = frozenset({".bin", ".ckpt", ".pickle", ".pkl", ".pt", ".pth"})
+_DEPENDENCIES = (
+    "huggingface-hub",
+    "numpy",
+    "safetensors",
+    "ste-compiler",
+    "tokenizers",
+    "torch",
+    "transformers",
+)
+_MAX_TREE_FILE_BYTES = 8 * 1024 * 1024 * 1024
+_MAX_TREE_BYTES = 32 * 1024 * 1024 * 1024
+_COPY_CHUNK_BYTES = 1024 * 1024
+_PACKAGE_SUFFIXES = frozenset({".py"})
+
+
+class EncoderDecoderTrainingError(ValueError):
+    """Raised when the reproducible training boundary cannot be established."""
+
+
+@dataclass(frozen=True)
+class PreparedTrainingRecord:
+    record_id: str
+    split: str
+    input_ids: tuple[int, ...]
+    labels: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CapturedTree:
+    path: Path
+    artifacts: tuple[FileIdentityV1, ...]
+
+
+def _load_neural_runtime() -> tuple[Any, Any, Any]:
+    try:
+        torch = importlib.import_module("torch")
+        transformers = importlib.import_module("transformers")
+        huggingface_hub = importlib.import_module("huggingface_hub")
+    except ImportError as error:
+        raise EncoderDecoderTrainingError(
+            "encoder-decoder training requires the 'encoder-training' extra"
+        ) from error
+    return torch, transformers, huggingface_hub
+
+
+def _stable_regular_file(
+    source_fd: int,
+    name: str,
+    destination: BinaryIO,
+    *,
+    relative_path: str,
+    allow_symlink: bool,
+    max_bytes: int = _MAX_TREE_FILE_BYTES,
+) -> FileIdentityV1:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if not allow_symlink and hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    entry_before = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+    try:
+        handle_fd = os.open(name, flags, dir_fd=source_fd)
+    except OSError as error:
+        raise EncoderDecoderTrainingError(
+            f"cannot safely open artifact: {relative_path}"
+        ) from error
+    digest = hashlib.sha256()
+    byte_count = 0
+    try:
+        before = os.fstat(handle_fd)
+        if not stat.S_ISREG(before.st_mode) or (not allow_symlink and before.st_nlink != 1):
+            raise EncoderDecoderTrainingError(
+                f"artifact must be a single-link regular file: {relative_path}"
+            )
+        if before.st_size > max_bytes:
+            raise EncoderDecoderTrainingError(f"artifact exceeds size limit: {relative_path}")
+        while True:
+            chunk = os.read(handle_fd, _COPY_CHUNK_BYTES)
+            if not chunk:
+                break
+            byte_count += len(chunk)
+            if byte_count > max_bytes:
+                raise EncoderDecoderTrainingError(f"artifact exceeds size limit: {relative_path}")
+            digest.update(chunk)
+            if destination.write(chunk) != len(chunk):
+                raise OSError(f"short write while capturing artifact: {relative_path}")
+        after = os.fstat(handle_fd)
+    finally:
+        os.close(handle_fd)
+    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    entry_after = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+    if (
+        byte_count != before.st_size
+        or any(getattr(before, field) != getattr(after, field) for field in stable_fields)
+        or any(
+            getattr(entry_before, field) != getattr(entry_after, field) for field in stable_fields
+        )
+    ):
+        raise EncoderDecoderTrainingError(f"artifact changed while read: {relative_path}")
+    return FileIdentityV1(
+        path=relative_path,
+        sha256=digest.hexdigest(),
+        bytes=byte_count,
+    )
+
+
+def _capture_directory(
+    source_fd: int,
+    destination: Path,
+    *,
+    prefix: str = "",
+    allow_file_symlinks: bool,
+    remaining_bytes: list[int],
+) -> tuple[FileIdentityV1, ...]:
+    try:
+        names = sorted(os.listdir(source_fd))
+    except OSError as error:
+        raise EncoderDecoderTrainingError("cannot enumerate artifact directory") from error
+    identities: list[FileIdentityV1] = []
+    for name in names:
+        if not name or name in {".", ".."} or "/" in name or "\0" in name:
+            raise EncoderDecoderTrainingError("artifact directory contains an unsafe name")
+        relative_path = f"{prefix}/{name}" if prefix else name
+        try:
+            metadata = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        except OSError as error:
+            raise EncoderDecoderTrainingError(
+                f"cannot inspect artifact: {relative_path}"
+            ) from error
+        destination_path = destination / name
+        if stat.S_ISDIR(metadata.st_mode):
+            destination_path.mkdir(mode=0o700)
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                child_fd = os.open(name, flags, dir_fd=source_fd)
+            except OSError as error:
+                raise EncoderDecoderTrainingError(
+                    f"cannot safely open artifact directory: {relative_path}"
+                ) from error
+            try:
+                identities.extend(
+                    _capture_directory(
+                        child_fd,
+                        destination_path,
+                        prefix=relative_path,
+                        allow_file_symlinks=allow_file_symlinks,
+                        remaining_bytes=remaining_bytes,
+                    )
+                )
+            finally:
+                os.close(child_fd)
+            continue
+        if not stat.S_ISREG(metadata.st_mode) and not (
+            allow_file_symlinks and stat.S_ISLNK(metadata.st_mode)
+        ):
+            raise EncoderDecoderTrainingError(
+                f"artifact tree contains a non-regular entry: {relative_path}"
+            )
+        try:
+            with destination_path.open("xb") as destination_handle:
+                identity = _stable_regular_file(
+                    source_fd,
+                    name,
+                    destination_handle,
+                    relative_path=relative_path,
+                    allow_symlink=stat.S_ISLNK(metadata.st_mode),
+                    max_bytes=min(_MAX_TREE_FILE_BYTES, remaining_bytes[0]),
+                )
+                destination_handle.flush()
+                os.fsync(destination_handle.fileno())
+        except OSError as error:
+            raise EncoderDecoderTrainingError(
+                f"cannot materialize artifact: {relative_path}"
+            ) from error
+        identities.append(identity)
+        remaining_bytes[0] -= identity.bytes
+    return tuple(identities)
+
+
+def _capture_tree(
+    source: Path,
+    destination: Path,
+    *,
+    allow_file_symlinks: bool = False,
+) -> CapturedTree:
+    if destination.exists() or destination.is_symlink():
+        raise EncoderDecoderTrainingError(
+            f"private artifact destination must not exist: {destination}"
+        )
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        source_fd = os.open(source, flags)
+    except OSError as error:
+        raise EncoderDecoderTrainingError(
+            f"artifact root must be a real directory: {source}"
+        ) from error
+    destination.mkdir(mode=0o700, parents=True)
+    try:
+        artifacts = _capture_directory(
+            source_fd,
+            destination,
+            allow_file_symlinks=allow_file_symlinks,
+            remaining_bytes=[_MAX_TREE_BYTES],
+        )
+    finally:
+        os.close(source_fd)
+    if not artifacts:
+        raise EncoderDecoderTrainingError("artifact tree must contain files")
+    return CapturedTree(path=destination, artifacts=artifacts)
+
+
+def _resolve_snapshot(
+    identity: ArtifactIdentityV1,
+    huggingface_hub: Any,
+    *,
+    cache_dir: Path | None,
+    require_safetensors: bool,
+) -> Path:
+    kwargs: dict[str, object] = {
+        "repo_id": identity.repo_id,
+        "revision": identity.revision,
+        "local_files_only": True,
+        "allow_patterns": _SAFE_SNAPSHOT_PATTERNS,
+    }
+    if cache_dir is not None:
+        kwargs["cache_dir"] = str(cache_dir)
+    try:
+        snapshot = Path(cast(str, huggingface_hub.snapshot_download(**kwargs))).resolve(strict=True)
+    except Exception as error:
+        raise EncoderDecoderTrainingError(
+            f"cached Hub snapshot is unavailable for {identity.repo_id}@{identity.revision}"
+        ) from error
+    if not snapshot.is_dir() or snapshot.name != identity.revision:
+        raise EncoderDecoderTrainingError(
+            "Hub snapshot resolver did not return the configured commit directory"
+        )
+    if not (snapshot / "config.json").is_file():
+        raise EncoderDecoderTrainingError("Hub snapshot is missing config.json")
+    if require_safetensors and not any(snapshot.glob("*.safetensors")):
+        raise EncoderDecoderTrainingError("base-model snapshot is missing safetensors weights")
+    return snapshot
+
+
+def _load_components(
+    config: EncoderDecoderTrainingConfigV1,
+    *,
+    cache_dir: Path | None,
+    private_root: Path,
+) -> tuple[Any, Any, Any, Any, CapturedTree]:
+    torch, transformers, huggingface_hub = _load_neural_runtime()
+    _prepare_runtime(torch, config.seed)
+    base_snapshot = _resolve_snapshot(
+        config.base_model,
+        huggingface_hub,
+        cache_dir=cache_dir,
+        require_safetensors=True,
+    )
+    captured = _capture_tree(
+        base_snapshot,
+        private_root / "base-model",
+        allow_file_symlinks=True,
+    )
+    unexpected = tuple(
+        identity.path
+        for identity in captured.artifacts
+        if not any(
+            fnmatch.fnmatchcase(Path(identity.path).name, pattern)
+            for pattern in _SAFE_SNAPSHOT_PATTERNS
+        )
+        or Path(identity.path).suffix.casefold() in _PROHIBITED_MODEL_SUFFIXES
+    )
+    if unexpected:
+        raise EncoderDecoderTrainingError(
+            f"base-model snapshot contains unexpected artifacts: {unexpected}"
+        )
+    common = {"local_files_only": True, "trust_remote_code": False}
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        str(captured.path),
+        **common,
+    )
+    loaded = transformers.AutoModelForSeq2SeqLM.from_pretrained(
+        str(captured.path),
+        **common,
+        use_safetensors=True,
+        output_loading_info=True,
+    )
+    if not isinstance(loaded, tuple) or len(loaded) != 2:
+        raise EncoderDecoderTrainingError("model loader did not return loading diagnostics")
+    model, loading_info = loaded
+    if not isinstance(loading_info, dict):
+        raise EncoderDecoderTrainingError("model loader returned invalid loading diagnostics")
+    failures = {
+        key: loading_info.get(key)
+        for key in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
+        if loading_info.get(key)
+    }
+    if failures:
+        raise EncoderDecoderTrainingError(
+            f"base-model snapshot does not exactly match the model architecture: {failures}"
+        )
+    _validate_model_tokenizer_compatibility(tokenizer, model, config)
+    return torch, transformers, tokenizer, model, captured
+
+
+def _integer_tokens(value: object, *, context: str) -> tuple[int, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise EncoderDecoderTrainingError(f"tokenizer returned invalid {context} token IDs")
+    tokens: list[int] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise EncoderDecoderTrainingError(f"tokenizer returned invalid {context} token IDs")
+        tokens.append(item)
+    if not tokens:
+        raise EncoderDecoderTrainingError(f"tokenizer returned no {context} token IDs")
+    return tuple(tokens)
+
+
+def _encode(
+    tokenizer: Any,
+    text: str,
+    *,
+    add_special_tokens: bool,
+    context: str,
+) -> tuple[int, ...]:
+    try:
+        encoded = tokenizer.encode(text, add_special_tokens=add_special_tokens)
+    except Exception as error:
+        raise EncoderDecoderTrainingError(f"tokenizer could not encode {context}") from error
+    return _integer_tokens(encoded, context=context)
+
+
+def _decode(tokenizer: Any, token_ids: tuple[int, ...], *, context: str) -> str:
+    try:
+        return cast(
+            str,
+            tokenizer.decode(
+                token_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            ),
+        )
+    except Exception as error:
+        raise EncoderDecoderTrainingError(f"tokenizer could not decode {context}") from error
+
+
+def _validate_model_tokenizer_compatibility(
+    tokenizer: Any,
+    model: Any,
+    config: EncoderDecoderTrainingConfigV1,
+) -> None:
+    def embedding_capacity(embedding: Any) -> int:
+        for attribute in ("num_embeddings", "out_features"):
+            value = getattr(embedding, attribute, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        weight = getattr(embedding, "weight", None)
+        shape = getattr(weight, "shape", ())
+        if shape and isinstance(shape[0], int):
+            return int(shape[0])
+        raise AttributeError("embedding vocabulary capacity is unavailable")
+
+    try:
+        vocabulary_size = len(tokenizer)
+        input_capacity = embedding_capacity(model.get_input_embeddings())
+        output_embeddings = model.get_output_embeddings()
+        output_capacity = (
+            embedding_capacity(output_embeddings)
+            if output_embeddings is not None
+            else input_capacity
+        )
+    except (AttributeError, TypeError, ValueError) as error:
+        raise EncoderDecoderTrainingError(
+            "model and tokenizer did not expose compatible vocabulary capacities"
+        ) from error
+    configured_vocabulary = int(getattr(model.config, "vocab_size", -1))
+    if (
+        vocabulary_size <= 0
+        or configured_vocabulary != vocabulary_size
+        or input_capacity != vocabulary_size
+        or output_capacity != vocabulary_size
+    ):
+        raise EncoderDecoderTrainingError(
+            "model and tokenizer vocabulary capacities do not match exactly"
+        )
+    for name in ("pad_token_id", "eos_token_id", "unk_token_id"):
+        token_id = getattr(tokenizer, name, None)
+        model_token_id = getattr(model.config, name, None)
+        if token_id is None or isinstance(token_id, bool):
+            raise EncoderDecoderTrainingError(f"tokenizer must define {name}")
+        if int(token_id) < 0 or int(token_id) >= vocabulary_size:
+            raise EncoderDecoderTrainingError(f"tokenizer {name} exceeds model vocabulary")
+        if model_token_id is not None and int(model_token_id) != int(token_id):
+            raise EncoderDecoderTrainingError(f"model and tokenizer {name} values do not match")
+    tokenizer_limit = getattr(tokenizer, "model_max_length", None)
+    if (
+        isinstance(tokenizer_limit, int)
+        and 0 < tokenizer_limit < 10**12
+        and max(config.max_source_tokens, config.max_target_tokens) > tokenizer_limit
+    ):
+        raise EncoderDecoderTrainingError(
+            "configured token limits exceed tokenizer model_max_length"
+        )
+    position_limits = [
+        getattr(model.config, name, None) for name in ("max_position_embeddings", "n_positions")
+    ]
+    finite_position_limits = [
+        int(limit)
+        for limit in position_limits
+        if isinstance(limit, int) and not isinstance(limit, bool) and 0 < limit < 10**12
+    ]
+    if finite_position_limits and max(
+        config.max_source_tokens,
+        config.max_target_tokens,
+    ) > min(finite_position_limits):
+        raise EncoderDecoderTrainingError("configured token limits exceed model position capacity")
+
+
+def _all_records(release: TrainingReleaseSnapshot) -> tuple[ReleasedTrainingRecordV1, ...]:
+    return (*release.train, *release.validation, *release.test, *release.adversarial)
+
+
+def preflight_encoder_decoder_tokenizer(
+    tokenizer: Any,
+    release: TrainingReleaseSnapshot,
+    config: EncoderDecoderTrainingConfigV1,
+) -> tuple[PreparedTrainingRecord, ...]:
+    """Validate the full symbol inventory and every source/target length before training."""
+
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    unknown_token_id = getattr(tokenizer, "unk_token_id", None)
+    if eos_token_id is None or pad_token_id is None:
+        raise EncoderDecoderTrainingError("tokenizer must define EOS and padding token IDs")
+    forbidden_ids = {int(eos_token_id)}
+    if unknown_token_id is not None:
+        forbidden_ids.add(int(unknown_token_id))
+    for symbol in sorted(release.symbol_inventory):
+        for form in (symbol, f" {symbol}"):
+            token_ids = _encode(
+                tokenizer,
+                form,
+                add_special_tokens=False,
+                context=f"symbolic form {form!r}",
+            )
+            if (
+                forbidden_ids.intersection(token_ids)
+                or _decode(
+                    tokenizer,
+                    token_ids,
+                    context=f"symbolic form {form!r}",
+                )
+                != form
+            ):
+                raise EncoderDecoderTrainingError(
+                    f"tokenizer cannot losslessly encode symbolic form: {form!r}"
+                )
+
+    prepared: list[PreparedTrainingRecord] = []
+    for record in _all_records(release):
+        input_ids = _encode(
+            tokenizer,
+            record.serialized_ir,
+            add_special_tokens=True,
+            context=f"source for {record.record_id!r}",
+        )
+        if (
+            unknown_token_id is not None
+            and int(unknown_token_id) in input_ids
+            or _decode(
+                tokenizer,
+                input_ids,
+                context=f"source for {record.record_id!r}",
+            )
+            != record.serialized_ir
+        ):
+            raise EncoderDecoderTrainingError(
+                f"tokenizer cannot losslessly encode source for {record.record_id!r}"
+            )
+        target_ids = _encode(
+            tokenizer,
+            record.symbols,
+            add_special_tokens=False,
+            context=f"target for {record.record_id!r}",
+        )
+        if (
+            forbidden_ids.intersection(target_ids)
+            or _decode(
+                tokenizer,
+                target_ids,
+                context=f"target for {record.record_id!r}",
+            )
+            != record.symbols
+        ):
+            raise EncoderDecoderTrainingError(
+                f"tokenizer cannot losslessly encode target for {record.record_id!r}"
+            )
+        labels = (*target_ids, int(eos_token_id))
+        if len(input_ids) > config.max_source_tokens:
+            raise EncoderDecoderTrainingError(
+                f"source for {record.record_id!r} exceeds max_source_tokens "
+                f"({len(input_ids)} > {config.max_source_tokens})"
+            )
+        if len(labels) > config.max_target_tokens:
+            raise EncoderDecoderTrainingError(
+                f"target for {record.record_id!r} exceeds max_target_tokens "
+                f"({len(labels)} > {config.max_target_tokens})"
+            )
+        prepared.append(
+            PreparedTrainingRecord(
+                record_id=record.record_id,
+                split=record.split,
+                input_ids=input_ids,
+                labels=labels,
+            )
+        )
+    return tuple(prepared)
+
+
+def _batch(
+    torch: Any, records: Sequence[PreparedTrainingRecord], pad_token_id: int
+) -> dict[str, Any]:
+    input_tensors = [torch.tensor(record.input_ids, dtype=torch.long) for record in records]
+    label_tensors = [torch.tensor(record.labels, dtype=torch.long) for record in records]
+    input_ids = torch.nn.utils.rnn.pad_sequence(
+        input_tensors,
+        batch_first=True,
+        padding_value=pad_token_id,
+    )
+    labels = torch.nn.utils.rnn.pad_sequence(
+        label_tensors,
+        batch_first=True,
+        padding_value=-100,
+    )
+    return {
+        "input_ids": input_ids,
+        "attention_mask": input_ids.ne(pad_token_id).long(),
+        "labels": labels,
+    }
+
+
+def _seeded_records(
+    torch: Any,
+    records: tuple[PreparedTrainingRecord, ...],
+    seed: int,
+) -> Iterator[PreparedTrainingRecord]:
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(seed)
+    while True:
+        for position in torch.randperm(len(records), generator=generator).tolist():
+            yield records[position]
+
+
+def _take_batch(
+    stream: Iterator[PreparedTrainingRecord],
+    size: int,
+) -> tuple[PreparedTrainingRecord, ...]:
+    return tuple(next(stream) for _ in range(size))
+
+
+def _finite_loss(loss: Any, *, context: str) -> float:
+    value = float(loss.detach().cpu().item())
+    if not math.isfinite(value) or value < 0:
+        raise EncoderDecoderTrainingError(f"{context} produced a non-finite loss")
+    return value
+
+
+def _train(
+    torch: Any,
+    model: Any,
+    tokenizer: Any,
+    prepared: tuple[PreparedTrainingRecord, ...],
+    config: EncoderDecoderTrainingConfigV1,
+) -> tuple[tuple[str, ...], tuple[float, ...], int]:
+    train_records = tuple(record for record in prepared if record.split == "train")
+    if not train_records:
+        raise EncoderDecoderTrainingError("training release has no train records")
+    pad_token_id = int(tokenizer.pad_token_id)
+    stream = _seeded_records(torch, train_records, config.seed)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config.optimizer.learning_rate),
+        weight_decay=float(config.optimizer.weight_decay),
+    )
+    model.to("cpu")
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+    record_order: list[str] = []
+    optimizer_losses: list[float] = []
+    micro_steps = 0
+    for _ in range(config.max_steps):
+        accumulated_loss = 0.0
+        for _ in range(config.gradient_accumulation_steps):
+            batch_records = _take_batch(stream, config.micro_batch_size)
+            record_order.extend(record.record_id for record in batch_records)
+            outputs = model(**_batch(torch, batch_records, pad_token_id))
+            raw_loss = _finite_loss(outputs.loss, context="training")
+            accumulated_loss += raw_loss
+            (outputs.loss / config.gradient_accumulation_steps).backward()
+            micro_steps += 1
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        optimizer_losses.append(accumulated_loss / config.gradient_accumulation_steps)
+    return tuple(record_order), tuple(optimizer_losses), micro_steps
+
+
+def _evaluate(
+    torch: Any,
+    model: Any,
+    tokenizer: Any,
+    prepared: tuple[PreparedTrainingRecord, ...],
+) -> ValidationMetricsV1:
+    validation = tuple(record for record in prepared if record.split == "validation")
+    if not validation:
+        raise EncoderDecoderTrainingError("training release has no validation records")
+    model.to("cpu")
+    model.eval()
+    losses: list[float] = []
+    with torch.no_grad():
+        for record in validation:
+            outputs = model(**_batch(torch, (record,), int(tokenizer.pad_token_id)))
+            losses.append(_finite_loss(outputs.loss, context="validation"))
+    return ValidationMetricsV1(
+        schema_version=VALIDATION_SCHEMA_VERSION,
+        record_count=len(validation),
+        mean_loss=sum(losses) / len(losses),
+    )
+
+
+def _safe_save_pretrained(model: Any, output: Path) -> None:
+    kwargs: dict[str, object] = {}
+    if "safe_serialization" in inspect.signature(model.save_pretrained).parameters:
+        kwargs["safe_serialization"] = True
+    model.save_pretrained(str(output), **kwargs)
+
+
+def _validate_checkpoint_artifacts(
+    artifacts: tuple[FileIdentityV1, ...],
+) -> tuple[FileIdentityV1, ...]:
+    for identity in artifacts:
+        if Path(identity.path).suffix.casefold() in _PROHIBITED_MODEL_SUFFIXES:
+            raise EncoderDecoderTrainingError(
+                f"checkpoint contains a pickle-capable artifact: {identity.path}"
+            )
+    if not any(Path(identity.path).suffix.casefold() == ".safetensors" for identity in artifacts):
+        raise EncoderDecoderTrainingError("checkpoint does not contain safetensors weights")
+    return artifacts
+
+
+def verify_safe_encoder_decoder_checkpoint(directory: Path) -> tuple[FileIdentityV1, ...]:
+    """Stable-read and content-bind a regular, safetensors-only checkpoint tree."""
+
+    with tempfile.TemporaryDirectory(prefix="ste-checkpoint-verify-") as private:
+        captured = _capture_tree(directory, Path(private) / "checkpoint")
+        return _validate_checkpoint_artifacts(captured.artifacts)
+
+
+def _reload_components(
+    transformers: Any,
+    checkpoint: Path,
+    private_root: Path,
+) -> tuple[Any, Any, tuple[FileIdentityV1, ...]]:
+    captured = _capture_tree(checkpoint, private_root / "checkpoint")
+    artifacts = _validate_checkpoint_artifacts(captured.artifacts)
+    common = {"local_files_only": True, "trust_remote_code": False}
+    try:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(str(captured.path), **common)
+        loaded = transformers.AutoModelForSeq2SeqLM.from_pretrained(
+            str(captured.path),
+            **common,
+            use_safetensors=True,
+            output_loading_info=True,
+        )
+    except Exception as error:
+        raise EncoderDecoderTrainingError(
+            "saved checkpoint could not be reloaded through the safe local boundary"
+        ) from error
+    if not isinstance(loaded, tuple) or len(loaded) != 2 or not isinstance(loaded[1], dict):
+        raise EncoderDecoderTrainingError(
+            "saved checkpoint loader did not return loading diagnostics"
+        )
+    model, loading_info = loaded
+    if any(
+        loading_info.get(key)
+        for key in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
+    ):
+        raise EncoderDecoderTrainingError(
+            "saved checkpoint does not exactly match the model architecture"
+        )
+    return tokenizer, model, artifacts
+
+
+def _file_identity(path: Path) -> FileIdentityV1:
+    parent = path.parent
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        parent_fd = os.open(parent, flags)
+    except OSError as error:
+        raise EncoderDecoderTrainingError(f"cannot read provenance file: {path}") from error
+    try:
+        with tempfile.TemporaryFile() as sink:
+            identity = _stable_regular_file(
+                parent_fd,
+                path.name,
+                sink,
+                relative_path=str(path.resolve()),
+                allow_symlink=False,
+            )
+    finally:
+        os.close(parent_fd)
+    return identity
+
+
+def _package_tree_sha256(package_root: Path) -> str:
+    with tempfile.TemporaryDirectory(prefix="ste-package-provenance-") as private:
+        captured = _capture_tree(package_root, Path(private) / "package")
+    selected = tuple(
+        identity
+        for identity in captured.artifacts
+        if Path(identity.path).suffix in _PACKAGE_SUFFIXES or Path(identity.path).name == "py.typed"
+    )
+    if not selected:
+        raise EncoderDecoderTrainingError(
+            f"package tree contains no Python sources: {package_root}"
+        )
+    digest = hashlib.sha256()
+    for identity in selected:
+        digest.update(identity.path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(identity.sha256.encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(identity.bytes).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _git_package_provenance(
+    source_root: Path,
+    dependency_lock: Path,
+) -> PackageProvenanceV1:
+    if source_root.is_symlink() or not source_root.is_dir():
+        raise EncoderDecoderTrainingError(f"source root must be a real directory: {source_root}")
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=source_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status_output = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=source_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise EncoderDecoderTrainingError(
+            "package source commit could not be derived from the source root"
+        ) from error
+    if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit):
+        raise EncoderDecoderTrainingError(
+            "package source root did not produce a full commit digest"
+        )
+    if status_output:
+        raise EncoderDecoderTrainingError("package source root must be clean")
+    checkout_tree = _package_tree_sha256(source_root / "src" / "ste_compiler")
+    runtime_tree = _package_tree_sha256(Path(__file__).resolve().parents[1])
+    if checkout_tree != runtime_tree:
+        raise EncoderDecoderTrainingError(
+            "package source tree does not match the executing ste_compiler package"
+        )
+    dependencies: list[tuple[str, str]] = []
+    for name in _DEPENDENCIES:
+        try:
+            version = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError as error:
+            raise EncoderDecoderTrainingError(
+                f"installed dependency version is unavailable: {name}"
+            ) from error
+        dependencies.append((name, version))
+    return PackageProvenanceV1(
+        distribution="ste-compiler",
+        version=dict(dependencies)["ste-compiler"],
+        source_commit=commit,
+        source_dirty=False,
+        source_tree_sha256=runtime_tree,
+        dependency_lock=_file_identity(dependency_lock),
+        dependencies=tuple(dependencies),
+    )
+
+
+def _peak_rss_bytes() -> int | None:
+    try:
+        resource = importlib.import_module("resource")
+        peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except (AttributeError, ImportError, OSError, ValueError):
+        return None
+    if sys.platform != "darwin":
+        peak *= 1024
+    return max(peak, 0)
+
+
+def _hardware(torch: Any) -> HardwareProvenanceV1:
+    return HardwareProvenanceV1(
+        device="cpu",
+        python=platform.python_version(),
+        platform=platform.platform(),
+        machine=platform.machine() or "unknown",
+        processor=platform.processor(),
+        logical_cpu_count=os.cpu_count(),
+        torch_threads=int(torch.get_num_threads()),
+        process_peak_rss_bytes=_peak_rss_bytes(),
+    )
+
+
+def _parameter_counts(model: Any) -> ParameterCountsV1:
+    parameters = tuple(model.parameters())
+    return ParameterCountsV1(
+        total=sum(int(parameter.numel()) for parameter in parameters),
+        trainable=sum(
+            int(parameter.numel()) for parameter in parameters if parameter.requires_grad
+        ),
+    )
+
+
+def _fsync_tree(directory: Path) -> None:
+    for path in sorted(directory.rglob("*")):
+        if path.is_file():
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _write_bytes(path: Path, data: bytes) -> None:
+    with path.open("xb") as handle:
+        if handle.write(data) != len(data):
+            raise OSError(f"failed to write complete artifact: {path.name}")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _prepare_runtime(torch: Any, seed: int) -> None:
+    random.seed(seed)
+    try:
+        numpy = importlib.import_module("numpy")
+        numpy.random.seed(seed % (2**32))
+    except (AttributeError, ImportError):
+        pass
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True)
+    torch.set_num_threads(1)
+
+
+def run_encoder_decoder_training(
+    config: EncoderDecoderTrainingConfigV1,
+    release_path: Path,
+    output: Path,
+    *,
+    source_root: Path,
+    dependency_lock: Path,
+    cache_dir: Path | None = None,
+) -> EncoderDecoderRunManifestV1:
+    """Run one offline CPU training job and atomically publish a safe checkpoint."""
+
+    output = output.absolute()
+    if output.exists() or output.is_symlink():
+        raise EncoderDecoderTrainingError(f"training output must not already exist: {output}")
+    started = time.perf_counter()
+    release = read_training_release(release_path, config.corpus)
+    package = _git_package_provenance(source_root, dependency_lock)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output.name}.stage-",
+            dir=output.parent,
+        )
+    )
+    runtime = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output.name}.runtime-",
+            dir=output.parent,
+        )
+    )
+    installed = False
+    output_reservation: tuple[int, int] | None = None
+    try:
+        torch, transformers, tokenizer, model, base_snapshot = _load_components(
+            config,
+            cache_dir=cache_dir,
+            private_root=runtime / "initial",
+        )
+        prepared = preflight_encoder_decoder_tokenizer(tokenizer, release, config)
+        parameter_counts = _parameter_counts(model)
+        record_order, optimizer_losses, micro_steps = _train(
+            torch,
+            model,
+            tokenizer,
+            prepared,
+            config,
+        )
+        tokenizer.save_pretrained(str(stage))
+        _safe_save_pretrained(model, stage)
+        _write_bytes(stage / "training-config.json", canonical_training_config_json(config))
+        verify_safe_encoder_decoder_checkpoint(stage)
+        reloaded_tokenizer, reloaded_model, _ = _reload_components(
+            transformers,
+            stage,
+            runtime / "saved",
+        )
+        _validate_model_tokenizer_compatibility(reloaded_tokenizer, reloaded_model, config)
+        reloaded_prepared = preflight_encoder_decoder_tokenizer(
+            reloaded_tokenizer,
+            release,
+            config,
+        )
+        validation = _evaluate(
+            torch,
+            reloaded_model,
+            reloaded_tokenizer,
+            reloaded_prepared,
+        )
+        _write_bytes(
+            stage / "validation-metrics.json",
+            canonical_validation_metrics_json(validation),
+        )
+        output_artifacts = verify_safe_encoder_decoder_checkpoint(stage)
+        evaluation_command = (
+            "ste-compiler",
+            "evaluate-encoder-decoder-checkpoint",
+            str(output / "training-config.json"),
+            str(release_path.resolve()),
+            str(output),
+            "--run-manifest-sha256",
+            "<run-manifest-sha256>",
+            "--json",
+        )
+        manifest = EncoderDecoderRunManifestV1(
+            schema_version=RUN_MANIFEST_SCHEMA_VERSION,
+            architecture="encoder-decoder",
+            training_config_sha256=training_config_sha256(config),
+            training_config=config,
+            package=package,
+            corpus=CorpusRunIdentityV1(
+                dataset_version=release.manifest.dataset_version,
+                manifest_sha256=release.manifest_sha256,
+                artifacts=release.artifact_sha256,
+            ),
+            base_model=config.base_model,
+            tokenizer=config.tokenizer,
+            base_model_artifacts=base_snapshot.artifacts,
+            tokenizer_artifacts=base_snapshot.artifacts,
+            seed=config.seed,
+            parameter_counts=parameter_counts,
+            optimizer_steps=config.max_steps,
+            micro_steps=micro_steps,
+            record_order=record_order,
+            optimizer_losses=optimizer_losses,
+            validation=validation,
+            hardware=_hardware(torch),
+            duration_seconds=time.perf_counter() - started,
+            output_artifacts=output_artifacts,
+            evaluation_command=evaluation_command,
+        )
+        _write_bytes(stage / "run-manifest.json", canonical_run_manifest_json(manifest))
+        verify_safe_encoder_decoder_checkpoint(stage)
+        _fsync_tree(stage)
+        try:
+            output.mkdir(mode=0o700)
+        except FileExistsError as error:
+            raise EncoderDecoderTrainingError(
+                f"training output was created concurrently: {output}"
+            ) from error
+        reservation_metadata = output.stat(follow_symlinks=False)
+        output_reservation = (reservation_metadata.st_dev, reservation_metadata.st_ino)
+        os.rename(stage, output)
+        installed = True
+        parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+        return manifest
+    finally:
+        if not installed:
+            shutil.rmtree(stage, ignore_errors=True)
+            if output_reservation is not None:
+                try:
+                    output_metadata = output.stat(follow_symlinks=False)
+                    if (
+                        stat.S_ISDIR(output_metadata.st_mode)
+                        and (output_metadata.st_dev, output_metadata.st_ino) == output_reservation
+                    ):
+                        output.rmdir()
+                except OSError:
+                    pass
+        shutil.rmtree(runtime, ignore_errors=True)
+
+
+def evaluate_encoder_decoder_checkpoint(
+    config: EncoderDecoderTrainingConfigV1,
+    release_path: Path,
+    checkpoint: Path,
+    run_manifest_sha256: str,
+) -> ValidationMetricsV1:
+    """Reload and score one safe local checkpoint on the pinned validation split."""
+
+    checkpoint = checkpoint.absolute()
+    release = read_training_release(release_path, config.corpus)
+    if len(run_manifest_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in run_manifest_sha256
+    ):
+        raise EncoderDecoderTrainingError("run manifest SHA-256 must be 64 lowercase hex digits")
+    torch, transformers, _ = _load_neural_runtime()
+    _prepare_runtime(torch, config.seed)
+    with tempfile.TemporaryDirectory(prefix="ste-checkpoint-evaluate-") as private:
+        tokenizer, model, checkpoint_artifacts = _reload_components(
+            transformers,
+            checkpoint,
+            Path(private),
+        )
+        materialized = Path(private) / "checkpoint"
+        artifact_map = {identity.path: identity for identity in checkpoint_artifacts}
+        manifest_identity = artifact_map.get("run-manifest.json")
+        if manifest_identity is None:
+            raise EncoderDecoderTrainingError("checkpoint is missing run-manifest.json")
+        if manifest_identity.sha256 != run_manifest_sha256:
+            raise EncoderDecoderTrainingError("checkpoint run manifest digest does not match")
+        try:
+            config_bytes = (materialized / "training-config.json").read_bytes()
+            validation_bytes = (materialized / "validation-metrics.json").read_bytes()
+            manifest = load_run_manifest(materialized / "run-manifest.json")
+        except OSError as error:
+            raise EncoderDecoderTrainingError("checkpoint is missing required metadata") from error
+        if config_bytes != canonical_training_config_json(config):
+            raise EncoderDecoderTrainingError("checkpoint training configuration does not match")
+        actual_output_artifacts = tuple(
+            identity for identity in checkpoint_artifacts if identity.path != "run-manifest.json"
+        )
+        _validate_model_tokenizer_compatibility(tokenizer, model, config)
+        prepared = preflight_encoder_decoder_tokenizer(tokenizer, release, config)
+        expected_micro_steps = config.max_steps * config.gradient_accumulation_steps
+        expected_order = tuple(
+            record.record_id
+            for record in _take_batch(
+                _seeded_records(
+                    torch,
+                    tuple(record for record in prepared if record.split == "train"),
+                    config.seed,
+                ),
+                expected_micro_steps * config.micro_batch_size,
+            )
+        )
+        expected_evaluation_command = (
+            "ste-compiler",
+            "evaluate-encoder-decoder-checkpoint",
+            str(checkpoint / "training-config.json"),
+            str(release_path.resolve()),
+            str(checkpoint),
+            "--run-manifest-sha256",
+            "<run-manifest-sha256>",
+            "--json",
+        )
+        if (
+            manifest.training_config_sha256 != training_config_sha256(config)
+            or manifest.training_config != config
+            or manifest.corpus.dataset_version != release.manifest.dataset_version
+            or manifest.corpus.manifest_sha256 != release.manifest_sha256
+            or manifest.corpus.artifacts != release.artifact_sha256
+            or manifest.base_model != config.base_model
+            or manifest.tokenizer != config.tokenizer
+            or manifest.base_model_artifacts != manifest.tokenizer_artifacts
+            or tuple(
+                sorted(
+                    manifest.base_model_artifacts,
+                    key=lambda identity: identity.path,
+                )
+            )
+            != manifest.base_model_artifacts
+            or len({identity.path for identity in manifest.base_model_artifacts})
+            != len(manifest.base_model_artifacts)
+            or not any(identity.path == "config.json" for identity in manifest.base_model_artifacts)
+            or not any(
+                Path(identity.path).suffix == ".safetensors"
+                for identity in manifest.base_model_artifacts
+            )
+            or manifest.seed != config.seed
+            or manifest.optimizer_steps != config.max_steps
+            or manifest.micro_steps != expected_micro_steps
+            or manifest.record_order != expected_order
+            or len(manifest.optimizer_losses) != config.max_steps
+            or manifest.validation.record_count != len(release.validation)
+            or validation_bytes != canonical_validation_metrics_json(manifest.validation)
+            or manifest.parameter_counts != _parameter_counts(model)
+            or manifest.output_artifacts != actual_output_artifacts
+            or manifest.evaluation_command != expected_evaluation_command
+        ):
+            raise EncoderDecoderTrainingError("checkpoint run manifest identity does not match")
+        evaluated = _evaluate(torch, model, tokenizer, prepared)
+        if evaluated != manifest.validation:
+            raise EncoderDecoderTrainingError(
+                "checkpoint validation does not reproduce the run manifest"
+            )
+        return evaluated

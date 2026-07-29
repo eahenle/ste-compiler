@@ -32,14 +32,14 @@ jobs:
         with:
           version: "0.11.25"
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: uv.lock
           cache-suffix: quality
       - name: Check formatting
-        run: uv run --extra dev ruff format --check .
+        run: uv run --locked --extra dev ruff format --check .
       - name: Lint
-        run: uv run --extra dev ruff check .
+        run: uv run --locked --extra dev ruff check .
       - name: Type check
-        run: uv run --extra dev mypy src
+        run: uv run --locked --extra dev mypy src
 
   test:
     name: Tests (Python ${{ matrix.python-version }})
@@ -66,9 +66,9 @@ jobs:
         with:
           version: "0.11.25"
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: uv.lock
       - name: Test
-        run: uv run --python "${{ matrix.python-version }}" --extra dev pytest -q
+        run: uv run --locked --python "${{ matrix.python-version }}" --extra dev pytest -q -m "not neural"
 
   decoder-lora-smoke:
     name: Decoder LoRA offline smoke
@@ -76,6 +76,10 @@ jobs:
     timeout-minutes: 15
     env:
       HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      MKL_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
       TRANSFORMERS_OFFLINE: "1"
       UV_PYTHON_DOWNLOADS: never
     steps:
@@ -90,10 +94,42 @@ jobs:
         with:
           version: "0.11.25"
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: uv.lock
           cache-suffix: decoder-lora-smoke
       - name: Run offline smoke and installed-wheel coverage
         run: >-
-          uv run --extra dev --extra neural pytest -q
+          uv run --locked --python 3.12 --extra dev --extra neural pytest -q
           tests/unit/test_decoder_training.py
           tests/integration/test_decoder_lora_training_smoke.py
+
+  encoder-training-smoke:
+    name: Encoder training smoke (CPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_OFFLINE: "1"
+      MKL_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      TRANSFORMERS_OFFLINE: "1"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: encoder-training
+      - name: Offline two-step trainer and installed wheel
+        run: >-
+          uv run --locked --python 3.12 --extra dev --extra encoder-training
+          pytest -q -m neural
