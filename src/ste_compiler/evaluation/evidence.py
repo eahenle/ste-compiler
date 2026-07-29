@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import math
 import os
 import stat
+import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -860,7 +863,14 @@ def _markdown(
             continue
         lines.extend(
             [
-                f"### `{record.case_id}` — `{record.failure_code}`",
+                (
+                    f"### System `{record.system_id}` — case `{record.case_id}`"
+                    f" — `{record.failure_code}`"
+                ),
+                "",
+                f"System: `{record.system_id}`",
+                "",
+                f"Case: `{record.case_id}`",
                 "",
                 f"Stage: `{record.failure_stage}`",
                 "",
@@ -885,6 +895,81 @@ def _markdown(
     return "\n".join(lines).encode("utf-8")
 
 
+def _rename_no_replace(source: Path, destination: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "darwin":
+        rename = libc.renamex_np
+        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+        rename.restype = ctypes.c_int
+        result = rename(source_bytes, destination_bytes, 0x00000004)
+    elif sys.platform.startswith("linux"):
+        rename = libc.renameat2
+        rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        rename.restype = ctypes.c_int
+        result = rename(-100, source_bytes, -100, destination_bytes, 1)
+    else:
+        raise ValueError(
+            f"atomic no-replace benchmark report publication is unsupported on {sys.platform}"
+        )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise ValueError(f"benchmark report output was created concurrently: {destination}")
+    raise ValueError(f"cannot publish benchmark report atomically: {os.strerror(error_number)}")
+
+
+def _publish_report(stage: Path, output: Path) -> None:
+    try:
+        for child in stage.iterdir():
+            descriptor = os.open(child, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        stage_descriptor = os.open(
+            stage,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(stage_descriptor)
+        finally:
+            os.close(stage_descriptor)
+        _rename_no_replace(stage, output)
+        parent_descriptor = os.open(
+            output.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+    except OSError as error:
+        raise ValueError(f"cannot publish benchmark report atomically: {error}") from error
+
+
+def _require_hardened_publication_platform() -> None:
+    if (
+        os.name != "posix"
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_CLOEXEC")
+        or not (sys.platform == "darwin" or sys.platform.startswith("linux"))
+    ):
+        raise ValueError(
+            "benchmark report publication requires hardened POSIX directory handles and "
+            "atomic no-replace publication"
+        )
+
+
 def generate_evidence_report(
     *,
     specification_path: Path,
@@ -899,6 +984,7 @@ def generate_evidence_report(
 
     if os.path.lexists(output):
         raise ValueError(f"benchmark report output path must not exist: {output}")
+    _require_hardened_publication_platform()
     spec_model, spec_bytes = _model_file(specification_path, BenchmarkSpecV1)
     taxonomy_model, taxonomy_bytes = _model_file(taxonomy_path, FailureTaxonomyV1)
     prediction_manifest_model, prediction_manifest_bytes = _model_file(
@@ -1009,6 +1095,8 @@ def generate_evidence_report(
         artifacts=artifacts,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
+    if not output.parent.is_dir() or output.parent.is_symlink():
+        raise ValueError(f"benchmark report parent must be a real directory: {output.parent}")
     with tempfile.TemporaryDirectory(
         prefix=".ste-benchmark-report-",
         dir=output.parent,
@@ -1018,8 +1106,5 @@ def generate_evidence_report(
         (stage / "metrics.json").write_bytes(metrics_bytes)
         (stage / "report.md").write_bytes(report_bytes)
         (stage / "report-manifest.json").write_bytes(_canonical_json(report_manifest))
-        try:
-            os.rename(stage, output)
-        except OSError as error:
-            raise ValueError(f"cannot publish benchmark report atomically: {error}") from error
+        _publish_report(stage, output)
     return report_manifest

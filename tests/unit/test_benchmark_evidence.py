@@ -418,6 +418,46 @@ def test_report_renders_untrusted_notes_as_indented_code(tmp_path):
     assert "\n    ## Fabricated external result" in report
 
 
+def test_failure_examples_identify_each_system_for_the_same_case():
+    specification = json.loads(SPECIFICATION.read_text())
+    second_system = {
+        **specification["systems"][0],
+        "system_id": "second-failure-fixture-v1",
+    }
+    specification["systems"].append(second_system)
+    spec = BenchmarkSpecV1.model_validate(specification)
+
+    first_failure = json.loads(PREDICTIONS.read_text().splitlines()[1])
+    second_failure = {
+        **first_failure,
+        "system_id": second_system["system_id"],
+    }
+    records = tuple(
+        PredictionRecordV1.model_validate(record) for record in (first_failure, second_failure)
+    )
+    metrics = evidence_module.recompute_metrics(
+        spec,
+        records,
+        spec_sha256="0" * 64,
+        prediction_manifest_sha256="1" * 64,
+        predictions_sha256="2" * 64,
+    )
+
+    report = evidence_module._markdown(spec, metrics, records).decode()
+
+    for system_id in (
+        specification["systems"][0]["system_id"],
+        second_system["system_id"],
+    ):
+        heading = (
+            f"### System `{system_id}` — case `{first_failure['case_id']}`"
+            f" — `{first_failure['failure_code']}`"
+        )
+        assert heading in report
+        assert f"System: `{system_id}`" in report
+    assert report.count(f"Case: `{first_failure['case_id']}`") == 2
+
+
 def test_report_rejects_dataset_manifest_mismatch(tmp_path):
     release = tmp_path / "release"
     shutil.copytree(RELEASE, release)
@@ -464,13 +504,47 @@ def test_report_refuses_existing_output_without_modifying_it(tmp_path):
     assert set(output.iterdir()) == {sentinel}
 
 
+def test_report_refuses_existing_empty_output_directory(tmp_path):
+    output = tmp_path / "report"
+    output.mkdir()
+
+    with pytest.raises(ValueError, match="output path must not exist"):
+        _generate(output)
+
+    assert output.is_dir()
+    assert not list(output.iterdir())
+    assert not list(tmp_path.glob(".ste-benchmark-report-*"))
+
+
+def test_report_refuses_output_directory_created_during_publication(tmp_path, monkeypatch):
+    output = tmp_path / "report"
+    real_rename = evidence_module._rename_no_replace
+
+    def create_destination_then_rename(source, destination):
+        destination.mkdir()
+        real_rename(source, destination)
+
+    monkeypatch.setattr(
+        evidence_module,
+        "_rename_no_replace",
+        create_destination_then_rename,
+    )
+
+    with pytest.raises(ValueError, match="output was created concurrently"):
+        _generate(output)
+
+    assert output.is_dir()
+    assert not list(output.iterdir())
+    assert not list(tmp_path.glob(".ste-benchmark-report-*"))
+
+
 def test_report_publication_failure_leaves_no_partial_output(tmp_path, monkeypatch):
     output = tmp_path / "report"
 
     def fail_rename(source, destination):
         raise OSError("injected atomic publication failure")
 
-    monkeypatch.setattr(evidence_module.os, "rename", fail_rename)
+    monkeypatch.setattr(evidence_module, "_rename_no_replace", fail_rename)
 
     with pytest.raises(ValueError, match="cannot publish benchmark report atomically"):
         _generate(output)

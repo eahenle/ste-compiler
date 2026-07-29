@@ -45,7 +45,11 @@ Claim scope:
 
 ## Uncensored deterministic failure fixtures
 
-### `adversarial_ambiguity` — `frontend.schema_invalid`
+### System `failure-taxonomy-fixture-v1` — case `adversarial_ambiguity` — `frontend.schema_invalid`
+
+System: `failure-taxonomy-fixture-v1`
+
+Case: `adversarial_ambiguity`
 
 Stage: `frontend`
 
@@ -57,7 +61,11 @@ Notes:
 
     Hand-authored invalid-JSON fixture proves frontend failures stop downstream stages.
 
-### `adversarial_unicode_term` — `realizer.unauthorized_symbol`
+### System `failure-taxonomy-fixture-v1` — case `adversarial_unicode_term` — `realizer.unauthorized_symbol`
+
+System: `failure-taxonomy-fixture-v1`
+
+Case: `adversarial_unicode_term`
 
 Stage: `realizer`
 
@@ -69,7 +77,11 @@ Notes:
 
     Hand-authored out-of-set symbol fixture proves realization failures remain distinct from validation.
 
-### `adversarial_tab_casing` — `validator.semantic_rejection`
+### System `failure-taxonomy-fixture-v1` — case `adversarial_tab_casing` — `validator.semantic_rejection`
+
+System: `failure-taxonomy-fixture-v1`
+
+Case: `adversarial_tab_casing`
 
 Stage: `validator`
 
