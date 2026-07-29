@@ -32,6 +32,8 @@ ste-compiler validate-ir data/examples/conditional.yaml
 ste-compiler realize data/examples/sequence.yaml --metadata
 ste-compiler plan-symbols data/examples/warning_pressure.yaml --json
 ste-compiler export-symbolic-corpus data/examples --output training-corpus
+ste-compiler build-demonstration-corpus --output demonstration-corpus
+ste-compiler verify-demonstration-corpus demonstration-corpus
 ste-compiler compile data/examples/warning_pressure.yaml --json
 ste-compiler validate-text data/examples/invalid_semantic.txt --ir data/examples/negative.yaml --json
 ste-compiler glossary check data/demo_terminology.yaml
@@ -48,6 +50,10 @@ offsets, realizes controlled text, and runs the validators. Replay is deliberate
 `offline-replay`; it demonstrates the full compiler boundary without claiming that a model
 extracted the gold IR. `compile-source` exposes the same workflow for an explicit raw-source and
 IR-fixture pair.
+
+`build-demonstration-corpus` reconstructs the licensed, frozen dataset release from packaged
+construction inputs. `verify-demonstration-corpus` independently reconstructs it and requires
+byte-for-byte identity. See [the corpus guide](docs/demonstration-corpus.md).
 
 ## Extension points
 

@@ -158,7 +158,7 @@ class ReproducibilityMetadata(StrictModel):
     frontend_version: str = "0.1.0"
     realizer: str = "deterministic"
     realizer_version: str = "0.1.0"
-    vocabulary_version: str = "demo-1"
+    vocabulary_version: str = "demo-2"
     terminology_version: str = "hydraulic-demo-1"
     validator_profile: str = "strict-demo-1"
 

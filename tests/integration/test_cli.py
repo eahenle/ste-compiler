@@ -181,7 +181,7 @@ def test_cli_preserves_crlf_source_offsets_and_hashes_original_bytes(tmp_path):
         "frontend_version": "0.1.0",
         "realizer": "deterministic",
         "realizer_version": "0.1.0",
-        "vocabulary_version": "demo-1",
+        "vocabulary_version": "demo-2",
         "terminology_version": "hydraulic-demo-1",
         "validator_profile": "strict-demo-1",
     }
@@ -281,6 +281,43 @@ def test_cli_exports_reproducible_symbolic_corpus(tmp_path):
     assert manifest["corpus_sha256"] in result.stdout
     assert str(output / "current" / "corpus.jsonl") in result.stdout
     assert len((output / "current" / "corpus.jsonl").read_text().splitlines()) == 5
+
+
+def test_cli_reconstructs_demonstration_corpus(tmp_path):
+    output = tmp_path / "demonstration-corpus"
+
+    result = runner.invoke(
+        app,
+        ["build-demonstration-corpus", "--output", str(output)],
+    )
+
+    assert result.exit_code == 0, result.output
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["record_count"] == 12
+    assert manifest["split_counts"] == {
+        "adversarial": 3,
+        "test": 3,
+        "train": 4,
+        "validation": 2,
+    }
+    assert manifest["construction_sha256"] in result.stdout
+    assert (output / "dataset-card.md").is_file()
+    assert (output / "checksums.sha256").is_file()
+
+    verified = runner.invoke(
+        app,
+        ["verify-demonstration-corpus", str(output)],
+    )
+    assert verified.exit_code == 0, verified.output
+    assert "Verified 12 records" in verified.stdout
+
+    repeated = runner.invoke(
+        app,
+        ["build-demonstration-corpus", "--output", str(output)],
+    )
+    assert repeated.exit_code == 1
+    assert "output directory must be empty" in repeated.stderr
+    assert "Traceback" not in repeated.output
 
 
 def test_cli_rejects_mismatched_corpus_profile(tmp_path):

@@ -17,8 +17,10 @@ from ste_compiler.results import CompileSourceResult
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.training import (
     TrainingRecordValidationError,
+    build_demonstration_corpus,
     build_training_record,
     export_symbolic_corpus,
+    verify_demonstration_corpus,
 )
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
@@ -229,6 +231,44 @@ def export_corpus(
     typer.echo(
         f"Wrote {manifest['record_count']} records to {output / 'current' / 'corpus.jsonl'} "
         f"(sha256: {manifest['corpus_sha256']})"
+    )
+
+
+@app.command("build-demonstration-corpus")
+def build_corpus_release(
+    output: Annotated[
+        Path,
+        typer.Option(help="Empty output directory for the reconstructed release."),
+    ] = Path("demonstration-corpus-v1"),
+) -> None:
+    """Reconstruct the licensed, split demonstration dataset."""
+
+    construction = DATA_ROOT / "demonstration_corpus/v1/source-construction.json"
+    terminology_path = DATA_ROOT / "demonstration_corpus/v1/terminology.yaml"
+    vocab, terms = resources(terminology=terminology_path)
+    try:
+        manifest = build_demonstration_corpus(construction, output, vocab, terms)
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    typer.echo(
+        f"Wrote {manifest['record_count']} records to {output} "
+        f"(construction sha256: {manifest['construction_sha256']})"
+    )
+
+
+@app.command("verify-demonstration-corpus")
+def verify_corpus_release(release: Path) -> None:
+    """Reconstruct and verify every byte of a demonstration dataset release."""
+
+    try:
+        manifest = verify_demonstration_corpus(release)
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    typer.echo(
+        f"Verified {manifest['record_count']} records in {release} "
+        f"(construction sha256: {manifest['construction_sha256']})"
     )
 
 

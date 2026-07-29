@@ -1,0 +1,39 @@
+version: demonstration-corpus-1
+license: MIT; original demonstration terminology, not ASD-STE100 terminology
+terms:
+- id: hydraulic_pressure
+  canonical_form: hydraulic pressure
+  definition: Pressure in the synthetic demonstration hydraulic system.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [system pressure]
+  source: {type: glossary, reference: demonstration-corpus-1}
+  status: approved
+  version: 1
+- id: shutoff_valve
+  canonical_form: shutoff valve
+  definition: A synthetic valve that stops fluid flow.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [stop valve]
+  source: {type: glossary, reference: demonstration-corpus-1}
+  status: approved
+  version: 1
+- id: access_panel
+  canonical_form: access panel
+  definition: A synthetic removable equipment panel.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [service panel]
+  source: {type: glossary, reference: demonstration-corpus-1}
+  status: approved
+  version: 1
+- id: cafe_area
+  canonical_form: café area
+  definition: A synthetic maintenance area used to exercise Unicode terminology.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [cafe area]
+  source: {type: glossary, reference: demonstration-corpus-1}
+  status: approved
+  version: 1

@@ -1,4 +1,4 @@
-version: demo-1
+version: demo-2
 license: MIT; original demonstration vocabulary, not ASD-STE100 vocabulary
 units:
 - Pa
@@ -18,6 +18,13 @@ structural_tokens:
 - ','
 - ':'
 entries:
+- lemma: tolerance
+  parts_of_speech:
+  - demo
+  meaning_id: demo.tolerance
+  inflections: []
+  example: null
+  forbidden_confusions: []
 - lemma: a
   parts_of_speech:
   - demo
