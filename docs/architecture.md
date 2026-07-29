@@ -39,6 +39,19 @@ PEFT only when the adapter is constructed without injected test doubles. See
 [ADR 0002](adr/0002-decoder-only-lora-symbol-generator.md). No trained adapter or comparative
 result ships with this implementation.
 
+Both architectures also have additive `*-local-bundle` runtime variants for generated mechanics
+artifacts. Their canonical configurations contain external manifest digests and explicit
+`mechanics-smoke` use, never host paths. CLI locator options are untrusted: the verifier captures
+an exact descriptor-relative tree privately, architecture checks bind it to its run manifest, and
+framework loaders receive only the private materialization. Decoder loading separately captures
+and binds the base-model/tokenizer snapshot to the adapter run. Provenance records content
+identities and intended use without leaking machine-local locator paths. Existing Hub-only
+variants and their canonical identities remain unchanged.
+
 ## Trust and reproducibility
 
-Source, YAML, glossary data, and model output are untrusted. There is no template execution or shell interpolation. Version metadata travels with every realization. Tests make no network calls. Current limitations include heuristic POS/voice analysis, no full discourse planner, and metadata-assisted rather than parser-backed semantic alignment.
+Source, YAML, glossary data, artifact locators, and model output are untrusted. There is no template
+execution or shell interpolation. Version and artifact metadata travel with every realization.
+Tests make no network calls. Current limitations include mechanics-only local artifacts, heuristic
+POS/voice analysis, no full discourse planner, and metadata-assisted rather than parser-backed
+semantic alignment.

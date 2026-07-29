@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from ste_compiler.training.config import ArtifactIdentityV1
 
@@ -39,6 +39,18 @@ class EncoderDecoderRealizerConfigV1(StrictRealizerConfigModel):
     num_beams: int = Field(default=1, gt=0, le=MAX_BEAMS)
 
 
+class EncoderDecoderLocalBundleRealizerConfigV1(StrictRealizerConfigModel):
+    """Select one externally content-bound local mechanics checkpoint."""
+
+    schema_version: Literal["ste-realizer-config-v1"]
+    architecture: Literal["encoder-decoder-local-bundle"]
+    artifact_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    intended_use: Literal["mechanics-smoke"]
+    max_source_tokens: int = Field(default=1024, gt=0, le=MAX_SOURCE_TOKENS)
+    max_new_tokens: int = Field(default=256, gt=0, le=MAX_NEW_TOKENS)
+    num_beams: int = Field(default=1, gt=0, le=MAX_BEAMS)
+
+
 class DecoderOnlyLoRARealizerConfigV1(StrictRealizerConfigModel):
     schema_version: Literal["ste-realizer-config-v1"]
     architecture: Literal["decoder-only-lora"]
@@ -49,10 +61,37 @@ class DecoderOnlyLoRARealizerConfigV1(StrictRealizerConfigModel):
     max_symbols: int = Field(default=128, gt=0, le=MAX_SYMBOLS)
 
 
+class DecoderOnlyLoRALocalBundleRealizerConfigV1(StrictRealizerConfigModel):
+    """Select one content-bound local adapter and its exact local base snapshot."""
+
+    schema_version: Literal["ste-realizer-config-v1"]
+    architecture: Literal["decoder-only-lora-local-bundle"]
+    artifact_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    model_snapshot_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    base_model: ArtifactIdentityV1
+    tokenizer: ArtifactIdentityV1
+    intended_use: Literal["mechanics-smoke"]
+    prompt_profile: Literal["decoder-only-symbol-plan-v1"]
+    max_new_tokens: int = Field(default=512, gt=0, le=MAX_NEW_TOKENS)
+    max_symbols: int = Field(default=128, gt=0, le=MAX_SYMBOLS)
+
+    @model_validator(mode="after")
+    def v1_uses_one_base_and_tokenizer_identity(
+        self,
+    ) -> DecoderOnlyLoRALocalBundleRealizerConfigV1:
+        if self.tokenizer != self.base_model:
+            raise ValueError(
+                "decoder-only-lora-local-bundle V1 requires tokenizer to equal base_model"
+            )
+        return self
+
+
 RealizerConfigV1 = Annotated[
     DeterministicRealizerConfigV1
     | EncoderDecoderRealizerConfigV1
-    | DecoderOnlyLoRARealizerConfigV1,
+    | EncoderDecoderLocalBundleRealizerConfigV1
+    | DecoderOnlyLoRARealizerConfigV1
+    | DecoderOnlyLoRALocalBundleRealizerConfigV1,
     Field(discriminator="architecture"),
 ]
 REALIZER_CONFIG_ADAPTER: TypeAdapter[RealizerConfigV1] = TypeAdapter(RealizerConfigV1)

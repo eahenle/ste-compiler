@@ -8,9 +8,15 @@ from dataclasses import dataclass
 from importlib import import_module
 from operator import index
 from pathlib import Path, PureWindowsPath
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
+
+from ste_compiler.training.encoder_decoder import (
+    EncoderDecoderTrainingError,
+    open_verified_encoder_decoder_artifact_bundle,
+)
 
 _COMMIT_REVISION = re.compile(r"[0-9a-f]{40}", re.ASCII)
+_SHA256 = re.compile(r"[0-9a-f]{64}", re.ASCII)
 _HUB_COMPONENT = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?", re.ASCII)
 _SAFE_SNAPSHOT_PATTERNS = [
     "*.codes",
@@ -56,9 +62,6 @@ class _Model(Protocol):
     def generate(self, **kwargs: Any) -> Any: ...
 
 
-ComponentLoader = Callable[["EncoderDecoderConfig"], tuple[_Tokenizer, _Model]]
-
-
 class EncoderDecoderError(RuntimeError):
     """Raised when the encoder-decoder trust boundary cannot be established."""
 
@@ -96,6 +99,36 @@ class EncoderDecoderConfig:
             raise ValueError("max_new_tokens must be positive")
         if self.num_beams < 1:
             raise ValueError("num_beams must be positive")
+
+
+@dataclass(frozen=True)
+class EncoderDecoderLocalBundleConfig:
+    """Content identity, untrusted locator, and bounded settings for a local bundle."""
+
+    artifact_bundle: Path
+    artifact_manifest_sha256: str
+    intended_use: Literal["mechanics-smoke"] = "mechanics-smoke"
+    max_source_tokens: int = 1024
+    max_new_tokens: int = 256
+    num_beams: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.artifact_bundle, Path):
+            raise TypeError("artifact_bundle must be a pathlib.Path locator")
+        if _SHA256.fullmatch(self.artifact_manifest_sha256) is None:
+            raise ValueError("artifact_manifest_sha256 must be 64 lowercase hexadecimal characters")
+        if self.intended_use != "mechanics-smoke":
+            raise ValueError("local encoder-decoder bundles support mechanics-smoke use only")
+        if self.max_source_tokens < 1:
+            raise ValueError("max_source_tokens must be positive")
+        if self.max_new_tokens < 1:
+            raise ValueError("max_new_tokens must be positive")
+        if self.num_beams < 1:
+            raise ValueError("num_beams must be positive")
+
+
+EncoderDecoderRuntimeConfig = EncoderDecoderConfig | EncoderDecoderLocalBundleConfig
+ComponentLoader = Callable[[EncoderDecoderRuntimeConfig], tuple[_Tokenizer, _Model]]
 
 
 def _reject_local_model_id(model_id: str) -> None:
@@ -244,21 +277,36 @@ class TransformersEncoderDecoderSymbolGenerator:
 
     def __init__(
         self,
-        config: EncoderDecoderConfig,
+        config: EncoderDecoderRuntimeConfig,
         *,
         component_loader: ComponentLoader | None = None,
     ):
-        _reject_local_model_id(config.model_id)
         self.config = config
-        self.model_id = f"{config.model_id}@{config.revision}"
-        self.model_revision = config.revision
-        self._component_loader = component_loader or self._load_transformers_components
+        if isinstance(config, EncoderDecoderConfig):
+            _reject_local_model_id(config.model_id)
+            self.model_id = f"{config.model_id}@{config.revision}"
+            self.model_revision: str | None = config.revision
+            default_loader = self._load_transformers_components
+        else:
+            if component_loader is not None:
+                raise ValueError(
+                    "local encoder-decoder bundles do not accept injected component loaders"
+                )
+            self.model_id = f"ste-artifact-bundle:sha256:{config.artifact_manifest_sha256}"
+            self.model_revision = None
+            self.artifact_manifest_sha256 = config.artifact_manifest_sha256
+            self.artifact_intended_use = config.intended_use
+            self.run_manifest_sha256: str | None = None
+            default_loader = self._load_local_bundle_components
+        self._component_loader = component_loader or default_loader
         self._components: tuple[_Tokenizer, _Model] | None = None
 
     @staticmethod
     def _load_transformers_components(
-        config: EncoderDecoderConfig,
+        config: EncoderDecoderRuntimeConfig,
     ) -> tuple[_Tokenizer, _Model]:
+        if not isinstance(config, EncoderDecoderConfig):
+            raise EncoderDecoderError("Hub component loader received a local bundle configuration")
         _reject_local_model_id(config.model_id)
         try:
             transformers = import_module("transformers")
@@ -291,6 +339,84 @@ class TransformersEncoderDecoderSymbolGenerator:
                 "configured encoder-decoder artifacts could not be loaded safely"
             ) from error
         return tokenizer, model
+
+    def _load_local_bundle_components(
+        self,
+        config: EncoderDecoderRuntimeConfig,
+    ) -> tuple[_Tokenizer, _Model]:
+        if not isinstance(config, EncoderDecoderLocalBundleConfig):
+            raise EncoderDecoderError("local bundle component loader received a Hub configuration")
+        try:
+            with open_verified_encoder_decoder_artifact_bundle(
+                config.artifact_bundle,
+                config.artifact_manifest_sha256,
+            ) as verified:
+                if (
+                    config.max_source_tokens
+                    > verified.run_manifest.training_config.max_source_tokens
+                    or config.max_new_tokens
+                    > verified.run_manifest.training_config.max_target_tokens
+                ):
+                    raise EncoderDecoderError(
+                        "runtime token limits exceed the verified training bundle limits"
+                    )
+                try:
+                    transformers = import_module("transformers")
+                except ImportError as error:
+                    raise EncoderDecoderUnavailable(
+                        "install ste-compiler[neural] to use the encoder-decoder adapter"
+                    ) from error
+                common = {
+                    "local_files_only": True,
+                    "trust_remote_code": False,
+                }
+                try:
+                    tokenizer = transformers.AutoTokenizer.from_pretrained(
+                        str(verified.checkpoint_path),
+                        **common,
+                    )
+                    loaded = transformers.AutoModelForSeq2SeqLM.from_pretrained(
+                        str(verified.checkpoint_path),
+                        **common,
+                        use_safetensors=True,
+                        output_loading_info=True,
+                        low_cpu_mem_usage=False,
+                        device_map=None,
+                    )
+                except Exception as error:
+                    raise EncoderDecoderError(
+                        "verified local encoder-decoder bundle could not be loaded safely"
+                    ) from error
+                if (
+                    not isinstance(loaded, tuple)
+                    or len(loaded) != 2
+                    or not isinstance(loaded[1], dict)
+                ):
+                    raise EncoderDecoderError(
+                        "local encoder-decoder loader did not return loading diagnostics"
+                    )
+                model, loading_info = loaded
+                failures = {
+                    key: loading_info.get(key)
+                    for key in (
+                        "missing_keys",
+                        "unexpected_keys",
+                        "mismatched_keys",
+                        "error_msgs",
+                    )
+                    if loading_info.get(key)
+                }
+                if failures:
+                    raise EncoderDecoderError(
+                        "local encoder-decoder checkpoint does not exactly match "
+                        f"the model architecture: {failures}"
+                    )
+                self.run_manifest_sha256 = verified.run_manifest_sha256
+                return tokenizer, model
+        except EncoderDecoderTrainingError as error:
+            raise EncoderDecoderError(
+                f"local encoder-decoder artifact verification failed: {error}"
+            ) from error
 
     @staticmethod
     def _resolve_safe_model_snapshot(
@@ -328,7 +454,8 @@ class TransformersEncoderDecoderSymbolGenerator:
 
     def _get_components(self) -> tuple[_Tokenizer, _Model]:
         if self._components is None:
-            _reject_local_model_id(self.config.model_id)
+            if isinstance(self.config, EncoderDecoderConfig):
+                _reject_local_model_id(self.config.model_id)
             self._components = self._component_loader(self.config)
         return self._components
 

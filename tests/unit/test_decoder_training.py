@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +27,7 @@ from ste_compiler.realizer.decoder_protocol import (
     segmented_symbol_plan_tokens,
 )
 from ste_compiler.training import (
+    ArtifactIdentityV1,
     DecoderLoRATrainingError,
     ReleasedTrainingRecordV1,
     build_decoder_training_example,
@@ -52,6 +55,66 @@ class CharacterTrainingTokenizer:
         assert not clean_up_tokenization_spaces
         special = {self.eos_token_id, self.pad_token_id, self.bos_token_id}
         return "".join(chr(token_id - 2) for token_id in token_ids if token_id not in special)
+
+
+def _write_empty_snapshot_manifest(root: Path) -> tuple[ArtifactIdentityV1, str]:
+    identity = ArtifactIdentityV1(repo_id="example/base", revision="a" * 40)
+    manifest = decoder_training.LocalModelSnapshotManifestV1(
+        schema_version="ste-local-causal-lm-snapshot-v1",
+        fixture_profile="tiny-byte-bpe-gpt2-v1",
+        base_model=identity,
+        tokenizer=identity,
+        artifacts=(),
+    )
+    data = decoder_training._canonical_json(manifest.model_dump(mode="json"), indent=2)
+    (root / decoder_training.MODEL_SNAPSHOT_MANIFEST).write_bytes(data)
+    return identity, hashlib.sha256(data).hexdigest()
+
+
+def test_snapshot_rejects_wrong_external_digest_before_directory_enumeration(
+    tmp_path,
+    monkeypatch,
+):
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    identity, _ = _write_empty_snapshot_manifest(snapshot)
+    for index_value in range(decoder_training.MAX_SNAPSHOT_FILES + 10):
+        (snapshot / f"extra-{index_value}.json").write_text("{}")
+
+    monkeypatch.setattr(
+        decoder_training.os,
+        "scandir",
+        lambda directory_fd: pytest.fail(
+            f"wrong external digest must fail before enumeration: {directory_fd}"
+        ),
+    )
+
+    with pytest.raises(DecoderLoRATrainingError, match="manifest SHA-256 does not match"):
+        decoder_training.read_verified_model_snapshot_for_identities(
+            snapshot,
+            identity,
+            identity,
+            "0" * 64,
+        )
+
+
+def test_snapshot_enumeration_aborts_at_first_surplus_entry(tmp_path):
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    identity, digest = _write_empty_snapshot_manifest(snapshot)
+    for index_value in range(decoder_training.MAX_SNAPSHOT_FILES + 10):
+        (snapshot / f"extra-{index_value}.json").write_text("{}")
+
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match="more files than its manifest declares",
+    ):
+        decoder_training.read_verified_model_snapshot_for_identities(
+            snapshot,
+            identity,
+            identity,
+            digest,
+        )
 
 
 def _record(symbols: str = "PLAN_EXACT_WHITESPACE_V1 WORD_Open") -> ReleasedTrainingRecordV1:
@@ -389,6 +452,66 @@ def test_decoder_preflight_rejects_oversized_sparse_metadata_before_capture(
             root,
             artifact_manifest_sha256(manifest),
         )
+
+
+def test_decoder_verified_bundle_context_preserves_one_private_capture(
+    tmp_path,
+    monkeypatch,
+):
+    digest = "a" * 64
+    run_digest = "b" * 64
+    private_root = tmp_path / "private-capture"
+    run_manifest = SimpleNamespace()
+
+    @contextmanager
+    def captured_bundle(root, expected_digest):
+        assert root == tmp_path / "published"
+        assert expected_digest == digest
+        private_root.mkdir()
+        try:
+            yield SimpleNamespace(
+                path=private_root,
+                manifest=SimpleNamespace(run_manifest_sha256=run_digest),
+                manifest_sha256=digest,
+            )
+        finally:
+            private_root.rmdir()
+
+    monkeypatch.setattr(
+        decoder_training,
+        "_read_decoder_artifact_manifest",
+        lambda root, expected: (SimpleNamespace(), digest),
+    )
+    monkeypatch.setattr(
+        decoder_training,
+        "open_verified_artifact_bundle",
+        captured_bundle,
+    )
+    monkeypatch.setattr(
+        decoder_training,
+        "_runtime_modules",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        decoder_training,
+        "_preflight_verified_decoder_bundle",
+        lambda verified, modules: decoder_training.DecoderLoRAArtifactPreflight(
+            run_manifest=run_manifest,
+            artifact_manifest_sha256=digest,
+        ),
+    )
+
+    with decoder_training.open_verified_decoder_lora_artifact_bundle(
+        tmp_path / "published",
+        digest,
+    ) as verified:
+        assert verified.path == private_root
+        assert verified.path.is_dir()
+        assert verified.run_manifest is run_manifest
+        assert verified.artifact_manifest_sha256 == digest
+        assert verified.run_manifest_sha256 == run_digest
+
+    assert not private_root.exists()
 
 
 class _FakeSafeTensorSlice:

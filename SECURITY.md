@@ -43,5 +43,12 @@ during descriptor-relative capture before framework parsers see a private copy. 
 preflight proves integrity relative to that digest; it does not prove who authorized the digest,
 artifact licensing, or semantic quality.
 
+Local-bundle realizer configurations keep content identities separate from untrusted filesystem
+locators. Runtime loading repeats the exact private capture and architecture cross-checks, disables
+network and remote code, requires safetensors, and never falls back to the caller tree. Decoder
+loading independently binds the adapter run to its exact base-model/tokenizer snapshot. These
+protections establish integrity and structural compatibility only; current local artifacts are
+explicitly limited to mechanics smoke use.
+
 This prototype is not certified for safety-critical use and does not claim ASD-STE100 compliance.
 Passing its validators is not a substitute for technical review.

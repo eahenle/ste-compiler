@@ -5,9 +5,9 @@ strict, versioned realizer configuration. The configuration identifies a realiza
 and its immutable model artifacts; it does not contain source text, IR, credentials, or an
 instruction to download anything.
 
-This is the first runtime-integration slice. It connects the existing constrained neural adapters
-to the compiler CLI while keeping inference cache-only. It does not publish a reference model or
-make a model-quality claim.
+The runtime supports immutable Hub revisions from an existing local cache and content-addressed
+local trainer bundles. Neither mode implicitly downloads artifacts. This does not publish a
+reference model or make a model-quality claim.
 
 ## Configuration contract
 
@@ -20,11 +20,18 @@ The schema is a strict architecture-discriminated union:
 - `deterministic` selects the credential-free reference realizer and has no model identity.
 - `encoder-decoder` identifies one encoder-decoder checkpoint.
 - `decoder-only-lora` identifies a causal base model and one compatible PEFT adapter.
+- `encoder-decoder-local-bundle` identifies one complete encoder trainer bundle by manifest
+  SHA-256 and `mechanics-smoke` intended use.
+- `decoder-only-lora-local-bundle` identifies one decoder adapter bundle and its separately
+  content-bound base snapshot, including exact base-model and tokenizer identities.
 
-Unknown fields are rejected. Neural artifact identities must be Hugging Face Hub repository IDs
-plus full lowercase 40-character commit digests. Local paths, tags, branches, abbreviated hashes,
-blank values, and invalid decoding bounds fail validation. The canonical configuration has a
-SHA-256 identity that is included in compiler provenance.
+Unknown fields are rejected. Hub identities require repository IDs plus full lowercase
+40-character commit digests. Local variants require lowercase 64-character manifest digests.
+Filesystem paths are deliberately forbidden in the canonical configuration: `--artifact-bundle`
+and, for decoder runs, `--model-snapshot` are untrusted operational locators supplied separately.
+Tags, branches, abbreviated hashes, blank values, and invalid decoding bounds fail validation.
+The portable canonical configuration has a SHA-256 identity that is included in compiler
+provenance.
 
 Repository identity is also an authorization boundary. Pinning a commit makes the selected
 revision immutable, but it does not decide whether an operator is permitted to use that repository.
@@ -82,6 +89,39 @@ ste-compiler compile-source \
 
 Omitting `--realizer-config` preserves the deterministic default.
 
+## Content-addressed local-bundle inference
+
+Local-bundle inference first binds the caller's locator to the external digest, copies the exact
+no-follow file inventory into a private materialization, and performs architecture-specific
+validation there. Framework loaders see only that private path. There is no fallback to the
+original directory, Hub resolution, remote model code, or pickle-capable weights.
+
+For encoder-decoder bundles:
+
+```bash
+ste-compiler compile data/examples/warning_pressure.yaml \
+  --realizer-config data/realizers/encoder-decoder-local-bundle-schema-example.yaml \
+  --artifact-bundle path/to/encoder-training-output \
+  --json
+```
+
+For decoder-only LoRA, both the adapter bundle and the exact base snapshot are required:
+
+```bash
+ste-compiler compile data/examples/warning_pressure.yaml \
+  --realizer-config data/realizers/decoder-only-lora-local-bundle-schema-example.yaml \
+  --artifact-bundle path/to/decoder-training-output \
+  --model-snapshot path/to/base-snapshot \
+  --json
+```
+
+The decoder loader cross-checks the adapter run manifest, prompt profile, base and tokenizer
+identities, base-snapshot manifest digest, snapshot inventory, LoRA configuration, and paired LoRA
+tensor structure before local-only Transformers and PEFT loading. Output provenance records the
+portable realizer-config digest, artifact/run/snapshot digests, base revision, explicit
+`mechanics-smoke` use, and `content-addressed-local-bundle` mode. It never records the caller's
+machine-specific locator.
+
 ## Neural output remains untrusted
 
 A realizer configuration changes how a symbolic plan is proposed. It does not weaken the compiler
@@ -97,19 +137,19 @@ never bypasses validation.
 ## Relationship to training artifacts
 
 The two smoke trainers prove offline mechanics, safe serialization, run-manifest provenance,
-content-bound bundle preflight, and reload evaluation. Their generated local checkpoints are test
-artifacts, not automatically authorized runtime inputs. Runtime selection deliberately continues
-to reject arbitrary local model paths.
+content-bound bundle preflight, reload evaluation, and content-addressed runtime loading. Their
+generated local checkpoints remain test artifacts, not automatically authorized production
+inputs. Arbitrary local paths without the external identities and exact cross-checks are rejected.
 
 `ste-compiler preflight-artifact` verifies a trainer output against an externally retained
 `artifact-manifest.json` SHA-256. It performs an exact private capture and architecture-specific
 loadability checks without network access. This standalone preflight does not make the bundle a
 runtime input and does not establish license authorization or model quality.
 
-Promoting a training result to a runtime artifact requires a separate publication step that assigns
-an immutable repository revision, records checksums and licensing, and produces a reviewed realizer
-configuration. Direct content-addressed loading of local trainer outputs is not part of
-`ste-realizer-config-v1` runtime integration yet.
+Loading proves that the supplied bytes match the reviewed content identities and are structurally
+safe for the selected mechanics workflow. Promotion still requires a publication step that records
+authorization, licensing, model/data cards, intended use, benchmark evidence, and reviewed external
+digests.
 
 ## Explicit non-goals
 
@@ -117,11 +157,9 @@ This slice does not provide:
 
 - a network-enabled fetch command;
 - a content-digest artifact registry;
-- direct inference from an unpublished local training-output directory;
 - selected or published reference checkpoints;
 - benchmark predictions, constrained/unconstrained comparisons, figures, or quality claims; or
 - a live semantic frontend.
 
-The next artifact slice can connect verified local bundles to a distinct content-addressed runtime
-configuration without weakening the existing Hub-only identities. Explicit fetch, reference model
-selection, artifact publication, and benchmark reproduction remain later release gates.
+Explicit fetch, reference model selection, artifact publication, benchmark reproduction, and
+production-neutral large-model snapshot packaging remain later release gates.

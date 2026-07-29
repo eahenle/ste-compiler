@@ -75,14 +75,18 @@ class NeuralRealizer:
             "whitespace_alignment": "exact-layout-v1",
             "whitespace_layout_preserved": str(whitespace_layout_preserved).lower(),
         }
-        for revision_field in (
+        for provenance_field in (
             "model_revision",
             "base_model_revision",
             "adapter_revision",
+            "artifact_manifest_sha256",
+            "run_manifest_sha256",
+            "model_snapshot_manifest_sha256",
+            "artifact_intended_use",
         ):
-            revision = getattr(self.generator, revision_field, None)
-            if isinstance(revision, str):
-                metadata[revision_field] = revision
+            value = getattr(self.generator, provenance_field, None)
+            if isinstance(value, str):
+                metadata[provenance_field] = value
         return RealizationResult(
             text=aligned.text,
             mappings=aligned.mappings,

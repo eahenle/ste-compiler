@@ -23,6 +23,7 @@ PROMPT_PROFILE = DECODER_PROMPT_PROFILE
 ADAPTER_CONFIG = "adapter_config.json"
 SAFE_ADAPTER_WEIGHTS = "adapter_model.safetensors"
 _COMMIT_REVISION = re.compile(r"[0-9a-f]{40}", re.ASCII)
+_SHA256 = re.compile(r"[0-9a-f]{64}", re.ASCII)
 
 
 def _is_local_artifact_id(identifier: str) -> bool:
@@ -89,6 +90,38 @@ class DecoderOnlyLoRAConfig:
                 raise ValueError(
                     f"{field_name} must be a full lowercase 40-character commit digest"
                 )
+        if self.max_new_tokens <= 0:
+            raise ValueError("max_new_tokens must be positive")
+        if self.max_symbols <= 0:
+            raise ValueError("max_symbols must be positive")
+
+
+@dataclass(frozen=True)
+class _LoadedDecoderOnlyLoRAConfig:
+    """Inference bounds and content provenance for already-loaded local components."""
+
+    base_model_id: str
+    base_model_revision: str
+    artifact_manifest_sha256: str
+    run_manifest_sha256: str
+    model_snapshot_manifest_sha256: str
+    max_new_tokens: int
+    max_symbols: int
+
+    def __post_init__(self) -> None:
+        if not self.base_model_id.strip():
+            raise ValueError("base_model_id must not be empty")
+        if _COMMIT_REVISION.fullmatch(self.base_model_revision) is None:
+            raise ValueError(
+                "base_model_revision must be a full lowercase 40-character commit digest"
+            )
+        for field_name in (
+            "artifact_manifest_sha256",
+            "run_manifest_sha256",
+            "model_snapshot_manifest_sha256",
+        ):
+            if _SHA256.fullmatch(getattr(self, field_name)) is None:
+                raise ValueError(f"{field_name} must be a lowercase 64-character SHA-256 digest")
         if self.max_new_tokens <= 0:
             raise ValueError("max_new_tokens must be positive")
         if self.max_symbols <= 0:
@@ -248,6 +281,8 @@ def _integer_sequence(value: object, *, batched: bool = False) -> list[int]:
 class DecoderOnlyLoRASymbolGenerator:
     """Generate an allowlisted symbol plan with a pinned PEFT LoRA adapter."""
 
+    config: DecoderOnlyLoRAConfig | _LoadedDecoderOnlyLoRAConfig
+
     def __init__(
         self,
         config: DecoderOnlyLoRAConfig,
@@ -258,31 +293,96 @@ class DecoderOnlyLoRASymbolGenerator:
         if (tokenizer is None) != (model is None):
             raise ValueError("tokenizer and model must be supplied together")
         self.config = config
+        self._model_id = (
+            f"{config.base_model_id}@{config.base_model_revision}"
+            f"+peft:{config.adapter_id}@{config.adapter_revision}"
+        )
+        self._base_model_revision = config.base_model_revision
+        self._adapter_revision: str | None = config.adapter_revision
+        self._artifact_manifest_sha256: str | None = None
+        self._run_manifest_sha256: str | None = None
+        self._model_snapshot_manifest_sha256: str | None = None
         if tokenizer is None:
             tokenizer, model = self._load_runtime(config)
         self._tokenizer = cast(_Tokenizer, tokenizer)
         self._model = model
 
+    @classmethod
+    def from_loaded_components(
+        cls,
+        *,
+        tokenizer: object,
+        model: object,
+        base_model_id: str,
+        base_model_revision: str,
+        artifact_manifest_sha256: str,
+        run_manifest_sha256: str,
+        model_snapshot_manifest_sha256: str,
+        max_new_tokens: int = 512,
+        max_symbols: int = 128,
+    ) -> DecoderOnlyLoRASymbolGenerator:
+        """Construct a generator from safely loaded local components without fake Hub identity."""
+
+        config = _LoadedDecoderOnlyLoRAConfig(
+            base_model_id=base_model_id,
+            base_model_revision=base_model_revision,
+            artifact_manifest_sha256=artifact_manifest_sha256,
+            run_manifest_sha256=run_manifest_sha256,
+            model_snapshot_manifest_sha256=model_snapshot_manifest_sha256,
+            max_new_tokens=max_new_tokens,
+            max_symbols=max_symbols,
+        )
+        instance = cls.__new__(cls)
+        instance.config = config
+        instance._model_id = (
+            f"{base_model_id}@{base_model_revision}"
+            f"+peft-bundle:sha256:{artifact_manifest_sha256}"
+            f"+model-snapshot:sha256:{model_snapshot_manifest_sha256}"
+        )
+        instance._base_model_revision = base_model_revision
+        instance._adapter_revision = None
+        instance._artifact_manifest_sha256 = artifact_manifest_sha256
+        instance._run_manifest_sha256 = run_manifest_sha256
+        instance._model_snapshot_manifest_sha256 = model_snapshot_manifest_sha256
+        instance._tokenizer = cast(_Tokenizer, tokenizer)
+        instance._model = model
+        return instance
+
     @property
     def model_id(self) -> str:
         """Revision-bearing provenance included in NeuralRealizer metadata."""
 
-        return (
-            f"{self.config.base_model_id}@{self.config.base_model_revision}"
-            f"+peft:{self.config.adapter_id}@{self.config.adapter_revision}"
-        )
+        return self._model_id
 
     @property
     def base_model_revision(self) -> str:
         """Exact base-model commit digest included in realization metadata."""
 
-        return self.config.base_model_revision
+        return self._base_model_revision
 
     @property
-    def adapter_revision(self) -> str:
+    def adapter_revision(self) -> str | None:
         """Exact PEFT adapter commit digest included in realization metadata."""
 
-        return self.config.adapter_revision
+        return self._adapter_revision
+
+    @property
+    def artifact_manifest_sha256(self) -> str | None:
+        """Exact local adapter-bundle identity, when loaded content-addressably."""
+
+        return self._artifact_manifest_sha256
+
+    @property
+    def run_manifest_sha256(self) -> str | None:
+        """Exact decoder run-manifest identity, when loaded from a local bundle."""
+
+        return self._run_manifest_sha256
+
+    @property
+    def model_snapshot_manifest_sha256(self) -> str | None:
+        """Exact separately authorized base-model snapshot identity."""
+
+        return self._model_snapshot_manifest_sha256
 
     @staticmethod
     def _load_runtime(config: DecoderOnlyLoRAConfig) -> tuple[object, object]:

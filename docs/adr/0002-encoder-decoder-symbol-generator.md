@@ -63,5 +63,9 @@ including for omissions and reordered sentences.
   before loading. Checkpoint evaluation likewise loads only a private no-follow materialization and
   requires an externally retained run-manifest digest. It is a pipeline test, not a
   parameter-count, quality, benchmark, or consumer-GPU result.
+- An additive local-bundle runtime can reload that mechanics checkpoint when a portable config
+  supplies its external artifact-manifest digest and the CLI supplies an untrusted locator.
+  Verification and framework loading use one private exact capture; the Hub-only contract remains
+  unchanged.
 - This slice ships no trained checkpoint or reference-run result. Those require an explicitly
   selected public base model, a pinned corpus manifest, and a separately reported experiment.
