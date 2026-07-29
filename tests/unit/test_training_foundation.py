@@ -316,6 +316,8 @@ def _resign_release(release: Path, artifact_path: str) -> CorpusSelectionV1:
     identity = next(item for item in manifest["artifacts"] if item["path"] == artifact_path)
     identity["sha256"] = _sha256(artifact_data)
     identity["bytes"] = len(artifact_data)
+    if artifact_path == "source-construction.json":
+        manifest["construction_sha256"] = identity["sha256"]
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     )
@@ -387,7 +389,7 @@ def test_release_reader_revalidates_source_spans(tmp_path):
     )
     selection = _resign_release(release, "train.jsonl")
 
-    with pytest.raises(ValueError, match="source span for the wrong source"):
+    with pytest.raises(ValueError, match="IR does not match its construction input"):
         read_training_release(release, selection)
 
 
@@ -454,4 +456,77 @@ def test_release_reader_rejects_manifest_declared_oversized_artifact(tmp_path):
     selection = _selection(manifest_sha256=_sha256(manifest_path.read_bytes()))
 
     with pytest.raises(ValueError, match="declares an oversized artifact"):
+        read_training_release(release, selection)
+
+
+def test_release_reader_rematerializes_ir_from_construction(tmp_path):
+    release = tmp_path / "release"
+    shutil.copytree(RELEASE, release)
+    train_path = release / "train.jsonl"
+    records = [json.loads(line) for line in train_path.read_text().splitlines()]
+    records[0]["ir"]["title"] = "Altered gold IR"
+    records[0]["serialized_ir"] = canonical_document_json(Document.model_validate(records[0]["ir"]))
+    train_path.write_text(
+        "".join(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+            for record in records
+        )
+    )
+    selection = _resign_release(release, "train.jsonl")
+
+    with pytest.raises(ValueError, match="IR does not match its construction input"):
+        read_training_release(release, selection)
+
+
+def test_release_reader_rechecks_normalized_source_leakage(tmp_path):
+    release = tmp_path / "release"
+    shutil.copytree(RELEASE, release)
+    train_record = json.loads((release / "train.jsonl").read_text().splitlines()[0])
+    validation_path = release / "validation.jsonl"
+    validation_records = [json.loads(line) for line in validation_path.read_text().splitlines()]
+    validation_records[0]["source"]["text"] = train_record["source"]["text"]
+    validation_records[0]["source"]["sha256"] = _sha256(train_record["source"]["text"].encode())
+    validation_path.write_text(
+        "".join(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+            for record in validation_records
+        )
+    )
+    selection = _resign_release(release, "validation.jsonl")
+
+    with pytest.raises(ValueError, match="normalized source duplicate crosses splits"):
+        read_training_release(release, selection)
+
+
+def test_release_reader_rechecks_compositional_leakage(tmp_path):
+    release = tmp_path / "release"
+    shutil.copytree(RELEASE, release)
+    train_record = json.loads((release / "train.jsonl").read_text().splitlines()[0])
+    test_path = release / "test.jsonl"
+    test_records = [json.loads(line) for line in test_path.read_text().splitlines()]
+    test_records[0]["features"] = train_record["features"]
+    test_path.write_text(
+        "".join(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+            for record in test_records
+        )
+    )
+    selection = _resign_release(release, "test.jsonl")
+
+    with pytest.raises(ValueError, match="evaluation compositions duplicate training"):
+        read_training_release(release, selection)
+
+
+def test_release_reader_revalidates_construction_resource_provenance(tmp_path):
+    release = tmp_path / "release"
+    shutil.copytree(RELEASE, release)
+    construction_path = release / "source-construction.json"
+    construction = json.loads(construction_path.read_text())
+    construction["provenance"]["vocabulary"]["sha256"] = "0" * 64
+    construction_path.write_text(
+        json.dumps(construction, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    selection = _resign_release(release, "source-construction.json")
+
+    with pytest.raises(ValueError, match="vocabulary SHA-256"):
         read_training_release(release, selection)

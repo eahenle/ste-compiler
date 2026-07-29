@@ -192,7 +192,7 @@ def _source_span(record: ConstructionRecord, node_id: str) -> dict[str, object]:
     }
 
 
-def _materialize_document(
+def materialize_construction_document(
     record: ConstructionRecord,
     vocabulary: Vocabulary,
     terminology: TerminologyRegistry,
@@ -358,12 +358,12 @@ def document_features(document: Document, source_text: str) -> tuple[str, ...]:
     return tuple(sorted(features))
 
 
-def _normalized_source(source_text: str) -> str:
+def normalized_source(source_text: str) -> str:
     normalized = unicodedata.normalize("NFKC", source_text).casefold()
     return " ".join(normalized.split())
 
 
-def _composition(features: tuple[str, ...]) -> tuple[str, ...]:
+def feature_composition(features: tuple[str, ...]) -> tuple[str, ...]:
     prefixes = (
         "causal_relation",
         "condition",
@@ -394,7 +394,7 @@ def _resource_artifacts(
     }
 
 
-def _validate_provenance(
+def validate_construction_provenance(
     construction: CorpusConstruction,
     vocabulary: Vocabulary,
     terminology: TerminologyRegistry,
@@ -498,7 +498,7 @@ def build_demonstration_corpus(
     if len({record.source_id for record in construction.records}) != len(construction.records):
         raise ValueError("construction records must have unique source ids")
     resource_artifacts = _resource_artifacts(vocabulary, terminology)
-    _validate_provenance(
+    validate_construction_provenance(
         construction,
         vocabulary,
         terminology,
@@ -517,7 +517,11 @@ def build_demonstration_corpus(
 
     for source_record in construction.records:
         try:
-            document = _materialize_document(source_record, vocabulary, terminology)
+            document = materialize_construction_document(
+                source_record,
+                vocabulary,
+                terminology,
+            )
         except TypeError as error:
             raise ValueError(
                 f"invalid construction record {source_record.id!r}: {error}"
@@ -528,7 +532,7 @@ def build_demonstration_corpus(
             coverage[feature] += 1
             feature_splits[feature].add(source_record.split)
 
-        normalized = _normalized_source(source_record.source_text)
+        normalized = normalized_source(source_record.source_text)
         previous = normalized_sources.get(normalized)
         if previous is not None and previous[1] != source_record.split:
             raise ValueError(
@@ -540,7 +544,7 @@ def build_demonstration_corpus(
             raise ValueError(f"document id {document.id!r} crosses splits")
         document_splits[document.id] = source_record.split
 
-        composition = _composition(features)
+        composition = feature_composition(features)
         if source_record.split == "train":
             train_compositions.add(composition)
         elif source_record.split in {"test", "adversarial"}:

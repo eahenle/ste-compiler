@@ -24,6 +24,10 @@ from .release import (
     EXPECTED_RELEASE_FILES,
     CorpusConstruction,
     document_features,
+    feature_composition,
+    materialize_construction_document,
+    normalized_source,
+    validate_construction_provenance,
 )
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -409,6 +413,37 @@ def read_training_release(
         )
     except ValueError as error:
         raise ValueError(f"training release resources are invalid: {error}") from error
+    validate_construction_provenance(
+        construction,
+        vocabulary,
+        terminology,
+        {
+            "vocabulary.json": files["vocabulary.json"],
+            "terminology.json": files["terminology.json"],
+        },
+    )
+    normalized_sources: dict[str, tuple[str, Split]] = {}
+    train_compositions = {feature_composition(record.features) for record in records["train"]}
+    leaked_compositions: list[str] = []
+    for split in SPLIT_NAMES:
+        for record in records[split]:
+            normalized = normalized_source(record.source.text)
+            previous = normalized_sources.get(normalized)
+            if previous is not None and previous[1] != record.split:
+                raise ValueError(
+                    "training release normalized source duplicate crosses splits: "
+                    f"{previous[0]} and {record.record_id}"
+                )
+            normalized_sources[normalized] = (record.record_id, record.split)
+            if split in {"test", "adversarial"} and (
+                feature_composition(record.features) in train_compositions
+            ):
+                leaked_compositions.append(record.record_id)
+    if leaked_compositions:
+        raise ValueError(
+            "training release evaluation compositions duplicate training compositions: "
+            + ", ".join(leaked_compositions)
+        )
     for split in SPLIT_NAMES:
         for record in records[split]:
             construction_record = construction_by_id[record.record_id]
@@ -421,6 +456,22 @@ def read_training_release(
                 raise ValueError(
                     f"training release record {record.record_id!r} does not match its "
                     "construction source"
+                )
+            try:
+                constructed_document = materialize_construction_document(
+                    construction_record,
+                    vocabulary,
+                    terminology,
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"training release record {record.record_id!r} has invalid "
+                    f"construction IR: {error}"
+                ) from error
+            if canonical_document_json(constructed_document) != record.serialized_ir:
+                raise ValueError(
+                    f"training release record {record.record_id!r} IR does not match "
+                    "its construction input"
                 )
             _validate_source_spans(record)
             if document_features(record.ir, record.source.text) != record.features:
