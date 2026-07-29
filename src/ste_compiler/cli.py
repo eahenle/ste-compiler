@@ -178,6 +178,28 @@ def compile_replayed_source(
     return source_bytes, source_text, document, result, report
 
 
+def configured_realizer(
+    realizer_config: Path | None,
+    *,
+    artifact_bundle: Path | None = None,
+    model_snapshot: Path | None = None,
+) -> Realizer | None:
+    """Load one portable config and bind any untrusted local artifact locators."""
+
+    if realizer_config is None:
+        if artifact_bundle is not None or model_snapshot is not None:
+            raise ValueError("--artifact-bundle and --model-snapshot require --realizer-config")
+        return None
+    config = load_realizer_config(realizer_config)
+    if artifact_bundle is None and model_snapshot is None:
+        return build_realizer(config)
+    return build_realizer(
+        config,
+        artifact_bundle=artifact_bundle,
+        model_snapshot=model_snapshot,
+    )
+
+
 def emit_source_compilation(
     source_bytes: bytes,
     source_id: str,
@@ -209,12 +231,14 @@ def run_replay_compilation(
     json_output: bool,
     *,
     realizer_config: Path | None = None,
+    artifact_bundle: Path | None = None,
+    model_snapshot: Path | None = None,
 ) -> None:
     try:
-        selected_realizer = (
-            build_realizer(load_realizer_config(realizer_config))
-            if realizer_config is not None
-            else None
+        selected_realizer = configured_realizer(
+            realizer_config,
+            artifact_bundle=artifact_bundle,
+            model_snapshot=model_snapshot,
         )
         source_bytes, _, document, result, report = compile_replayed_source(
             source,
@@ -382,7 +406,11 @@ def validate_realizer_configuration(
         "schema_version": config.schema_version,
         "architecture": config.architecture,
         "config_sha256": realizer_config_sha256(config),
-        "artifact_mode": "offline-cache-only",
+        "artifact_mode": (
+            "content-addressed-local-bundle"
+            if config.architecture.endswith("-local-bundle")
+            else "offline-cache-only"
+        ),
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -731,15 +759,29 @@ def compile(
         Path | None,
         typer.Option(help="Strict offline realizer configuration."),
     ] = None,
+    artifact_bundle: Annotated[
+        Path | None,
+        typer.Option(
+            "--artifact-bundle",
+            help="Untrusted local bundle locator; content identity comes from the realizer config.",
+        ),
+    ] = None,
+    model_snapshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--model-snapshot",
+            help="Untrusted local decoder base-snapshot locator; identity comes from the config.",
+        ),
+    ] = None,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     if frontend != "manual":
         raise typer.BadParameter("Only the offline manual frontend is configured.")
     try:
-        selected_realizer = (
-            build_realizer(load_realizer_config(realizer_config))
-            if realizer_config is not None
-            else None
+        selected_realizer = configured_realizer(
+            realizer_config,
+            artifact_bundle=artifact_bundle,
+            model_snapshot=model_snapshot,
         )
         doc = load_document(source)
         vocab, terms = resources()
@@ -784,6 +826,20 @@ def compile_source(
         Path | None,
         typer.Option(help="Strict offline realizer configuration."),
     ] = None,
+    artifact_bundle: Annotated[
+        Path | None,
+        typer.Option(
+            "--artifact-bundle",
+            help="Untrusted local bundle locator; content identity comes from the realizer config.",
+        ),
+    ] = None,
+    model_snapshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--model-snapshot",
+            help="Untrusted local decoder base-snapshot locator; identity comes from the config.",
+        ),
+    ] = None,
     source_id: Annotated[
         str | None,
         typer.Option(help="Expected source_span source_id; defaults to the source filename."),
@@ -807,6 +863,8 @@ def compile_source(
         expected_source_id,
         json_output,
         realizer_config=realizer_config,
+        artifact_bundle=artifact_bundle,
+        model_snapshot=model_snapshot,
     )
 
 

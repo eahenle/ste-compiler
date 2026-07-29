@@ -94,9 +94,22 @@ def test_cli_validates_and_prints_strict_realizer_config_schema():
     assert schema["discriminator"]["propertyName"] == "architecture"
     assert set(schema["discriminator"]["mapping"]) == {
         "decoder-only-lora",
+        "decoder-only-lora-local-bundle",
         "deterministic",
         "encoder-decoder",
+        "encoder-decoder-local-bundle",
     }
+
+    local_validated = runner.invoke(
+        app,
+        [
+            "validate-realizer-config",
+            str(ROOT / "data/realizers/encoder-decoder-local-bundle-schema-example.yaml"),
+            "--json",
+        ],
+    )
+    assert local_validated.exit_code == 0, local_validated.output
+    assert json.loads(local_validated.stdout)["artifact_mode"] == ("content-addressed-local-bundle")
 
 
 @pytest.mark.parametrize(
@@ -608,6 +621,102 @@ def test_cli_rejects_invalid_realizer_config_without_traceback(tmp_path):
     assert result.exit_code == 1
     assert "revision" in result.stderr
     assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        [
+            "compile",
+            str(ROOT / "data/examples/negative.yaml"),
+        ],
+        [
+            "compile-source",
+            str(ROOT / "data/end_to_end/hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(ROOT / "data/end_to_end/hydraulic_warning.ir.yaml"),
+        ],
+    ],
+)
+def test_cli_rejects_local_artifact_locators_without_portable_config(command, tmp_path):
+    result = runner.invoke(
+        app,
+        [*command, "--artifact-bundle", str(tmp_path / "bundle")],
+    )
+
+    assert result.exit_code == 1
+    assert "require --realizer-config" in result.stderr
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("architecture", "config_payload", "include_snapshot"),
+    [
+        (
+            "encoder-decoder-local-bundle",
+            {
+                "schema_version": "ste-realizer-config-v1",
+                "architecture": "encoder-decoder-local-bundle",
+                "artifact_manifest_sha256": "a" * 64,
+                "intended_use": "mechanics-smoke",
+            },
+            False,
+        ),
+        (
+            "decoder-only-lora-local-bundle",
+            {
+                "schema_version": "ste-realizer-config-v1",
+                "architecture": "decoder-only-lora-local-bundle",
+                "artifact_manifest_sha256": "a" * 64,
+                "model_snapshot_manifest_sha256": "b" * 64,
+                "base_model": {"repo_id": "example/base", "revision": "c" * 40},
+                "tokenizer": {"repo_id": "example/base", "revision": "c" * 40},
+                "intended_use": "mechanics-smoke",
+                "prompt_profile": "decoder-only-symbol-plan-v1",
+            },
+            True,
+        ),
+    ],
+)
+def test_cli_keeps_local_locators_outside_config_and_routes_them_explicitly(
+    architecture,
+    config_payload,
+    include_snapshot,
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / f"{architecture}.json"
+    config_path.write_text(json.dumps(config_payload), encoding="utf-8")
+    bundle = tmp_path / "bundle"
+    snapshot = tmp_path / "snapshot"
+    captured = {}
+
+    def construct(config, **locators):
+        captured["config"] = config
+        captured["locators"] = locators
+        return DeterministicRealizer()
+
+    monkeypatch.setattr(cli_module, "build_realizer", construct)
+    command = [
+        "compile",
+        str(ROOT / "data/examples/negative.yaml"),
+        "--realizer-config",
+        str(config_path),
+        "--artifact-bundle",
+        str(bundle),
+        "--json",
+    ]
+    if include_snapshot:
+        command.extend(["--model-snapshot", str(snapshot)])
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 0, result.output
+    assert captured["config"].architecture == architecture
+    assert captured["locators"]["artifact_bundle"] == bundle
+    assert captured["locators"]["model_snapshot"] == (snapshot if include_snapshot else None)
+    assert "artifact_bundle" not in captured["config"].model_fields_set
+    assert "model_snapshot" not in captured["config"].model_fields_set
 
 
 def test_cli_exports_symbolic_training_record():

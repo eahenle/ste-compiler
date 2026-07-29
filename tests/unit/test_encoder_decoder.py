@@ -1,3 +1,5 @@
+import shutil
+from contextlib import contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,7 @@ from ste_compiler.realizer import (
     DeterministicRealizer,
     EncoderDecoderConfig,
     EncoderDecoderError,
+    EncoderDecoderLocalBundleConfig,
     EncoderDecoderUnavailable,
     InvalidSymbolGeneration,
     NeuralRealizer,
@@ -468,6 +471,259 @@ def test_encoder_decoder_configuration_accepts_hub_repository_id():
     config = EncoderDecoderConfig(model_id="organization/model", revision=MODEL_REVISION)
 
     assert config.model_id == "organization/model"
+
+
+def test_local_bundle_configuration_binds_locator_digest_and_mechanics_use(tmp_path):
+    config = EncoderDecoderLocalBundleConfig(
+        artifact_bundle=tmp_path / "bundle",
+        artifact_manifest_sha256="a" * 64,
+        max_source_tokens=321,
+        max_new_tokens=123,
+        num_beams=2,
+    )
+
+    assert config.artifact_bundle == tmp_path / "bundle"
+    assert config.artifact_manifest_sha256 == "a" * 64
+    assert config.intended_use == "mechanics-smoke"
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"artifact_manifest_sha256": "A" * 64}, "64 lowercase"),
+        ({"artifact_manifest_sha256": "a" * 63}, "64 lowercase"),
+        ({"intended_use": "production"}, "mechanics-smoke"),
+        ({"max_source_tokens": 0}, "max_source_tokens"),
+        ({"max_new_tokens": 0}, "max_new_tokens"),
+        ({"num_beams": 0}, "num_beams"),
+    ],
+)
+def test_local_bundle_configuration_rejects_invalid_identity_and_bounds(
+    tmp_path,
+    updates,
+    message,
+):
+    values = {
+        "artifact_bundle": tmp_path / "bundle",
+        "artifact_manifest_sha256": "a" * 64,
+        **updates,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        EncoderDecoderLocalBundleConfig(**values)
+
+
+def test_local_bundle_cannot_bypass_verification_with_injected_components(tmp_path):
+    config = EncoderDecoderLocalBundleConfig(
+        artifact_bundle=tmp_path / "nonexistent",
+        artifact_manifest_sha256="a" * 64,
+    )
+
+    with pytest.raises(ValueError, match="do not accept injected component loaders"):
+        TransformersEncoderDecoderSymbolGenerator(
+            config,
+            component_loader=lambda runtime_config: (object(), object()),
+        )
+
+
+def test_local_bundle_loader_uses_scoped_private_path_safe_kwargs_and_no_hub(
+    tmp_path,
+    monkeypatch,
+):
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    private = tmp_path / "private"
+    digest = "a" * 64
+    run_digest = "b" * 64
+    calls = []
+    tokenizer = SimpleNamespace()
+    model = SimpleNamespace()
+
+    @contextmanager
+    def open_bundle(root, expected_digest):
+        assert root == caller
+        assert expected_digest == digest
+        private.mkdir()
+        (private / "config.json").write_text("{}")
+        try:
+            yield SimpleNamespace(
+                checkpoint_path=private,
+                run_manifest=SimpleNamespace(
+                    training_config=SimpleNamespace(
+                        max_source_tokens=2048,
+                        max_target_tokens=512,
+                    )
+                ),
+                run_manifest_sha256=run_digest,
+            )
+        finally:
+            shutil.rmtree(private)
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(path, **kwargs):
+            calls.append(("tokenizer", Path(path), kwargs))
+            assert Path(path).is_dir()
+            assert Path(path) != caller
+            return tokenizer
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(path, **kwargs):
+            calls.append(("model", Path(path), kwargs))
+            assert Path(path).is_dir()
+            assert Path(path) != caller
+            return model, {}
+
+    def load_module(name):
+        calls.append(("import", name))
+        if name == "transformers":
+            return SimpleNamespace(
+                AutoTokenizer=AutoTokenizer,
+                AutoModelForSeq2SeqLM=AutoModel,
+            )
+        raise AssertionError(f"local bundle loader must not import {name}")
+
+    monkeypatch.setattr(
+        encoder_decoder,
+        "open_verified_encoder_decoder_artifact_bundle",
+        open_bundle,
+    )
+    monkeypatch.setattr(encoder_decoder, "import_module", load_module)
+    config = EncoderDecoderLocalBundleConfig(
+        artifact_bundle=caller,
+        artifact_manifest_sha256=digest,
+        max_source_tokens=1024,
+        max_new_tokens=256,
+    )
+    generator = TransformersEncoderDecoderSymbolGenerator(config)
+
+    assert generator._get_components() == (tokenizer, model)
+    assert not private.exists()
+    assert generator.model_id == f"ste-artifact-bundle:sha256:{digest}"
+    assert generator.model_revision is None
+    assert generator.artifact_manifest_sha256 == digest
+    assert generator.artifact_intended_use == "mechanics-smoke"
+    assert generator.run_manifest_sha256 == run_digest
+    assert calls == [
+        ("import", "transformers"),
+        (
+            "tokenizer",
+            private,
+            {"local_files_only": True, "trust_remote_code": False},
+        ),
+        (
+            "model",
+            private,
+            {
+                "local_files_only": True,
+                "trust_remote_code": False,
+                "use_safetensors": True,
+                "output_loading_info": True,
+                "low_cpu_mem_usage": False,
+                "device_map": None,
+            },
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("loaded", "message"),
+    [
+        (object(), "loading diagnostics"),
+        ((object(), {"missing_keys": ["decoder.weight"]}), "does not exactly match"),
+        ((object(), {"unexpected_keys": ["head.bias"]}), "does not exactly match"),
+        ((object(), {"mismatched_keys": [("x", "y")]}), "does not exactly match"),
+        ((object(), {"error_msgs": ["invalid"]}), "does not exactly match"),
+    ],
+)
+def test_local_bundle_loader_rejects_missing_or_nonempty_diagnostics(
+    tmp_path,
+    monkeypatch,
+    loaded,
+    message,
+):
+    private = tmp_path / "private"
+    private.mkdir()
+
+    @contextmanager
+    def open_bundle(root, expected_digest):
+        del root, expected_digest
+        yield SimpleNamespace(
+            checkpoint_path=private,
+            run_manifest=SimpleNamespace(
+                training_config=SimpleNamespace(
+                    max_source_tokens=2048,
+                    max_target_tokens=512,
+                )
+            ),
+            run_manifest_sha256="b" * 64,
+        )
+
+    module = SimpleNamespace(
+        AutoTokenizer=SimpleNamespace(from_pretrained=lambda *args, **kwargs: object()),
+        AutoModelForSeq2SeqLM=SimpleNamespace(from_pretrained=lambda *args, **kwargs: loaded),
+    )
+    monkeypatch.setattr(
+        encoder_decoder,
+        "open_verified_encoder_decoder_artifact_bundle",
+        open_bundle,
+    )
+    monkeypatch.setattr(
+        encoder_decoder,
+        "import_module",
+        lambda name: module if name == "transformers" else pytest.fail("Hub fallback is forbidden"),
+    )
+    generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderLocalBundleConfig(
+            artifact_bundle=tmp_path / "caller",
+            artifact_manifest_sha256="a" * 64,
+        )
+    )
+
+    with pytest.raises(EncoderDecoderError, match=message):
+        generator._get_components()
+
+
+def test_local_bundle_loader_rejects_runtime_limits_beyond_verified_training(
+    tmp_path,
+    monkeypatch,
+):
+    @contextmanager
+    def open_bundle(root, expected_digest):
+        del root, expected_digest
+        yield SimpleNamespace(
+            checkpoint_path=tmp_path / "private",
+            run_manifest=SimpleNamespace(
+                training_config=SimpleNamespace(
+                    max_source_tokens=100,
+                    max_target_tokens=50,
+                )
+            ),
+            run_manifest_sha256="b" * 64,
+        )
+
+    monkeypatch.setattr(
+        encoder_decoder,
+        "open_verified_encoder_decoder_artifact_bundle",
+        open_bundle,
+    )
+    monkeypatch.setattr(
+        encoder_decoder,
+        "import_module",
+        lambda name: pytest.fail(f"limits must fail before importing {name}"),
+    )
+    generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderLocalBundleConfig(
+            artifact_bundle=tmp_path / "caller",
+            artifact_manifest_sha256="a" * 64,
+            max_source_tokens=101,
+            max_new_tokens=50,
+        )
+    )
+
+    with pytest.raises(EncoderDecoderError, match="token limits exceed"):
+        generator._get_components()
 
 
 def test_encoder_decoder_configuration_rejects_existing_local_paths(tmp_path, monkeypatch):

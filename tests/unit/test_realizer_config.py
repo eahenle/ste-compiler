@@ -9,8 +9,10 @@ import yaml
 from pydantic import ValidationError
 
 from ste_compiler.realizer import (
+    DecoderOnlyLoRALocalBundleRealizerConfigV1,
     DecoderOnlyLoRARealizerConfigV1,
     DeterministicRealizerConfigV1,
+    EncoderDecoderLocalBundleRealizerConfigV1,
     EncoderDecoderRealizerConfigV1,
     canonical_realizer_config_json,
     load_realizer_config,
@@ -56,6 +58,33 @@ def _decoder_config() -> dict[str, object]:
     }
 
 
+def _local_encoder_config() -> dict[str, object]:
+    return {
+        "schema_version": "ste-realizer-config-v1",
+        "architecture": "encoder-decoder-local-bundle",
+        "artifact_manifest_sha256": "a" * 64,
+        "intended_use": "mechanics-smoke",
+        "max_source_tokens": 1024,
+        "max_new_tokens": 256,
+        "num_beams": 1,
+    }
+
+
+def _local_decoder_config() -> dict[str, object]:
+    return {
+        "schema_version": "ste-realizer-config-v1",
+        "architecture": "decoder-only-lora-local-bundle",
+        "artifact_manifest_sha256": "a" * 64,
+        "model_snapshot_manifest_sha256": "b" * 64,
+        "base_model": _identity(),
+        "tokenizer": _identity(),
+        "intended_use": "mechanics-smoke",
+        "prompt_profile": "decoder-only-symbol-plan-v1",
+        "max_new_tokens": 512,
+        "max_symbols": 128,
+    }
+
+
 @pytest.mark.parametrize(
     ("filename", "expected_type", "architecture"),
     [
@@ -73,6 +102,16 @@ def _decoder_config() -> dict[str, object]:
             "decoder-only-lora-schema-example.yaml",
             DecoderOnlyLoRARealizerConfigV1,
             "decoder-only-lora",
+        ),
+        (
+            "encoder-decoder-local-bundle-schema-example.yaml",
+            EncoderDecoderLocalBundleRealizerConfigV1,
+            "encoder-decoder-local-bundle",
+        ),
+        (
+            "decoder-only-lora-local-bundle-schema-example.yaml",
+            DecoderOnlyLoRALocalBundleRealizerConfigV1,
+            "decoder-only-lora-local-bundle",
         ),
     ],
 )
@@ -100,6 +139,23 @@ def test_neural_configs_reuse_immutable_artifact_identity():
 
     with pytest.raises(ValidationError, match="frozen"):
         encoder.checkpoint.revision = "c" * 40
+
+
+def test_local_bundle_configs_keep_untrusted_locators_out_of_canonical_identity():
+    encoder = REALIZER_CONFIG_ADAPTER.validate_python(_local_encoder_config())
+    decoder = REALIZER_CONFIG_ADAPTER.validate_python(_local_decoder_config())
+
+    assert isinstance(encoder, EncoderDecoderLocalBundleRealizerConfigV1)
+    assert isinstance(decoder, DecoderOnlyLoRALocalBundleRealizerConfigV1)
+    assert "path" not in canonical_realizer_config_json(encoder).decode()
+    assert "path" not in canonical_realizer_config_json(decoder).decode()
+    assert decoder.base_model == decoder.tokenizer
+
+    for payload in (_local_encoder_config(), _local_decoder_config()):
+        with pytest.raises(ValidationError, match="extra_forbidden"):
+            REALIZER_CONFIG_ADAPTER.validate_python(
+                {**payload, "artifact_bundle": "/untrusted/local/path"}
+            )
 
 
 def test_canonical_identity_is_stable_across_json_and_yaml(tmp_path):
@@ -149,6 +205,25 @@ def test_canonical_identity_is_stable_across_json_and_yaml(tmp_path):
             {**_decoder_config(), "adapter": _identity("main")},
             "string_pattern_mismatch",
         ),
+        (
+            {**_local_encoder_config(), "artifact_manifest_sha256": "A" * 64},
+            "string_pattern_mismatch",
+        ),
+        (
+            {**_local_decoder_config(), "model_snapshot_manifest_sha256": "short"},
+            "string_pattern_mismatch",
+        ),
+        (
+            {**_local_decoder_config(), "intended_use": "production"},
+            "mechanics-smoke",
+        ),
+        (
+            {
+                **_local_decoder_config(),
+                "tokenizer": _identity("c" * 40),
+            },
+            "requires tokenizer to equal base_model",
+        ),
     ],
 )
 def test_realizer_config_rejects_ambiguous_or_unversioned_values(payload, message):
@@ -167,6 +242,14 @@ def test_realizer_config_rejects_ambiguous_or_unversioned_values(payload, messag
         ({**_encoder_config(), "max_new_tokens": MAX_NEW_TOKENS + 1}, "max_new_tokens"),
         ({**_encoder_config(), "num_beams": MAX_BEAMS + 1}, "num_beams"),
         ({**_decoder_config(), "max_symbols": MAX_SYMBOLS + 1}, "max_symbols"),
+        (
+            {**_local_encoder_config(), "max_source_tokens": MAX_SOURCE_TOKENS + 1},
+            "max_source_tokens",
+        ),
+        (
+            {**_local_decoder_config(), "max_symbols": MAX_SYMBOLS + 1},
+            "max_symbols",
+        ),
     ],
 )
 def test_generation_limits_are_positive_and_bounded(payload, field):

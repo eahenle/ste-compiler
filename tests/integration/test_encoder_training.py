@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,14 @@ from ste_compiler.artifacts import (
     canonical_artifact_manifest_json,
     parse_canonical_artifact_manifest,
 )
+from ste_compiler.realizer import (
+    EncoderDecoderError,
+    EncoderDecoderLocalBundleConfig,
+    EncoderDecoderLocalBundleRealizerConfigV1,
+    TransformersEncoderDecoderSymbolGenerator,
+    build_realizer,
+)
+from ste_compiler.realizer import encoder_decoder as runtime_module
 from ste_compiler.training import (
     EncoderDecoderTrainingConfigV1,
     FileIdentityV1,
@@ -27,6 +36,7 @@ from ste_compiler.training import (
     encoder_decoder_artifact_manifest_sha256,
     evaluate_encoder_decoder_checkpoint,
     load_training_config,
+    open_verified_encoder_decoder_artifact_bundle,
     preflight_encoder_decoder_artifact_bundle,
     run_encoder_decoder_training,
     run_encoder_decoder_training_bundle,
@@ -178,6 +188,7 @@ def _call_without_runtime_state_leak(operation):
 def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
     tmp_path,
     tiny_snapshot,
+    monkeypatch,
 ):
     snapshot, calls = tiny_snapshot
     (snapshot / "README.md").write_text("cached model card", encoding="utf-8")
@@ -303,6 +314,103 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
         for path in first.rglob("*")
         if path.is_file() and path.name != ARTIFACT_MANIFEST_NAME
     }
+    with open_verified_encoder_decoder_artifact_bundle(
+        first,
+        artifact_digest,
+    ) as verified:
+        scoped_path = verified.checkpoint_path
+        assert scoped_path != first
+        assert scoped_path.is_dir()
+        assert verified.run_manifest == first_manifest
+        assert verified.artifact_manifest_sha256 == artifact_digest
+        assert verified.run_manifest_sha256 == _run_manifest_hash(first)
+    assert not scoped_path.exists()
+
+    generic_open_count = 0
+    real_generic_open = training_module.open_verified_artifact_bundle
+    real_import_module = runtime_module.import_module
+    import transformers
+
+    loaded_private_paths = []
+    real_tokenizer_loader = transformers.AutoTokenizer.from_pretrained
+    real_model_loader = transformers.AutoModelForSeq2SeqLM.from_pretrained
+
+    def capture_tokenizer_path(path, **kwargs):
+        loaded_private_paths.append(Path(path))
+        return real_tokenizer_loader(path, **kwargs)
+
+    def capture_model_path(path, **kwargs):
+        loaded_private_paths.append(Path(path))
+        return real_model_loader(path, **kwargs)
+
+    @contextmanager
+    def count_generic_open(root, expected_digest):
+        nonlocal generic_open_count
+        generic_open_count += 1
+        with real_generic_open(root, expected_digest) as verified:
+            yield verified
+
+    def local_runtime_import(name):
+        if name == "huggingface_hub":
+            raise AssertionError("local bundle runtime must not import Hugging Face Hub")
+        return real_import_module(name)
+
+    monkeypatch.setattr(training_module, "open_verified_artifact_bundle", count_generic_open)
+    monkeypatch.setattr(runtime_module, "import_module", local_runtime_import)
+    monkeypatch.setattr(
+        transformers.AutoTokenizer,
+        "from_pretrained",
+        staticmethod(capture_tokenizer_path),
+    )
+    monkeypatch.setattr(
+        transformers.AutoModelForSeq2SeqLM,
+        "from_pretrained",
+        staticmethod(capture_model_path),
+    )
+    local_realizer = build_realizer(
+        EncoderDecoderLocalBundleRealizerConfigV1(
+            schema_version="ste-realizer-config-v1",
+            architecture="encoder-decoder-local-bundle",
+            artifact_manifest_sha256=artifact_digest,
+            intended_use="mechanics-smoke",
+        ),
+        artifact_bundle=first,
+    )
+    local_generator = local_realizer._delegate.generator
+    tokenizer, model = local_generator._get_components()
+
+    assert tokenizer is not None
+    assert model is not None
+    assert local_generator._get_components() == (tokenizer, model)
+    assert generic_open_count == 1
+    assert len(loaded_private_paths) == 2
+    assert loaded_private_paths[0] == loaded_private_paths[1]
+    assert loaded_private_paths[0] != first
+    assert not loaded_private_paths[0].exists()
+    generated = model.generate(
+        **tokenizer("{}", return_tensors="pt"),
+        do_sample=False,
+        max_new_tokens=1,
+    )
+    assert generated.shape[0] == 1
+    assert local_generator.model_id == f"ste-artifact-bundle:sha256:{artifact_digest}"
+    assert local_generator.artifact_manifest_sha256 == artifact_digest
+    assert local_generator.run_manifest_sha256 == _run_manifest_hash(first)
+    assert local_generator.artifact_intended_use == "mechanics-smoke"
+    assert local_realizer._artifact_mode == "content-addressed-local-bundle"
+
+    wrong_digest_generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderLocalBundleConfig(
+            artifact_bundle=first,
+            artifact_manifest_sha256="0" * 64,
+        )
+    )
+    with pytest.raises(
+        EncoderDecoderError,
+        match="artifact verification failed",
+    ):
+        wrong_digest_generator._get_components()
+
     with pytest.raises(
         EncoderDecoderTrainingError,
         match="manifest SHA-256 does not match",
@@ -322,6 +430,17 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
         match="does not match its run manifest",
     ):
         preflight_encoder_decoder_artifact_bundle(inventory_mismatch, mismatch_digest)
+    tampered_generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderLocalBundleConfig(
+            artifact_bundle=inventory_mismatch,
+            artifact_manifest_sha256=mismatch_digest,
+        )
+    )
+    with pytest.raises(
+        EncoderDecoderError,
+        match="does not match its run manifest",
+    ):
+        tampered_generator._get_components()
 
     unsafe_weights = shutil.copytree(first, tmp_path / "unsafe-weights")
     (unsafe_weights / ARTIFACT_MANIFEST_NAME).unlink()
@@ -606,6 +725,7 @@ socket.socket.connect = lambda self, address: (_ for _ in ()).throw(
 
 import ste_compiler
 from ste_compiler.cli import app
+from ste_compiler.realizer import EncoderDecoderLocalBundleRealizerConfigV1, build_realizer
 from typer.testing import CliRunner
 
 assert pathlib.Path(ste_compiler.__file__).is_relative_to(installed)
@@ -659,6 +779,30 @@ evaluated = runner.invoke(
 )
 assert evaluated.exit_code == 0, evaluated.output
 assert json.loads(evaluated.stdout)["record_count"] == 2
+local_realizer = build_realizer(
+    EncoderDecoderLocalBundleRealizerConfigV1(
+        schema_version="ste-realizer-config-v1",
+        architecture="encoder-decoder-local-bundle",
+        artifact_manifest_sha256=artifact_manifest_sha256,
+        intended_use="mechanics-smoke",
+    ),
+    artifact_bundle=output,
+)
+local_generator = local_realizer._delegate.generator
+tokenizer, model = local_generator._get_components()
+generated = model.generate(
+    **tokenizer("{}", return_tensors="pt"),
+    do_sample=False,
+    max_new_tokens=1,
+)
+assert generated.shape[0] == 1
+assert local_generator.model_id == (
+    f"ste-artifact-bundle:sha256:{artifact_manifest_sha256}"
+)
+assert local_generator.artifact_manifest_sha256 == artifact_manifest_sha256
+assert local_generator.run_manifest_sha256 == manifest_sha256
+assert local_generator.artifact_intended_use == "mechanics-smoke"
+assert local_realizer._artifact_mode == "content-addressed-local-bundle"
 """
     environment = dict(os.environ)
     environment.update(

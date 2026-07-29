@@ -97,10 +97,11 @@ privately re-capture the exact bundle before publication or consumption.
 ## Offline realizer selection
 
 Strict `ste-realizer-config-v1` files select the deterministic, encoder-decoder, or decoder-only
-LoRA path without turning inference into an implicit download. Neural configurations identify Hub
-artifacts with full commit digests, reject mutable revisions and local paths, and run cache-only.
-The checked-in neural identities are illustrative schema examples, not published project models or
-quality claims.
+LoRA path without turning inference into an implicit download. Hub variants identify artifacts
+with full commit digests and run cache-only. Additive local-bundle variants identify complete
+trainer outputs by externally retained SHA-256 while keeping their untrusted filesystem locators
+outside the canonical configuration identity. The checked-in neural identities are illustrative
+schema examples, not published project models or quality claims.
 
 Pass a reviewed configuration to either IR compilation or the offline replay workflow:
 
@@ -118,8 +119,32 @@ ste-compiler compile-source \
 
 Omit `--realizer-config` to retain deterministic behavior. See the
 [typed offline neural runtime guide](docs/neural-runtime.md) for the configuration and trust
-boundary. Explicit artifact fetching, direct use of unpublished local trainer outputs, published
-checkpoints, and benchmark results are later slices.
+boundary.
+
+For a content-addressed encoder checkpoint, select
+`encoder-decoder-local-bundle` and provide its locator separately:
+
+```bash
+ste-compiler compile data/examples/warning_pressure.yaml \
+  --realizer-config data/realizers/encoder-decoder-local-bundle-schema-example.yaml \
+  --artifact-bundle path/to/encoder-training-output \
+  --json
+```
+
+The decoder local-bundle variant additionally requires the separately content-bound base snapshot:
+
+```bash
+ste-compiler compile data/examples/warning_pressure.yaml \
+  --realizer-config data/realizers/decoder-only-lora-local-bundle-schema-example.yaml \
+  --artifact-bundle path/to/decoder-training-output \
+  --model-snapshot path/to/base-snapshot \
+  --json
+```
+
+These variants are intentionally limited to `mechanics-smoke` artifacts. They demonstrate the full
+offline loading boundary; they do not authorize an artifact, establish its license, or make a
+quality claim. Explicit artifact fetching, published reference checkpoints, and benchmark results
+remain later slices.
 
 Local training outputs can be checked independently of runtime selection:
 
@@ -132,8 +157,9 @@ ste-compiler preflight-artifact path/to/training-output \
 Preflight is offline and fail-closed. It requires an externally retained digest because trusting a
 manifest found only beside the files would be self-attestation. Encoder checkpoints must reload
 exactly through local-only, safetensors-only Transformers diagnostics; decoder runs must contain a
-canonical, compatible, nonempty PEFT adapter. Preflight proves identity and loadability, not model
-quality, license authorization, or suitability for deployment.
+canonical, compatible PEFT adapter with complete paired LoRA matrices for every configured target
+module. Preflight proves identity and loadability, not model quality, license authorization, or
+suitability for deployment.
 
 ## Extension points
 

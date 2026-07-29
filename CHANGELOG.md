@@ -12,6 +12,8 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A source-grounded causal-relation IR, deterministic realization, and semantic validation path.
 - A reproducible, MIT-licensed demonstration corpus with frozen splits and checksummed artifacts.
 - A credential-free raw-source-to-validated-text reference workflow.
+- Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
+  adapter runs, with portable typed identities and untrusted CLI locators kept separate.
 
 ## [0.1.0] - Unreleased
 

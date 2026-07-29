@@ -1,0 +1,14 @@
+schema_version: ste-realizer-config-v1
+architecture: decoder-only-lora-local-bundle
+artifact_manifest_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+model_snapshot_manifest_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+base_model:
+  repo_id: example/tiny-causal-model
+  revision: 0123456789abcdef0123456789abcdef01234567
+tokenizer:
+  repo_id: example/tiny-causal-model
+  revision: 0123456789abcdef0123456789abcdef01234567
+intended_use: mechanics-smoke
+prompt_profile: decoder-only-symbol-plan-v1
+max_new_tokens: 512
+max_symbols: 128

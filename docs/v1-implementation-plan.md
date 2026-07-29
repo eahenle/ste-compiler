@@ -196,8 +196,9 @@ Status: in progress. Strict `ste-realizer-config-v1` files now select determinis
 encoder-decoder, and decoder-only LoRA realization for `compile` and the offline replay
 `compile-source` workflow. Neural CLI inference is cache-only and retains immutable Hub commit
 identities in provenance. Standalone artifact preflight now verifies complete local trainer
-outputs against externally retained digests. Explicit fetch, direct content-addressed runtime
-loading of those outputs, and published reference configurations remain.
+outputs against externally retained digests. Additive local-bundle configurations now load both
+trainer architectures from exact private captures; the decoder path separately binds its base
+snapshot. Explicit fetch and published reference configurations remain.
 
 ### Deliverables
 

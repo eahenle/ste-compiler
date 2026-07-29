@@ -20,6 +20,10 @@ pytest.importorskip("safetensors")
 pytest.importorskip("tokenizers")
 from safetensors.torch import load_file, save_file
 
+from ste_compiler.realizer import (
+    DecoderOnlyLoRALocalBundleRealizerConfigV1,
+    build_realizer,
+)
 from ste_compiler.training import (
     DecoderLoRATrainingError,
     DecoderOnlyLoRATrainingConfigV1,
@@ -198,6 +202,35 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         )
         == first.validation_loss
     )
+    local_realizer = build_realizer(
+        DecoderOnlyLoRALocalBundleRealizerConfigV1(
+            schema_version="ste-realizer-config-v1",
+            architecture="decoder-only-lora-local-bundle",
+            artifact_manifest_sha256=first_artifact_digest,
+            model_snapshot_manifest_sha256=snapshot_digest,
+            base_model=config.base_model,
+            tokenizer=config.tokenizer,
+            intended_use="mechanics-smoke",
+            prompt_profile=config.prompt_profile,
+            max_new_tokens=128,
+            max_symbols=1,
+        ),
+        artifact_bundle=first_output,
+        model_snapshot=model_snapshot,
+    )
+    local_generator = local_realizer._delegate.generator
+    assert (
+        local_generator.generate_symbols(
+            '{"runtime":"content-addressed-smoke"}',
+            frozenset({"PLAN_EXACT_WHITESPACE_V1"}),
+        )
+        == "PLAN_EXACT_WHITESPACE_V1"
+    )
+    assert local_generator.artifact_manifest_sha256 == first_artifact_digest
+    assert local_generator.run_manifest_sha256 == _sha256(first_output / "run-manifest.json")
+    assert local_generator.model_snapshot_manifest_sha256 == snapshot_digest
+    assert local_generator.adapter_revision is None
+    assert local_realizer._artifact_mode == "content-addressed-local-bundle"
     manifest = json.loads((first_output / "run-manifest.json").read_text())
     assert manifest["schema_version"] == "ste-decoder-lora-run-v1"
     assert manifest["source"]["dirty"] is False
@@ -562,14 +595,63 @@ def test_installed_wheel_runs_decoder_training_and_evaluation_offline(tmp_path):
         capture_output=True,
         text=True,
     )
+    loaded = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json, pathlib, sys; "
+                "from ste_compiler.realizer import "
+                "DecoderOnlyLoRALocalBundleRealizerConfigV1, build_realizer; "
+                "from ste_compiler.training import load_training_config; "
+                "training_path, bundle, bundle_digest, snapshot, snapshot_digest = "
+                "map(pathlib.Path, sys.argv[1:]); "
+                "training = load_training_config(training_path); "
+                "config = DecoderOnlyLoRALocalBundleRealizerConfigV1("
+                "schema_version='ste-realizer-config-v1', "
+                "architecture='decoder-only-lora-local-bundle', "
+                "artifact_manifest_sha256=str(bundle_digest), "
+                "model_snapshot_manifest_sha256=str(snapshot_digest), "
+                "base_model=training.base_model, tokenizer=training.tokenizer, "
+                "intended_use='mechanics-smoke', "
+                "prompt_profile=training.prompt_profile, max_new_tokens=128, max_symbols=1); "
+                "realizer = build_realizer("
+                "config, artifact_bundle=bundle, model_snapshot=snapshot); "
+                "generator = realizer._delegate.generator; "
+                "symbols = generator.generate_symbols("
+                "'{}', frozenset({'PLAN_EXACT_WHITESPACE_V1'})); "
+                "print(json.dumps({'symbols': symbols, "
+                "'artifact': generator.artifact_manifest_sha256, "
+                "'run': generator.run_manifest_sha256, "
+                "'snapshot': generator.model_snapshot_manifest_sha256, "
+                "'mode': realizer._artifact_mode}, sort_keys=True))"
+            ),
+            str(config),
+            str(run),
+            trained_payload["artifact_manifest_sha256"],
+            str(model_snapshot),
+            json.loads(prepared.stdout)["manifest_sha256"],
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     assert json.loads(prepared.stdout)["fixture_profile"] == "tiny-byte-bpe-gpt2-v1"
     assert len(json.loads(prepared.stdout)["manifest_sha256"]) == 64
     preflight_payload = json.loads(preflight.stdout)
     evaluated_payload = json.loads(evaluated.stdout)
+    loaded_payload = json.loads(loaded.stdout)
     assert trained_payload["optimizer_steps"] == 2
     assert preflight_payload["architecture"] == "decoder-only-lora"
     assert preflight_payload["validation_profile"] == "decoder-adapter-structure-v1"
     assert preflight_payload["network_access"] == "none"
     assert evaluated_payload["validation_loss"] == trained_payload["validation_loss"]
+    assert loaded_payload["symbols"] == "PLAN_EXACT_WHITESPACE_V1"
+    assert loaded_payload["artifact"] == trained_payload["artifact_manifest_sha256"]
+    assert len(loaded_payload["run"]) == 64
+    assert loaded_payload["snapshot"] == json.loads(prepared.stdout)["manifest_sha256"]
+    assert loaded_payload["mode"] == "content-addressed-local-bundle"
     assert (run / "adapter/adapter_model.safetensors").is_file()

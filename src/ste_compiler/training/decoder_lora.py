@@ -67,6 +67,7 @@ MODEL_SNAPSHOT_SCHEMA: Final = "ste-local-causal-lm-snapshot-v1"
 FIXTURE_PROFILE: Final = "tiny-byte-bpe-gpt2-v1"
 RUN_MANIFEST_SCHEMA: Final = "ste-decoder-lora-run-v1"
 MAX_SNAPSHOT_MANIFEST_BYTES = 1024 * 1024
+MAX_SNAPSHOT_FILES = 64
 MAX_SNAPSHOT_FILE_BYTES = 64 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024
 MAX_ADAPTER_METADATA_BYTES = 1024 * 1024
@@ -160,7 +161,7 @@ class LocalModelSnapshotManifestV1(StrictTrainingModel):
     fixture_profile: Literal["tiny-byte-bpe-gpt2-v1"]
     base_model: ArtifactIdentityV1
     tokenizer: ArtifactIdentityV1
-    artifacts: tuple[ArtifactDigestV1, ...]
+    artifacts: tuple[ArtifactDigestV1, ...] = Field(max_length=MAX_SNAPSHOT_FILES)
 
 
 class DependencyVersionV1(StrictTrainingModel):
@@ -242,6 +243,16 @@ class DecoderLoRAArtifactPreflight:
 
     run_manifest: DecoderLoRARunManifestV1
     artifact_manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class VerifiedDecoderLoRAArtifactBundle:
+    """A preflighted decoder bundle valid only inside its verification context."""
+
+    path: Path
+    run_manifest: DecoderLoRARunManifestV1
+    artifact_manifest_sha256: str
+    run_manifest_sha256: str
 
 
 @dataclass(frozen=True)
@@ -425,12 +436,51 @@ def _read_regular_file(
         os.close(file_fd)
 
 
+def _bounded_snapshot_names(
+    directory_fd: int,
+    *,
+    expected_count: int,
+) -> frozenset[str]:
+    """Enumerate one flat snapshot without allocating beyond its declared file count."""
+
+    if expected_count < 1 or expected_count > MAX_SNAPSHOT_FILES + 1:
+        raise DecoderLoRATrainingError("model snapshot declares an invalid file count")
+    names: set[str] = set()
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if len(names) >= expected_count:
+                    raise DecoderLoRATrainingError(
+                        "model snapshot contains more files than its manifest declares"
+                    )
+                names.add(entry.name)
+    except OSError as error:
+        raise DecoderLoRATrainingError("cannot enumerate model snapshot directory") from error
+    return frozenset(names)
+
+
 def read_verified_model_snapshot(
     snapshot: Path,
     config: DecoderOnlyLoRATrainingConfigV1,
     expected_manifest_sha256: str,
 ) -> VerifiedModelSnapshot:
     """Read a complete content-bound local model/tokenizer snapshot into immutable bytes."""
+
+    return read_verified_model_snapshot_for_identities(
+        snapshot,
+        config.base_model,
+        config.tokenizer,
+        expected_manifest_sha256,
+    )
+
+
+def read_verified_model_snapshot_for_identities(
+    snapshot: Path,
+    base_model: ArtifactIdentityV1,
+    tokenizer: ArtifactIdentityV1,
+    expected_manifest_sha256: str,
+) -> VerifiedModelSnapshot:
+    """Capture one snapshot authorized by exact model, tokenizer, and manifest identities."""
 
     if _SHA256.fullmatch(expected_manifest_sha256) is None:
         raise DecoderLoRATrainingError(
@@ -444,9 +494,6 @@ def read_verified_model_snapshot(
             f"model snapshot must be a real directory: {snapshot}"
         ) from error
     try:
-        names = set(os.listdir(directory_fd))
-        if MODEL_SNAPSHOT_MANIFEST not in names:
-            raise DecoderLoRATrainingError(f"model snapshot is missing {MODEL_SNAPSHOT_MANIFEST}")
         manifest_bytes = _read_regular_file(
             directory_fd,
             MODEL_SNAPSHOT_MANIFEST,
@@ -463,9 +510,13 @@ def read_verified_model_snapshot(
             raise DecoderLoRATrainingError(
                 f"model snapshot manifest is invalid: {error}"
             ) from error
-        if manifest.base_model != config.base_model or manifest.tokenizer != config.tokenizer:
+        names = _bounded_snapshot_names(
+            directory_fd,
+            expected_count=len(manifest.artifacts) + 1,
+        )
+        if manifest.base_model != base_model or manifest.tokenizer != tokenizer:
             raise DecoderLoRATrainingError(
-                "model snapshot identity does not match the training configuration"
+                "model snapshot identity does not match the explicitly authorized identities"
             )
         artifact_by_path = {artifact.path: artifact for artifact in manifest.artifacts}
         if (
@@ -498,6 +549,14 @@ def read_verified_model_snapshot(
                     f"model snapshot artifact SHA-256 does not match: {name}"
                 )
             files.append((name, data))
+        if (
+            _bounded_snapshot_names(
+                directory_fd,
+                expected_count=len(manifest.artifacts) + 1,
+            )
+            != names
+        ):
+            raise DecoderLoRATrainingError("model snapshot artifact set changed while read")
         return VerifiedModelSnapshot(
             manifest=manifest,
             manifest_sha256=manifest_sha256,
@@ -1626,10 +1685,33 @@ def preflight_decoder_lora_artifact_bundle(
 ) -> DecoderLoRAArtifactPreflight:
     """Verify and preflight one complete content-addressed decoder training output."""
 
+    with open_verified_decoder_lora_artifact_bundle(
+        root,
+        expected_manifest_sha256,
+    ) as verified:
+        return DecoderLoRAArtifactPreflight(
+            run_manifest=verified.run_manifest,
+            artifact_manifest_sha256=verified.artifact_manifest_sha256,
+        )
+
+
+@contextmanager
+def open_verified_decoder_lora_artifact_bundle(
+    root: Path,
+    expected_manifest_sha256: str,
+) -> Iterator[VerifiedDecoderLoRAArtifactBundle]:
+    """Yield one preflighted decoder bundle from the same private verified capture."""
+
     try:
         _read_decoder_artifact_manifest(root, expected_manifest_sha256)
         with open_verified_artifact_bundle(root, expected_manifest_sha256) as verified:
-            return _preflight_verified_decoder_bundle(verified, _runtime_modules())
+            preflight = _preflight_verified_decoder_bundle(verified, _runtime_modules())
+            yield VerifiedDecoderLoRAArtifactBundle(
+                path=verified.path,
+                run_manifest=preflight.run_manifest,
+                artifact_manifest_sha256=preflight.artifact_manifest_sha256,
+                run_manifest_sha256=verified.manifest.run_manifest_sha256,
+            )
     except ArtifactVerificationError as error:
         raise DecoderLoRATrainingError(
             f"decoder artifact bundle verification failed: {error}"

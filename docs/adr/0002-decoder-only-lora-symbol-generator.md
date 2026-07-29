@@ -46,10 +46,12 @@ assuming that a model token is an approved word. It also makes tokenizer incompa
 fail-closed error rather than silently weakening constraints.
 
 Pinned revisions identify the artifacts used, but pinning does not make externally supplied
-artifacts trustworthy. Local paths are deliberately unsupported because an arbitrary revision
-label cannot identify their contents. The safetensors requirement and exact-snapshot reuse remove
-pickle deserialization from this loader; operators must still authorize the configured
-repositories and revisions.
+artifacts trustworthy. The Hub variant rejects local paths because an arbitrary revision label
+cannot identify their contents. An additive local-bundle variant accepts locators only when a
+portable config supplies external adapter and base-snapshot digests plus exact model/tokenizer
+identities; it loads one private verified capture with no Hub fallback. The safetensors requirement
+and exact-snapshot reuse remove pickle deserialization from both loaders; operators must still
+authorize the selected artifacts.
 
 ## Training consequence and unshipped work
 

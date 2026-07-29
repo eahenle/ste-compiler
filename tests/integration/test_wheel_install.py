@@ -84,15 +84,22 @@ assert result.exit_code == 0, result.output
             (
                 "from ste_compiler.realizer import "
                 "DecoderOnlyLoRAConfig, DecoderOnlyLoRAError, "
+                "DecoderOnlyLoRALocalBundleRealizerConfigV1, "
                 "DecoderOnlyLoRARealizerConfigV1, DeterministicRealizerConfigV1, "
                 "DecoderOnlyLoRASymbolGenerator, EncoderDecoderConfig, "
-                "EncoderDecoderError, EncoderDecoderRealizerConfigV1, "
+                "EncoderDecoderError, EncoderDecoderLocalBundleConfig, "
+                "EncoderDecoderLocalBundleRealizerConfigV1, EncoderDecoderRealizerConfigV1, "
+                "LocalDecoderOnlyLoRARuntimeConfig, load_local_decoder_lora_generator, "
                 "TransformersEncoderDecoderSymbolGenerator, build_realizer, "
                 "load_realizer_config, realizer_config_sha256; "
                 "assert DecoderOnlyLoRAConfig and DecoderOnlyLoRAError "
+                "and DecoderOnlyLoRALocalBundleRealizerConfigV1 "
                 "and DecoderOnlyLoRARealizerConfigV1 and DeterministicRealizerConfigV1 "
                 "and DecoderOnlyLoRASymbolGenerator and EncoderDecoderConfig "
-                "and EncoderDecoderError and EncoderDecoderRealizerConfigV1 "
+                "and EncoderDecoderError and EncoderDecoderLocalBundleConfig "
+                "and EncoderDecoderLocalBundleRealizerConfigV1 "
+                "and EncoderDecoderRealizerConfigV1 and LocalDecoderOnlyLoRARuntimeConfig "
+                "and load_local_decoder_lora_generator "
                 "and TransformersEncoderDecoderSymbolGenerator and build_realizer "
                 "and load_realizer_config and realizer_config_sha256"
             ),
@@ -116,12 +123,16 @@ assert result.exit_code == 0, result.output
                 "from ste_compiler.training import "
                 "decoder_lora_artifact_manifest_sha256, "
                 "encoder_decoder_artifact_manifest_sha256, "
+                "open_verified_decoder_lora_artifact_bundle, "
+                "open_verified_encoder_decoder_artifact_bundle, "
                 "preflight_decoder_lora_artifact_bundle, "
                 "preflight_encoder_decoder_artifact_bundle; "
                 "assert ArtifactBundleManifestV1 and ArtifactFileV1 "
                 "and ArtifactPreflightResultV1 and open_verified_artifact_bundle "
                 "and verify_artifact_bundle and decoder_lora_artifact_manifest_sha256 "
                 "and encoder_decoder_artifact_manifest_sha256 "
+                "and open_verified_decoder_lora_artifact_bundle "
+                "and open_verified_encoder_decoder_artifact_bundle "
                 "and preflight_decoder_lora_artifact_bundle "
                 "and preflight_encoder_decoder_artifact_bundle"
             ),
@@ -246,6 +257,12 @@ assert result.exit_code == 0, result.output
         "deterministic": realizer_directory / "deterministic.yaml",
         "encoder-decoder": realizer_directory / "encoder-decoder-schema-example.yaml",
         "decoder-only-lora": realizer_directory / "decoder-only-lora-schema-example.yaml",
+        "encoder-decoder-local-bundle": (
+            realizer_directory / "encoder-decoder-local-bundle-schema-example.yaml"
+        ),
+        "decoder-only-lora-local-bundle": (
+            realizer_directory / "decoder-only-lora-local-bundle-schema-example.yaml"
+        ),
     }
     for architecture, realizer_config in realizer_configs.items():
         assert realizer_config.is_file()
@@ -264,7 +281,12 @@ assert result.exit_code == 0, result.output
         )
         realizer_payload = json.loads(validated_realizer.stdout)
         assert realizer_payload["architecture"] == architecture
-        assert realizer_payload["artifact_mode"] == "offline-cache-only"
+        expected_mode = (
+            "content-addressed-local-bundle"
+            if architecture.endswith("-local-bundle")
+            else "offline-cache-only"
+        )
+        assert realizer_payload["artifact_mode"] == expected_mode
         assert len(realizer_payload["config_sha256"]) == 64
 
     realizer_schema = subprocess.run(

@@ -1,0 +1,7 @@
+schema_version: ste-realizer-config-v1
+architecture: encoder-decoder-local-bundle
+artifact_manifest_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+intended_use: mechanics-smoke
+max_source_tokens: 1024
+max_new_tokens: 256
+num_beams: 1

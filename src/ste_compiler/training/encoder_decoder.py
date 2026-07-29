@@ -143,6 +143,16 @@ class EncoderDecoderArtifactPreflight:
 
 
 @dataclass(frozen=True)
+class VerifiedEncoderDecoderArtifactBundle:
+    """A verified private checkpoint whose path is valid only inside its open context."""
+
+    checkpoint_path: Path
+    run_manifest: EncoderDecoderRunManifestV1
+    artifact_manifest_sha256: str
+    run_manifest_sha256: str
+
+
+@dataclass(frozen=True)
 class EncoderDecoderTrainingBundleResult:
     """The run manifest and exact staged bundle identity published by one training run."""
 
@@ -981,17 +991,36 @@ def _preflight_verified_encoder_decoder_artifact_bundle(
             "encoder-decoder artifact bundle does not match its run manifest"
         )
     _validate_checkpoint_artifacts(run_manifest.base_model_artifacts)
-    with tempfile.TemporaryDirectory(prefix="ste-encoder-artifact-load-") as private:
-        _, model, _ = _reload_components(
-            _load_neural_runtime()[1],
-            materialized,
-            Path(private),
-        )
-        del model
     return EncoderDecoderArtifactPreflight(
         run_manifest=run_manifest,
         artifact_manifest_sha256=verified.manifest_sha256,
     )
+
+
+@contextmanager
+def open_verified_encoder_decoder_artifact_bundle(
+    root: Path,
+    expected_manifest_sha256: str,
+) -> Iterator[VerifiedEncoderDecoderArtifactBundle]:
+    """Yield one exact private encoder checkpoint for a scoped safe deep load."""
+
+    try:
+        _preflight_source_metadata_inventory(root, expected_manifest_sha256)
+        with open_verified_artifact_bundle(
+            root,
+            expected_manifest_sha256,
+        ) as verified:
+            preflight = _preflight_verified_encoder_decoder_artifact_bundle(verified)
+            yield VerifiedEncoderDecoderArtifactBundle(
+                checkpoint_path=verified.path,
+                run_manifest=preflight.run_manifest,
+                artifact_manifest_sha256=verified.manifest_sha256,
+                run_manifest_sha256=verified.manifest.run_manifest_sha256,
+            )
+    except ArtifactVerificationError as error:
+        raise EncoderDecoderTrainingError(
+            f"encoder-decoder artifact bundle verification failed: {error}"
+        ) from error
 
 
 def preflight_encoder_decoder_artifact_bundle(
@@ -1000,17 +1029,21 @@ def preflight_encoder_decoder_artifact_bundle(
 ) -> EncoderDecoderArtifactPreflight:
     """Verify and preflight a content-pinned encoder-decoder artifact bundle."""
 
-    try:
-        _preflight_source_metadata_inventory(root, expected_manifest_sha256)
-        with open_verified_artifact_bundle(
-            root,
-            expected_manifest_sha256,
-        ) as verified:
-            return _preflight_verified_encoder_decoder_artifact_bundle(verified)
-    except ArtifactVerificationError as error:
-        raise EncoderDecoderTrainingError(
-            f"encoder-decoder artifact bundle verification failed: {error}"
-        ) from error
+    with open_verified_encoder_decoder_artifact_bundle(
+        root,
+        expected_manifest_sha256,
+    ) as verified:
+        with tempfile.TemporaryDirectory(prefix="ste-encoder-artifact-load-") as private:
+            _, model, _ = _reload_components(
+                _load_neural_runtime()[1],
+                verified.checkpoint_path,
+                Path(private),
+            )
+            del model
+        return EncoderDecoderArtifactPreflight(
+            run_manifest=verified.run_manifest,
+            artifact_manifest_sha256=verified.artifact_manifest_sha256,
+        )
 
 
 def encoder_decoder_artifact_manifest_sha256(root: Path) -> str:

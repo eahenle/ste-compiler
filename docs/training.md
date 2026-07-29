@@ -265,22 +265,23 @@ produce benchmark predictions or a released prediction hash.
 Training and inference use separate versioned contracts. `ste-training-config-v1` binds a corpus,
 base artifacts, optimizer settings, seeds, and run outputs. `ste-realizer-config-v1` selects a
 deterministic or constrained-neural runtime using immutable Hub repository commits and bounded
-decoding settings.
+decoding settings, or a local mechanics bundle using externally retained content digests.
 
 The offline runtime accepts a reviewed realizer configuration on `compile` and `compile-source`
 through `--realizer-config`. It resolves model, tokenizer, and adapter revisions from the local
 cache only; a cache miss does not initiate a download. See the
 [typed offline neural runtime guide](neural-runtime.md).
 
-The smoke trainers' local outputs are not automatically runtime artifacts. They exercise mechanics
-and safe serialization, but the runtime continues to reject arbitrary local model paths. A
-reference training result must be reviewed, licensed, published at an immutable repository
-revision, checksummed, and named by a realizer configuration before it can become a released
-runtime input.
+The additive `*-local-bundle` configurations can consume smoke outputs through
+`--artifact-bundle`; decoder runs also require their separately verified base fixture through
+`--model-snapshot`. Paths are untrusted locators and remain outside canonical configuration
+identity. The loader binds them to the configured digests, validates one private exact capture, and
+uses only local-only safetensors framework loads.
 
-Explicit artifact fetching, direct content-addressed loading of unpublished trainer outputs, and
-benchmark reproduction are follow-up slices. The illustrative checked-in identities are not
-published checkpoints or model-quality claims.
+This mechanics path is not automatic artifact promotion. A reference result must still be
+reviewed, licensed, published immutably, checksummed, benchmarked, and named by a reviewed
+configuration. Explicit fetching, reference artifact publication, and benchmark reproduction
+remain follow-up slices. The checked-in identities are not published checkpoints or quality claims.
 
 ## Remaining training gates
 

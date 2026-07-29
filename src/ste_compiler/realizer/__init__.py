@@ -5,8 +5,10 @@ from .deterministic import DeterministicRealizer
 
 if TYPE_CHECKING:
     from .config import (
+        DecoderOnlyLoRALocalBundleRealizerConfigV1,
         DecoderOnlyLoRARealizerConfigV1,
         DeterministicRealizerConfigV1,
+        EncoderDecoderLocalBundleRealizerConfigV1,
         EncoderDecoderRealizerConfigV1,
         RealizerConfigV1,
     )
@@ -18,26 +20,39 @@ if TYPE_CHECKING:
     from .encoder_decoder import (
         EncoderDecoderConfig,
         EncoderDecoderError,
+        EncoderDecoderLocalBundleConfig,
+        EncoderDecoderRuntimeConfig,
         EncoderDecoderUnavailable,
         InvalidSymbolGeneration,
         TransformersEncoderDecoderSymbolGenerator,
     )
     from .factory import build_realizer
+    from .local_decoder import (
+        LocalDecoderOnlyLoRAError,
+        LocalDecoderOnlyLoRARuntimeConfig,
+        load_local_decoder_lora_generator,
+    )
     from .neural import NeuralRealizer, SymbolGenerator
 
 __all__ = [
     "REALIZER_CONFIG_ADAPTER",
     "DecoderOnlyLoRAConfig",
     "DecoderOnlyLoRAError",
+    "DecoderOnlyLoRALocalBundleRealizerConfigV1",
     "DecoderOnlyLoRARealizerConfigV1",
     "DecoderOnlyLoRASymbolGenerator",
     "DeterministicRealizer",
     "DeterministicRealizerConfigV1",
     "EncoderDecoderConfig",
     "EncoderDecoderError",
+    "EncoderDecoderLocalBundleConfig",
+    "EncoderDecoderLocalBundleRealizerConfigV1",
     "EncoderDecoderRealizerConfigV1",
+    "EncoderDecoderRuntimeConfig",
     "EncoderDecoderUnavailable",
     "InvalidSymbolGeneration",
+    "LocalDecoderOnlyLoRAError",
+    "LocalDecoderOnlyLoRARuntimeConfig",
     "NeuralRealizer",
     "RealizationResult",
     "RealizerConfigV1",
@@ -45,6 +60,7 @@ __all__ = [
     "TransformersEncoderDecoderSymbolGenerator",
     "build_realizer",
     "canonical_realizer_config_json",
+    "load_local_decoder_lora_generator",
     "load_realizer_config",
     "realizer_config_sha256",
 ]
@@ -52,8 +68,10 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     if name in {
+        "DecoderOnlyLoRALocalBundleRealizerConfigV1",
         "DecoderOnlyLoRARealizerConfigV1",
         "DeterministicRealizerConfigV1",
+        "EncoderDecoderLocalBundleRealizerConfigV1",
         "EncoderDecoderRealizerConfigV1",
         "REALIZER_CONFIG_ADAPTER",
         "RealizerConfigV1",
@@ -75,6 +93,8 @@ def __getattr__(name: str) -> object:
     if name in {
         "EncoderDecoderConfig",
         "EncoderDecoderError",
+        "EncoderDecoderLocalBundleConfig",
+        "EncoderDecoderRuntimeConfig",
         "EncoderDecoderUnavailable",
         "InvalidSymbolGeneration",
         "TransformersEncoderDecoderSymbolGenerator",
@@ -86,6 +106,14 @@ def __getattr__(name: str) -> object:
         from .factory import build_realizer
 
         return build_realizer
+    if name in {
+        "LocalDecoderOnlyLoRAError",
+        "LocalDecoderOnlyLoRARuntimeConfig",
+        "load_local_decoder_lora_generator",
+    }:
+        from . import local_decoder
+
+        return getattr(local_decoder, name)
     if name == "NeuralRealizer":
         from .neural import NeuralRealizer
 
