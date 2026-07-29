@@ -13,7 +13,6 @@ import os
 import platform
 import random
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -752,6 +751,7 @@ def _atomic_output_directory(
         raise DecoderLoRATrainingError(f"output parent must be a real directory: {parent}")
     stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.stage-", dir=parent))
     pinned_stage: _PinnedOutputDirectory | None = None
+    published = False
     try:
         pinned_stage = _open_pinned_output_directory(stage)
         result = builder(stage)
@@ -769,6 +769,7 @@ def _atomic_output_directory(
             operation="staged artifact publication",
         )
         _rename_no_replace(stage, output)
+        published = True
         _assert_pinned_output_directory(
             output,
             pinned_stage,
@@ -788,10 +789,8 @@ def _atomic_output_directory(
             )
         return result
     except BaseException:
-        if stage.exists():
-            shutil.rmtree(stage)
-        elif pinned_stage is not None and output.exists():
-            _remove_invalid_pinned_output(output, pinned_stage)
+        if pinned_stage is not None:
+            _remove_invalid_pinned_output(output if published else stage, pinned_stage)
         raise
     finally:
         if pinned_stage is not None:

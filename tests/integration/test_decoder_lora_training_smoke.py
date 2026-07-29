@@ -356,12 +356,25 @@ def test_decoder_removes_invalid_output_after_post_rename_verification_failure(
     prepare_decoder_smoke_fixture(config, release, model_snapshot)
     snapshot_digest = model_snapshot_manifest_sha256(model_snapshot)
     real_verify = decoder_training.verify_artifact_bundle
+    real_rename = decoder_training._rename_no_replace
+    recreated_stages = []
+
+    def publish_then_recreate_stage(source, destination):
+        real_rename(source, destination)
+        source.mkdir()
+        (source / "replacement").write_bytes(b"concurrent")
+        recreated_stages.append(source)
 
     def mutate_published_then_verify(root, expected_manifest_sha256):
         if root == output:
             (root / decoder_training.ARTIFACT_MANIFEST_NAME).write_bytes(b"changed after rename\n")
         return real_verify(root, expected_manifest_sha256)
 
+    monkeypatch.setattr(
+        decoder_training,
+        "_rename_no_replace",
+        publish_then_recreate_stage,
+    )
     monkeypatch.setattr(
         decoder_training,
         "verify_artifact_bundle",
@@ -383,7 +396,8 @@ def test_decoder_removes_invalid_output_after_post_rename_verification_failure(
         )
 
     assert not output.exists()
-    assert not list(tmp_path.glob(".invalid-published.stage-*"))
+    assert len(recreated_stages) == 1
+    assert (recreated_stages[0] / "replacement").read_bytes() == b"concurrent"
 
 
 def test_decoder_fixture_is_content_bound_and_refuses_existing_output(
