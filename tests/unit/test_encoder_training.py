@@ -243,3 +243,18 @@ def test_trainer_rejects_existing_output_before_loading_optional_runtime(tmp_pat
 
     assert sentinel.read_bytes() == b"unchanged"
     assert set(output.iterdir()) == {sentinel}
+
+
+def test_no_replace_publication_preserves_concurrent_destination(tmp_path):
+    source = tmp_path / "stage"
+    destination = tmp_path / "output"
+    source.mkdir()
+    destination.mkdir()
+    (source / "artifact").write_bytes(b"complete")
+    (destination / "sentinel").write_bytes(b"concurrent")
+
+    with pytest.raises(EncoderDecoderTrainingError, match="created concurrently"):
+        training_module._rename_no_replace(source, destination)
+
+    assert (source / "artifact").read_bytes() == b"complete"
+    assert (destination / "sentinel").read_bytes() == b"concurrent"

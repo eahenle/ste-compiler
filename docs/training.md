@@ -203,7 +203,8 @@ training, saving, reload, and validation-loss evaluation succeed. An existing de
 overwritten. Only safetensors model weights are allowed; pickle-capable suffixes, symlinks,
 non-regular files, and multiply linked files fail closed. `run-manifest.json` records canonical
 configuration and corpus identities, the complete base/tokenizer snapshot inventory,
-runtime-derived package and dependency provenance, lock-file hash, optimizer and loss history,
+runtime-derived package provenance, the complete installed-distribution inventory, lock-file hash,
+optimizer and loss history,
 parameter counts, hardware, duration, peak memory, output hashes, and the evaluation command.
 Training requires a clean Git checkout and proves that its `src/ste_compiler` Python tree matches
 the package that is actually executing.

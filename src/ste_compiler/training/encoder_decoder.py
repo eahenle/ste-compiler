@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import fnmatch
 import hashlib
 import importlib
@@ -11,6 +13,7 @@ import math
 import os
 import platform
 import random
+import re
 import shutil
 import stat
 import subprocess
@@ -18,9 +21,10 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, Final, cast
 
 from .config import (
     ArtifactIdentityV1,
@@ -61,14 +65,26 @@ _SAFE_SNAPSHOT_PATTERNS = [
     "*.vocab",
 ]
 _PROHIBITED_MODEL_SUFFIXES = frozenset({".bin", ".ckpt", ".pickle", ".pkl", ".pt", ".pth"})
-_DEPENDENCIES = (
-    "huggingface-hub",
-    "numpy",
-    "safetensors",
+_REQUIRED_DEPENDENCIES = frozenset(
+    {
+        "huggingface-hub",
+        "numpy",
+        "safetensors",
+        "ste-compiler",
+        "tokenizers",
+        "torch",
+        "transformers",
+    }
+)
+_EVALUATION_COMMAND: Final = (
     "ste-compiler",
-    "tokenizers",
-    "torch",
-    "transformers",
+    "evaluate-encoder-decoder-checkpoint",
+    "<training-config>",
+    "<corpus-release>",
+    "<checkpoint>",
+    "--run-manifest-sha256",
+    "<run-manifest-sha256>",
+    "--json",
 )
 _MAX_TREE_FILE_BYTES = 8 * 1024 * 1024 * 1024
 _MAX_TREE_BYTES = 32 * 1024 * 1024 * 1024
@@ -311,9 +327,9 @@ def _load_components(
     *,
     cache_dir: Path | None,
     private_root: Path,
+    runtime_modules: tuple[Any, Any, Any],
 ) -> tuple[Any, Any, Any, Any, CapturedTree]:
-    torch, transformers, huggingface_hub = _load_neural_runtime()
-    _prepare_runtime(torch, config.seed)
+    torch, transformers, huggingface_hub = runtime_modules
     base_snapshot = _resolve_snapshot(
         config.base_model,
         huggingface_hub,
@@ -837,23 +853,34 @@ def _git_package_provenance(
         raise EncoderDecoderTrainingError(
             "package source tree does not match the executing ste_compiler package"
         )
-    dependencies: list[tuple[str, str]] = []
-    for name in _DEPENDENCIES:
-        try:
-            version = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError as error:
+    installed: dict[str, str] = {}
+    for distribution in importlib.metadata.distributions():
+        raw_name = distribution.metadata.get("Name")
+        if raw_name is None or not raw_name.strip() or not distribution.version:
             raise EncoderDecoderTrainingError(
-                f"installed dependency version is unavailable: {name}"
-            ) from error
-        dependencies.append((name, version))
+                "cannot derive a complete installed-distribution inventory"
+            )
+        name = re.sub(r"[-_.]+", "-", raw_name.strip()).lower()
+        existing = installed.get(name)
+        if existing is not None and existing != distribution.version:
+            raise EncoderDecoderTrainingError(
+                f"multiple installed versions prevent reproducible provenance: {name}"
+            )
+        installed[name] = distribution.version
+    missing = sorted(_REQUIRED_DEPENDENCIES - installed.keys())
+    if missing:
+        raise EncoderDecoderTrainingError(
+            "runtime dependency inventory is missing required distributions: " + ", ".join(missing)
+        )
+    dependencies = tuple(sorted(installed.items()))
     return PackageProvenanceV1(
         distribution="ste-compiler",
-        version=dict(dependencies)["ste-compiler"],
+        version=installed["ste-compiler"],
         source_commit=commit,
         source_dirty=False,
         source_tree_sha256=runtime_tree,
         dependency_lock=_file_identity(dependency_lock),
-        dependencies=tuple(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -911,19 +938,77 @@ def _write_bytes(path: Path, data: bytes) -> None:
         os.fsync(handle.fileno())
 
 
-def _prepare_runtime(torch: Any, seed: int) -> None:
-    random.seed(seed)
+@contextmanager
+def _isolated_deterministic_runtime(torch: Any, seed: int) -> Iterator[None]:
+    python_random_state = random.getstate()
+    numpy: Any | None = None
+    numpy_random_state: Any | None = None
     try:
         numpy = importlib.import_module("numpy")
-        numpy.random.seed(seed % (2**32))
+        numpy_random_state = numpy.random.get_state()
     except (AttributeError, ImportError):
         pass
-    torch.manual_seed(seed)
-    torch.use_deterministic_algorithms(True)
-    torch.set_num_threads(1)
+    torch_random_state = torch.get_rng_state()
+    deterministic_enabled = torch.are_deterministic_algorithms_enabled()
+    deterministic_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    torch_threads = int(torch.get_num_threads())
+    try:
+        random.seed(seed)
+        if numpy is not None:
+            numpy.random.seed(seed % (2**32))
+        torch.manual_seed(seed)
+        torch.use_deterministic_algorithms(True)
+        torch.set_num_threads(1)
+        yield
+    finally:
+        random.setstate(python_random_state)
+        if numpy is not None and numpy_random_state is not None:
+            numpy.random.set_state(numpy_random_state)
+        torch.set_rng_state(torch_random_state)
+        torch.use_deterministic_algorithms(
+            deterministic_enabled,
+            warn_only=deterministic_warn_only,
+        )
+        torch.set_num_threads(torch_threads)
 
 
-def run_encoder_decoder_training(
+def _rename_no_replace(source: Path, destination: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "darwin":
+        rename = libc.renamex_np
+        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+        rename.restype = ctypes.c_int
+        result = rename(source_bytes, destination_bytes, 0x00000004)
+    elif sys.platform.startswith("linux"):
+        rename = libc.renameat2
+        rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        rename.restype = ctypes.c_int
+        result = rename(-100, source_bytes, -100, destination_bytes, 1)
+    else:
+        raise EncoderDecoderTrainingError(
+            f"atomic no-replace publication is unsupported on {sys.platform}"
+        )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise EncoderDecoderTrainingError(
+            f"training output was created concurrently: {destination}"
+        )
+    raise EncoderDecoderTrainingError(
+        f"cannot atomically publish output {destination}: {os.strerror(error_number)}"
+    )
+
+
+def _run_encoder_decoder_training(
     config: EncoderDecoderTrainingConfigV1,
     release_path: Path,
     output: Path,
@@ -931,17 +1016,16 @@ def run_encoder_decoder_training(
     source_root: Path,
     dependency_lock: Path,
     cache_dir: Path | None = None,
+    runtime_modules: tuple[Any, Any, Any],
 ) -> EncoderDecoderRunManifestV1:
-    """Run one offline CPU training job and atomically publish a safe checkpoint."""
-
-    output = output.absolute()
-    if output.exists() or output.is_symlink():
-        raise EncoderDecoderTrainingError(f"training output must not already exist: {output}")
     started = time.perf_counter()
     release = read_training_release(release_path, config.corpus)
     package = _git_package_provenance(source_root, dependency_lock)
 
-    output.parent.mkdir(parents=True, exist_ok=True)
+    if not output.parent.is_dir() or output.parent.is_symlink():
+        raise EncoderDecoderTrainingError(
+            f"training output parent must be a real directory: {output.parent}"
+        )
     stage = Path(
         tempfile.mkdtemp(
             prefix=f".{output.name}.stage-",
@@ -955,12 +1039,12 @@ def run_encoder_decoder_training(
         )
     )
     installed = False
-    output_reservation: tuple[int, int] | None = None
     try:
         torch, transformers, tokenizer, model, base_snapshot = _load_components(
             config,
             cache_dir=cache_dir,
             private_root=runtime / "initial",
+            runtime_modules=runtime_modules,
         )
         prepared = preflight_encoder_decoder_tokenizer(tokenizer, release, config)
         parameter_counts = _parameter_counts(model)
@@ -997,16 +1081,6 @@ def run_encoder_decoder_training(
             canonical_validation_metrics_json(validation),
         )
         output_artifacts = verify_safe_encoder_decoder_checkpoint(stage)
-        evaluation_command = (
-            "ste-compiler",
-            "evaluate-encoder-decoder-checkpoint",
-            str(output / "training-config.json"),
-            str(release_path.resolve()),
-            str(output),
-            "--run-manifest-sha256",
-            "<run-manifest-sha256>",
-            "--json",
-        )
         manifest = EncoderDecoderRunManifestV1(
             schema_version=RUN_MANIFEST_SCHEMA_VERSION,
             architecture="encoder-decoder",
@@ -1032,20 +1106,12 @@ def run_encoder_decoder_training(
             hardware=_hardware(torch),
             duration_seconds=time.perf_counter() - started,
             output_artifacts=output_artifacts,
-            evaluation_command=evaluation_command,
+            evaluation_command=_EVALUATION_COMMAND,
         )
         _write_bytes(stage / "run-manifest.json", canonical_run_manifest_json(manifest))
         verify_safe_encoder_decoder_checkpoint(stage)
         _fsync_tree(stage)
-        try:
-            output.mkdir(mode=0o700)
-        except FileExistsError as error:
-            raise EncoderDecoderTrainingError(
-                f"training output was created concurrently: {output}"
-            ) from error
-        reservation_metadata = output.stat(follow_symlinks=False)
-        output_reservation = (reservation_metadata.st_dev, reservation_metadata.st_ino)
-        os.rename(stage, output)
+        _rename_no_replace(stage, output)
         installed = True
         parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
@@ -1056,35 +1122,45 @@ def run_encoder_decoder_training(
     finally:
         if not installed:
             shutil.rmtree(stage, ignore_errors=True)
-            if output_reservation is not None:
-                try:
-                    output_metadata = output.stat(follow_symlinks=False)
-                    if (
-                        stat.S_ISDIR(output_metadata.st_mode)
-                        and (output_metadata.st_dev, output_metadata.st_ino) == output_reservation
-                    ):
-                        output.rmdir()
-                except OSError:
-                    pass
         shutil.rmtree(runtime, ignore_errors=True)
 
 
-def evaluate_encoder_decoder_checkpoint(
+def run_encoder_decoder_training(
     config: EncoderDecoderTrainingConfigV1,
     release_path: Path,
+    output: Path,
+    *,
+    source_root: Path,
+    dependency_lock: Path,
+    cache_dir: Path | None = None,
+) -> EncoderDecoderRunManifestV1:
+    """Run one offline CPU training job and atomically publish a safe checkpoint."""
+
+    output = output.absolute()
+    if output.exists() or output.is_symlink():
+        raise EncoderDecoderTrainingError(f"training output must not already exist: {output}")
+    runtime_modules = _load_neural_runtime()
+    with _isolated_deterministic_runtime(runtime_modules[0], config.seed):
+        return _run_encoder_decoder_training(
+            config,
+            release_path,
+            output,
+            source_root=source_root,
+            dependency_lock=dependency_lock,
+            cache_dir=cache_dir,
+            runtime_modules=runtime_modules,
+        )
+
+
+def _evaluate_encoder_decoder_checkpoint(
+    config: EncoderDecoderTrainingConfigV1,
     checkpoint: Path,
     run_manifest_sha256: str,
+    *,
+    release: TrainingReleaseSnapshot,
+    runtime_modules: tuple[Any, Any, Any],
 ) -> ValidationMetricsV1:
-    """Reload and score one safe local checkpoint on the pinned validation split."""
-
-    checkpoint = checkpoint.absolute()
-    release = read_training_release(release_path, config.corpus)
-    if len(run_manifest_sha256) != 64 or any(
-        character not in "0123456789abcdef" for character in run_manifest_sha256
-    ):
-        raise EncoderDecoderTrainingError("run manifest SHA-256 must be 64 lowercase hex digits")
-    torch, transformers, _ = _load_neural_runtime()
-    _prepare_runtime(torch, config.seed)
+    torch, transformers, _ = runtime_modules
     with tempfile.TemporaryDirectory(prefix="ste-checkpoint-evaluate-") as private:
         tokenizer, model, checkpoint_artifacts = _reload_components(
             transformers,
@@ -1123,16 +1199,6 @@ def evaluate_encoder_decoder_checkpoint(
                 expected_micro_steps * config.micro_batch_size,
             )
         )
-        expected_evaluation_command = (
-            "ste-compiler",
-            "evaluate-encoder-decoder-checkpoint",
-            str(checkpoint / "training-config.json"),
-            str(release_path.resolve()),
-            str(checkpoint),
-            "--run-manifest-sha256",
-            "<run-manifest-sha256>",
-            "--json",
-        )
         if (
             manifest.training_config_sha256 != training_config_sha256(config)
             or manifest.training_config != config
@@ -1165,7 +1231,7 @@ def evaluate_encoder_decoder_checkpoint(
             or validation_bytes != canonical_validation_metrics_json(manifest.validation)
             or manifest.parameter_counts != _parameter_counts(model)
             or manifest.output_artifacts != actual_output_artifacts
-            or manifest.evaluation_command != expected_evaluation_command
+            or manifest.evaluation_command != _EVALUATION_COMMAND
         ):
             raise EncoderDecoderTrainingError("checkpoint run manifest identity does not match")
         evaluated = _evaluate(torch, model, tokenizer, prepared)
@@ -1174,3 +1240,28 @@ def evaluate_encoder_decoder_checkpoint(
                 "checkpoint validation does not reproduce the run manifest"
             )
         return evaluated
+
+
+def evaluate_encoder_decoder_checkpoint(
+    config: EncoderDecoderTrainingConfigV1,
+    release_path: Path,
+    checkpoint: Path,
+    run_manifest_sha256: str,
+) -> ValidationMetricsV1:
+    """Reload and score one safe local checkpoint on the pinned validation split."""
+
+    checkpoint = checkpoint.absolute()
+    release = read_training_release(release_path, config.corpus)
+    if len(run_manifest_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in run_manifest_sha256
+    ):
+        raise EncoderDecoderTrainingError("run manifest SHA-256 must be 64 lowercase hex digits")
+    runtime_modules = _load_neural_runtime()
+    with _isolated_deterministic_runtime(runtime_modules[0], config.seed):
+        return _evaluate_encoder_decoder_checkpoint(
+            config,
+            checkpoint,
+            run_manifest_sha256,
+            release=release,
+            runtime_modules=runtime_modules,
+        )

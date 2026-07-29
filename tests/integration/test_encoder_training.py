@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
+import shutil
 import socket
 import subprocess
 import sys
@@ -104,6 +106,31 @@ def _run_manifest_hash(checkpoint: Path) -> str:
     return hashlib.sha256((checkpoint / "run-manifest.json").read_bytes()).hexdigest()
 
 
+def _call_without_runtime_state_leak(operation):
+    import numpy
+    import torch
+
+    python_random_state = random.getstate()
+    numpy_random_state = numpy.random.get_state()
+    torch_random_state = torch.get_rng_state().clone()
+    deterministic_enabled = torch.are_deterministic_algorithms_enabled()
+    deterministic_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    torch_threads = torch.get_num_threads()
+
+    result = operation()
+
+    assert random.getstate() == python_random_state
+    assert all(
+        left == right if isinstance(left, str | int | float) else (left == right).all()
+        for left, right in zip(numpy.random.get_state(), numpy_random_state, strict=True)
+    )
+    assert torch.equal(torch.get_rng_state(), torch_random_state)
+    assert torch.are_deterministic_algorithms_enabled() is deterministic_enabled
+    assert torch.is_deterministic_algorithms_warn_only_enabled() is deterministic_warn_only
+    assert torch.get_num_threads() == torch_threads
+    return result
+
+
 def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
     tmp_path,
     tiny_snapshot,
@@ -113,19 +140,23 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
     first = tmp_path / "first"
     second = tmp_path / "second"
 
-    first_manifest = run_encoder_decoder_training(
-        config,
-        RELEASE,
-        first,
-        source_root=ROOT,
-        dependency_lock=ROOT / "uv.lock",
+    first_manifest = _call_without_runtime_state_leak(
+        lambda: run_encoder_decoder_training(
+            config,
+            RELEASE,
+            first,
+            source_root=ROOT,
+            dependency_lock=ROOT / "uv.lock",
+        )
     )
-    second_manifest = run_encoder_decoder_training(
-        config,
-        RELEASE,
-        second,
-        source_root=ROOT,
-        dependency_lock=ROOT / "uv.lock",
+    second_manifest = _call_without_runtime_state_leak(
+        lambda: run_encoder_decoder_training(
+            config,
+            RELEASE,
+            second,
+            source_root=ROOT,
+            dependency_lock=ROOT / "uv.lock",
+        )
     )
 
     assert first_manifest.optimizer_steps == 2
@@ -147,7 +178,18 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
         first_manifest.package.dependency_lock.sha256
         == hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     )
-    assert dict(first_manifest.package.dependencies)["torch"]
+    dependency_names = dict(first_manifest.package.dependencies)
+    assert {
+        "accelerate",
+        "huggingface-hub",
+        "numpy",
+        "safetensors",
+        "ste-compiler",
+        "tokenizers",
+        "torch",
+        "transformers",
+    } <= dependency_names.keys()
+    assert len(dependency_names) > 8
     assert first_manifest.hardware.device == "cpu"
     assert first_manifest.duration_seconds >= 0
     assert first_manifest.corpus.manifest_sha256 == config.corpus.manifest_sha256
@@ -193,14 +235,32 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
     with pytest.raises(EncoderDecoderTrainingError, match="manifest digest does not match"):
         evaluate_encoder_decoder_checkpoint(config, RELEASE, first, "0" * 64)
 
-    reevaluated = evaluate_encoder_decoder_checkpoint(
-        config,
-        RELEASE,
-        first,
-        _run_manifest_hash(first),
+    reevaluated = _call_without_runtime_state_leak(
+        lambda: evaluate_encoder_decoder_checkpoint(
+            config,
+            RELEASE,
+            first,
+            _run_manifest_hash(first),
+        )
     )
 
     assert reevaluated == first_manifest.validation
+
+    relocated_root = tmp_path / "relocated"
+    relocated_root.mkdir()
+    relocated_checkpoint = shutil.copytree(first, relocated_root / "checkpoint")
+    relocated_release = shutil.copytree(RELEASE, relocated_root / "release")
+    assert (
+        _call_without_runtime_state_leak(
+            lambda: evaluate_encoder_decoder_checkpoint(
+                config,
+                relocated_release,
+                relocated_checkpoint,
+                _run_manifest_hash(relocated_checkpoint),
+            )
+        )
+        == first_manifest.validation
+    )
 
     (second / "validation-metrics.json").write_bytes(b"{}\n")
     with pytest.raises(EncoderDecoderTrainingError, match="manifest identity does not match"):
