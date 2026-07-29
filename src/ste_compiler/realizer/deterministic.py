@@ -17,7 +17,7 @@ from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
 
 class DeterministicRealizer:
-    version = "0.1.0"
+    version = "0.2.0"
 
     def _ref(self, ref: EntityRef | TermReference, terms: TerminologyRegistry) -> str:
         return ref.name if isinstance(ref, EntityRef) else terms.get(ref.term_id).canonical_form
@@ -76,6 +76,10 @@ class DeterministicRealizer:
         text = f"{self._ref(item.subject, terms)} {item.predicate} {value}."
         return text[:1].upper() + text[1:]
 
+    @staticmethod
+    def _causal_role(role: str, statement_text: str) -> str:
+        return f"{role}: {statement_text}"
+
     def realize(
         self,
         document: Document,
@@ -85,6 +89,7 @@ class DeterministicRealizer:
     ) -> RealizationResult:
         del vocabulary, constraints
         mappings: list[SentenceMapping] = []
+        statement_text: dict[str, str] = {}
         for section in document.sections:
             for item in section.statements:
                 if isinstance(item, Instruction):
@@ -113,5 +118,29 @@ class DeterministicRealizer:
                 )
                 features = item.model_dump(mode="json")
                 mappings.append(SentenceMapping(len(mappings) + 1, text, (item.id,), features))
+                statement_text[item.id] = text
+        statement_mapping_count = len(mappings)
+        relation_paragraphs: list[str] = []
+        for relation in document.causal_relations:
+            relation_features = relation.model_dump(mode="json")
+            relation_sentences: list[str] = []
+            for role, endpoint_id in (
+                ("Cause", relation.cause_node_id),
+                ("Effect", relation.effect_node_id),
+            ):
+                text = self._causal_role(role, statement_text[endpoint_id])
+                relation_sentences.append(text)
+                mappings.append(
+                    SentenceMapping(
+                        len(mappings) + 1,
+                        text,
+                        (relation.id, endpoint_id),
+                        {**relation_features, "causal_role": role.casefold()},
+                    )
+                )
+            relation_paragraphs.append("\n".join(relation_sentences))
         metadata = {k: str(v) for k, v in document.metadata.model_dump().items()}
-        return RealizationResult("\n".join(m.text for m in mappings), tuple(mappings), metadata)
+        text = "\n".join(mapping.text for mapping in mappings[:statement_mapping_count])
+        if relation_paragraphs:
+            text = "\n\n".join((text, *relation_paragraphs))
+        return RealizationResult(text, tuple(mappings), metadata)

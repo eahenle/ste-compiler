@@ -18,6 +18,12 @@ flowchart LR
 
 The LLM frontend can only propose schema-validated IR with source spans. It cannot author production text. The deterministic realizer provides milestone one without a model or network. A LoRA can teach an SLM the task, but does not guarantee lexical or semantic constraints; validation and constrained output remain necessary.
 
+Causal links are explicit IR nodes with claim-level provenance. The deterministic realizer emits
+each link as two labeled controlled sentences (`Cause: ...` and `Effect: ...`), and semantic
+validation checks their direction, endpoint mappings, feature snapshot, and exact surfaces
+independently. Each relation pair is a separate paragraph so it cannot overflow the source
+paragraph's sentence limit.
+
 ## Quick start
 
 Requires Python 3.12+.

@@ -12,8 +12,8 @@
     "vocabulary": {
       "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
       "origin": "original demonstration vocabulary authored for ste-compiler",
-      "sha256": "bee40f7a3c3e4f487708b520f193cf434cfe660cf814467cecacce6721bfe1b6",
-      "version": "demo-2"
+      "sha256": "a64d2c9b98923be00e766c93d0ab976807b80f88cd7d5ee1d97c5f1feeefc8d5",
+      "version": "demo-3"
     }
   },
   "records": [
@@ -538,6 +538,13 @@
     },
     {
       "document": {
+        "causal_relations": [
+          {
+            "cause_node_id": "open_panel",
+            "effect_node_id": "inspect_pump",
+            "id": "open_panel_causes_inspection"
+          }
+        ],
         "id": "adversarial_reference_sequence",
         "references": [
           {
@@ -589,9 +596,10 @@
       "source_id": "adversarial_reference_sequence.txt",
       "source_quotes": {
         "inspect_pump": "Inspect the pump.",
-        "open_panel": "Open the access panel before the test."
+        "open_panel": "Open the access panel before the test.",
+        "open_panel_causes_inspection": "Opening the access panel causes inspection of the pump."
       },
-      "source_text": "Open the access panel before the test.\nInspect the pump.",
+      "source_text": "Open the access panel before the test.\nOpening the access panel causes inspection of the pump.\nInspect the pump.",
       "split": "adversarial"
     }
   ],

@@ -48,7 +48,13 @@ class LLMFrontend:
                 if any(not statement.source_spans for statement in statements):
                     raise ValueError("all extracted claims must include quoted source spans")
                 spans = [
-                    span for claim in [*statements, *doc.ambiguities] for span in claim.source_spans
+                    span
+                    for claim in [
+                        *statements,
+                        *doc.ambiguities,
+                        *doc.causal_relations,
+                    ]
+                    for span in claim.source_spans
                 ]
                 for span in spans:
                     self._verify_span(span, source, source_id)

@@ -79,8 +79,8 @@
       "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
       "origin": "original demonstration vocabulary authored for ste-compiler",
       "path": "vocabulary.json",
-      "sha256": "bee40f7a3c3e4f487708b520f193cf434cfe660cf814467cecacce6721bfe1b6",
-      "version": "demo-2"
+      "sha256": "a64d2c9b98923be00e766c93d0ab976807b80f88cd7d5ee1d97c5f1feeefc8d5",
+      "version": "demo-3"
     },
     {
       "license": "MIT; original demonstration terminology, not ASD-STE100 terminology",

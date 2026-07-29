@@ -6,6 +6,12 @@
         "adversarial"
       ]
     },
+    "causal_relation": {
+      "count": 1,
+      "splits": [
+        "adversarial"
+      ]
+    },
     "condition": {
       "count": 3,
       "splits": [
@@ -257,6 +263,7 @@
   "missing_features": [],
   "required_features": [
     "ambiguity",
+    "causal_relation",
     "condition",
     "condition.exception",
     "document.multi_section",

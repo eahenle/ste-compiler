@@ -85,8 +85,10 @@ class TemporalRelation(StrictModel):
 
 
 class CausalRelation(StrictModel):
+    id: str
     cause_node_id: str
     effect_node_id: str
+    source_spans: list[SourceSpan] = Field(min_length=1)
 
 
 class Hazard(StrictModel):
@@ -157,8 +159,8 @@ class ReproducibilityMetadata(StrictModel):
     frontend: str = "manual"
     frontend_version: str = "0.1.0"
     realizer: str = "deterministic"
-    realizer_version: str = "0.1.0"
-    vocabulary_version: str = "demo-2"
+    realizer_version: str = "0.2.0"
+    vocabulary_version: str = "demo-3"
     terminology_version: str = "hydraulic-demo-1"
     validator_profile: str = "strict-demo-1"
 
@@ -171,3 +173,53 @@ class Document(StrictModel):
     causal_relations: list[CausalRelation] = []
     references: list[Reference] = []
     metadata: ReproducibilityMetadata = ReproducibilityMetadata()
+
+    @model_validator(mode="after")
+    def valid_causal_graph(self) -> Document:
+        ordered_statement_ids = [
+            statement.id for section in self.sections for statement in section.statements
+        ]
+        statement_ids = set(ordered_statement_ids)
+        if len(statement_ids) != len(ordered_statement_ids):
+            duplicate_ids = sorted(
+                {
+                    statement_id
+                    for statement_id in statement_ids
+                    if ordered_statement_ids.count(statement_id) > 1
+                }
+            )
+            raise ValueError("statement ids must be unique: " + ", ".join(duplicate_ids))
+        occupied_ids = set(statement_ids)
+        occupied_ids.update(
+            hazard.id
+            for section in self.sections
+            for statement in section.statements
+            if isinstance(statement, Instruction)
+            for hazard in statement.hazards
+        )
+        occupied_ids.update(ambiguity.id for ambiguity in self.ambiguities)
+        relation_pairs: set[tuple[str, str]] = set()
+        for relation in self.causal_relations:
+            if relation.id in occupied_ids:
+                raise ValueError(f"causal relation id {relation.id!r} is not unique")
+            occupied_ids.add(relation.id)
+            if relation.cause_node_id == relation.effect_node_id:
+                raise ValueError("causal relation endpoints must be different")
+            missing = {
+                endpoint
+                for endpoint in (relation.cause_node_id, relation.effect_node_id)
+                if endpoint not in statement_ids
+            }
+            if missing:
+                raise ValueError(
+                    "causal relation endpoints must refer to statements: "
+                    + ", ".join(sorted(missing))
+                )
+            pair = (relation.cause_node_id, relation.effect_node_id)
+            if pair in relation_pairs:
+                raise ValueError(
+                    "causal relation cause and effect pairs must be unique: "
+                    f"{relation.cause_node_id!r} -> {relation.effect_node_id!r}"
+                )
+            relation_pairs.add(pair)
+        return self

@@ -13,6 +13,7 @@ from ste_compiler.training import (
     build_training_record,
     verify_demonstration_corpus,
 )
+from ste_compiler.training.release import _composition
 
 ROOT = Path(__file__).parents[2]
 CONSTRUCTION = ROOT / "data/demonstration_corpus/v1/source-construction.json"
@@ -107,6 +108,10 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
                     assert len(statement.source_spans) == 1
                     span = statement.source_spans[0]
                     assert source["text"][span.start : span.end] == span.quote
+            for relation in document.causal_relations:
+                assert len(relation.source_spans) == 1
+                span = relation.source_spans[0]
+                assert source["text"][span.start : span.end] == span.quote
 
     multi = Document.model_validate(records_by_id["test_multisection_state"]["ir"])
     multi_quotes = [
@@ -126,6 +131,22 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
 
     ambiguity = Document.model_validate(records_by_id["adversarial_ambiguity"]["ir"])
     assert ambiguity.ambiguities[0].source_spans[0].quote == "ON or OFF"
+
+    causal = Document.model_validate(records_by_id["adversarial_reference_sequence"]["ir"])
+    assert causal.causal_relations[0].id == "open_panel_causes_inspection"
+    assert causal.causal_relations[0].source_spans[0].quote == (
+        "Opening the access panel causes inspection of the pump."
+    )
+    assert records_by_id["adversarial_reference_sequence"]["text"].endswith(
+        "\n\nCause: Open the access panel before the test.\nEffect: Inspect the pump."
+    )
+
+
+def test_causal_relation_is_part_of_compositional_holdout_identity():
+    assert _composition(("causal_relation", "reference", "statement.instruction")) == (
+        "causal_relation",
+        "statement.instruction",
+    )
 
 
 def test_release_rejects_cross_split_source_duplicates(tmp_path, vocab):
