@@ -100,8 +100,18 @@ def _resign_two_system_benchmark(
         predictions.append(original)
         duplicate = json.loads(json.dumps(original))
         duplicate["system_id"] = second_system["system_id"]
-        if duplicate["case_id"] == "adversarial_ambiguity" and inconsistent_gold_field is not None:
-            duplicate["frontend"][inconsistent_gold_field] += 1
+        if inconsistent_gold_field is not None:
+            if inconsistent_gold_field.startswith("frontend."):
+                if duplicate["case_id"] == "adversarial_ambiguity":
+                    frontend_field = inconsistent_gold_field.removeprefix("frontend.")
+                    duplicate["frontend"][frontend_field] += 1
+            elif (
+                duplicate["case_id"] == "test_negated_quantity_condition"
+                and inconsistent_gold_field == "validator.gold_should_accept"
+            ):
+                duplicate["validator"]["gold_should_accept"] = False
+                duplicate["failure_stage"] = "validator"
+                duplicate["failure_code"] = "validator.false_accept"
         predictions.append(duplicate)
     prediction_bytes = b"".join(
         (
@@ -1375,22 +1385,27 @@ def test_report_rejects_unknown_failure_code_even_when_predictions_are_resigned(
 @pytest.mark.parametrize(
     "gold_field",
     (
-        "required_fields_gold",
-        "ambiguities_gold",
-        "source_spans_gold",
+        "frontend.required_fields_gold",
+        "frontend.ambiguities_gold",
+        "frontend.source_spans_gold",
+        "validator.gold_should_accept",
     ),
 )
-def test_report_rejects_cross_system_gold_count_disagreement(tmp_path, gold_field):
+def test_report_rejects_cross_system_gold_contract_disagreement(tmp_path, gold_field):
     specification, manifest, predictions = _resign_two_system_benchmark(
         tmp_path,
         inconsistent_gold_field=gold_field,
+    )
+    case_id = (
+        "test_negated_quantity_condition"
+        if gold_field == "validator.gold_should_accept"
+        else "adversarial_ambiguity"
     )
 
     with pytest.raises(
         ValueError,
         match=(
-            "prediction frontend gold counts disagree across systems for case "
-            f"adversarial_ambiguity: {gold_field}"
+            f"prediction gold contract disagrees across systems for case {case_id}: {gold_field}"
         ),
     ):
         generate_evidence_report(

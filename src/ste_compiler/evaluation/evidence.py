@@ -904,34 +904,36 @@ def _prediction_lines(data: bytes) -> tuple[PredictionRecordV1, ...]:
     return tuple(records)
 
 
-def _validate_case_gold_counts(records: tuple[PredictionRecordV1, ...]) -> None:
-    gold_by_case: dict[str, tuple[int, int, int]] = {}
+def _validate_case_gold_contract(records: tuple[PredictionRecordV1, ...]) -> None:
+    gold_contract_by_case: dict[str, tuple[int, int, int, bool]] = {}
     field_names = (
-        "required_fields_gold",
-        "ambiguities_gold",
-        "source_spans_gold",
+        "frontend.required_fields_gold",
+        "frontend.ambiguities_gold",
+        "frontend.source_spans_gold",
+        "validator.gold_should_accept",
     )
     for record in records:
-        counts = (
+        contract = (
             record.frontend.required_fields_gold,
             record.frontend.ambiguities_gold,
             record.frontend.source_spans_gold,
+            record.validator.gold_should_accept,
         )
-        expected = gold_by_case.setdefault(record.case_id, counts)
-        if counts == expected:
+        expected = gold_contract_by_case.setdefault(record.case_id, contract)
+        if contract == expected:
             continue
         mismatched_fields = ", ".join(
             field_name
-            for field_name, expected_count, actual_count in zip(
+            for field_name, expected_value, actual_value in zip(
                 field_names,
                 expected,
-                counts,
+                contract,
                 strict=True,
             )
-            if actual_count != expected_count
+            if actual_value != expected_value
         )
         raise ValueError(
-            "prediction frontend gold counts disagree across systems for case "
+            "prediction gold contract disagrees across systems for case "
             f"{record.case_id}: {mismatched_fields}"
         )
 
@@ -1546,7 +1548,7 @@ def generate_evidence_report(
             raise ValueError(f"prediction cross-binding is invalid: {record.case_id}")
         if record.failure_code is not None and record.failure_code not in taxonomy_codes:
             raise ValueError(f"prediction uses an unknown failure code: {record.failure_code}")
-    _validate_case_gold_counts(records)
+    _validate_case_gold_contract(records)
     _validate_release_cases(spec_model, dataset_release)
 
     metrics = recompute_metrics(
