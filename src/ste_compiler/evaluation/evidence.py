@@ -15,7 +15,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Annotated, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 from ste_compiler.training import CorpusSelectionV1, read_training_release
 
@@ -86,11 +94,39 @@ REJECTING_DIAGNOSTIC_CODES: Final = (
 VALIDATOR_DIAGNOSTIC_CODES: Final = REJECTING_DIAGNOSTIC_CODES | WARNING_DIAGNOSTIC_CODES
 EvidenceKind = Literal["deterministic_fixture", "external_measured"]
 FailureStage = Literal["none", "frontend", "realizer", "validator"]
-FailureCode = Annotated[
-    str,
-    Field(pattern=r"^(frontend|realizer|validator)\.[a-z0-9_]+$"),
+FailureTaxonomyStage = Literal["frontend", "realizer", "validator"]
+FailureCode = Literal[
+    "frontend.schema_invalid",
+    "frontend.required_field_omission",
+    "frontend.source_span_mismatch",
+    "frontend.hallucinated_node",
+    "frontend.ambiguity_not_preserved",
+    "realizer.unauthorized_symbol",
+    "realizer.incomplete_eos",
+    "realizer.grammar_invalid",
+    "realizer.constraint_rejection",
+    "validator.semantic_rejection",
+    "validator.lexical_rejection",
+    "validator.structural_rejection",
+    "validator.false_accept",
 ]
-NonnegativeCount = Annotated[int, Field(ge=0)]
+FAILURE_TAXONOMY_V1: Final[tuple[tuple[FailureCode, FailureTaxonomyStage], ...]] = (
+    ("frontend.schema_invalid", "frontend"),
+    ("frontend.required_field_omission", "frontend"),
+    ("frontend.source_span_mismatch", "frontend"),
+    ("frontend.hallucinated_node", "frontend"),
+    ("frontend.ambiguity_not_preserved", "frontend"),
+    ("realizer.unauthorized_symbol", "realizer"),
+    ("realizer.incomplete_eos", "realizer"),
+    ("realizer.grammar_invalid", "realizer"),
+    ("realizer.constraint_rejection", "realizer"),
+    ("validator.semantic_rejection", "validator"),
+    ("validator.lexical_rejection", "validator"),
+    ("validator.structural_rejection", "validator"),
+    ("validator.false_accept", "validator"),
+)
+NonnegativeCount = Annotated[StrictInt, Field(ge=0)]
+StrictFiniteFloat = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 
 
 class StrictEvidenceModel(BaseModel):
@@ -98,27 +134,27 @@ class StrictEvidenceModel(BaseModel):
 
 
 class FileIdentityV1(StrictEvidenceModel):
-    path: str = Field(min_length=1, pattern=r"\S")
-    sha256: str = Field(pattern=SHA256_PATTERN)
-    bytes: int = Field(ge=0)
+    path: StrictStr = Field(min_length=1, pattern=r"\S")
+    sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    bytes: StrictInt = Field(ge=0)
 
 
 class DatasetIdentityV1(StrictEvidenceModel):
-    dataset_version: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
-    manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    dataset_version: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    manifest_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
 
 
 class BenchmarkCaseV1(StrictEvidenceModel):
-    case_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    case_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
     split: Literal["test", "adversarial"]
-    source_sha256: str = Field(pattern=SHA256_PATTERN)
+    source_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
 
 
 class BenchmarkSystemV1(StrictEvidenceModel):
-    system_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    system_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
     evidence_kind: EvidenceKind
-    artifact_manifest_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
-    description: str = Field(min_length=1)
+    artifact_manifest_sha256: StrictStr | None = Field(default=None, pattern=SHA256_PATTERN)
+    description: StrictStr = Field(min_length=1)
 
     @model_validator(mode="after")
     def measured_system_requires_artifact_identity(self) -> BenchmarkSystemV1:
@@ -131,18 +167,18 @@ class BenchmarkSystemV1(StrictEvidenceModel):
 
 class BenchmarkSpecV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-spec-v1"]
-    benchmark_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
-    version: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    benchmark_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    version: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
     evidence_label: Literal["deterministic_fixture_only", "external_measured"]
-    claim_scope: str = Field(min_length=1)
-    non_certification_notice: str = Field(min_length=1)
+    claim_scope: StrictStr = Field(min_length=1)
+    non_certification_notice: StrictStr = Field(min_length=1)
     dataset: DatasetIdentityV1
     cases: tuple[BenchmarkCaseV1, ...] = Field(min_length=1)
     systems: tuple[BenchmarkSystemV1, ...] = Field(min_length=1)
-    metrics: tuple[str, ...] = Field(min_length=1)
-    failure_taxonomy_sha256: str = Field(pattern=SHA256_PATTERN)
+    metrics: tuple[StrictStr, ...] = Field(min_length=1)
+    failure_taxonomy_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
     confidence_interval: Literal["wilson-score-95"]
-    seed: int = Field(ge=0)
+    seed: StrictInt = Field(ge=0)
 
     @model_validator(mode="after")
     def frozen_contract(self) -> BenchmarkSpecV1:
@@ -168,9 +204,12 @@ class BenchmarkSpecV1(StrictEvidenceModel):
 
 
 class FailureCodeV1(StrictEvidenceModel):
-    code: str = Field(min_length=1, pattern=r"^(frontend|realizer|validator)\.[a-z0-9_]+$")
-    stage: Literal["frontend", "realizer", "validator"]
-    description: str = Field(min_length=1)
+    code: StrictStr = Field(
+        min_length=1,
+        pattern=r"^(frontend|realizer|validator)\.[a-z0-9_]+$",
+    )
+    stage: FailureTaxonomyStage
+    description: StrictStr = Field(min_length=1)
 
     @model_validator(mode="after")
     def stage_matches_code(self) -> FailureCodeV1:
@@ -181,30 +220,32 @@ class FailureCodeV1(StrictEvidenceModel):
 
 class FailureTaxonomyV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-failure-taxonomy-v1"]
-    version: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    version: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
     codes: tuple[FailureCodeV1, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def unique_codes(self) -> FailureTaxonomyV1:
-        codes = [item.code for item in self.codes]
-        if len(set(codes)) != len(codes):
-            raise ValueError("failure taxonomy codes must be unique")
+    def frozen_inventory(self) -> FailureTaxonomyV1:
+        inventory = tuple((item.code, item.stage) for item in self.codes)
+        if inventory != FAILURE_TAXONOMY_V1:
+            raise ValueError(
+                "failure taxonomy must equal the frozen v1 code, order, and stage inventory"
+            )
         return self
 
 
 class FrontendObservationV1(StrictEvidenceModel):
     status: Literal["succeeded", "failed"]
-    schema_valid: bool
-    required_fields_gold: int = Field(ge=0)
-    required_fields_predicted: int = Field(ge=0)
-    required_fields_matched: int = Field(ge=0)
-    predicted_nodes: int = Field(ge=0)
-    hallucinated_nodes: int = Field(ge=0)
-    ambiguities_gold: int = Field(ge=0)
-    ambiguities_preserved: int = Field(ge=0)
-    source_spans_gold: int = Field(ge=0)
-    source_spans_exact: int = Field(ge=0)
-    source_spans_overlapping: int = Field(ge=0)
+    schema_valid: StrictBool
+    required_fields_gold: StrictInt = Field(ge=0)
+    required_fields_predicted: StrictInt = Field(ge=0)
+    required_fields_matched: StrictInt = Field(ge=0)
+    predicted_nodes: StrictInt = Field(ge=0)
+    hallucinated_nodes: StrictInt = Field(ge=0)
+    ambiguities_gold: StrictInt = Field(ge=0)
+    ambiguities_preserved: StrictInt = Field(ge=0)
+    source_spans_gold: StrictInt = Field(ge=0)
+    source_spans_exact: StrictInt = Field(ge=0)
+    source_spans_overlapping: StrictInt = Field(ge=0)
 
     @model_validator(mode="after")
     def bounded_counts(self) -> FrontendObservationV1:
@@ -240,12 +281,12 @@ class FrontendObservationV1(StrictEvidenceModel):
 
 class RealizerObservationV1(StrictEvidenceModel):
     status: Literal["succeeded", "failed", "not_run"]
-    exact_symbolic_plan: bool | None
-    grammar_valid: bool | None
-    eos_completed: bool | None
-    predicted_symbol_count: int | None = Field(default=None, ge=0)
-    unauthorized_symbol_count: int | None = Field(default=None, ge=0)
-    constraint_rejected: bool | None
+    exact_symbolic_plan: StrictBool | None
+    grammar_valid: StrictBool | None
+    eos_completed: StrictBool | None
+    predicted_symbol_count: StrictInt | None = Field(default=None, ge=0)
+    unauthorized_symbol_count: StrictInt | None = Field(default=None, ge=0)
+    constraint_rejected: StrictBool | None
 
     @model_validator(mode="after")
     def status_controls_measurements(self) -> RealizerObservationV1:
@@ -292,8 +333,8 @@ class RealizerObservationV1(StrictEvidenceModel):
 
 class ValidatorObservationV1(StrictEvidenceModel):
     status: Literal["accepted", "rejected", "not_run"]
-    gold_should_accept: bool
-    diagnostic_codes: tuple[str, ...]
+    gold_should_accept: StrictBool
+    diagnostic_codes: tuple[StrictStr, ...]
 
     @model_validator(mode="after")
     def not_run_has_no_diagnostics(self) -> ValidatorObservationV1:
@@ -318,21 +359,21 @@ class ValidatorObservationV1(StrictEvidenceModel):
 
 class PredictionRecordV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-prediction-v1"]
-    benchmark_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
-    case_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
-    system_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    benchmark_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    case_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    system_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
     evidence_kind: EvidenceKind
     dataset: DatasetIdentityV1
-    source_sha256: str = Field(pattern=SHA256_PATTERN)
+    source_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
     frontend: FrontendObservationV1
     realizer: RealizerObservationV1
     validator: ValidatorObservationV1
     failure_stage: FailureStage
-    failure_code: str | None
-    provenance_complete: bool
-    deterministic_repeat: bool
-    raw_output: str | None
-    notes: str = Field(min_length=1)
+    failure_code: FailureCode | None
+    provenance_complete: StrictBool
+    deterministic_repeat: StrictBool
+    raw_output: StrictStr | None
+    notes: StrictStr = Field(min_length=1)
 
     @model_validator(mode="after")
     def causal_failure_stage(self) -> PredictionRecordV1:
@@ -447,18 +488,18 @@ class PredictionRecordV1(StrictEvidenceModel):
 
 class PredictionManifestV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-prediction-manifest-v1"]
-    benchmark_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
-    benchmark_spec_sha256: str = Field(pattern=SHA256_PATTERN)
+    benchmark_id: StrictStr = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    benchmark_spec_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
     dataset: DatasetIdentityV1
     systems: tuple[BenchmarkSystemV1, ...] = Field(min_length=1)
     predictions: FileIdentityV1
-    record_count: int = Field(gt=0)
+    record_count: StrictInt = Field(gt=0)
 
 
 class ConfidenceIntervalV1(StrictEvidenceModel):
     method: Literal["wilson-score-95", "none-derived"]
-    lower: FiniteFloat | None = Field(default=None, ge=0, le=1)
-    upper: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    lower: StrictFiniteFloat | None = Field(default=None, ge=0, le=1)
+    upper: StrictFiniteFloat | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_bounds(self) -> ConfidenceIntervalV1:
@@ -474,9 +515,9 @@ class ConfidenceIntervalV1(StrictEvidenceModel):
 
 
 class MetricEstimateV1(StrictEvidenceModel):
-    numerator: int | None = Field(default=None, ge=0)
-    denominator: int | None = Field(default=None, ge=0)
-    value: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    numerator: StrictInt | None = Field(default=None, ge=0)
+    denominator: StrictInt | None = Field(default=None, ge=0)
+    value: StrictFiniteFloat | None = Field(default=None, ge=0, le=1)
     confidence_interval: ConfidenceIntervalV1
 
     @model_validator(mode="after")
@@ -536,13 +577,13 @@ class MetricEstimateV1(StrictEvidenceModel):
 
 class BenchmarkMetricsV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-metrics-v1"]
-    benchmark_id: str
+    benchmark_id: StrictStr
     evidence_label: Literal["deterministic_fixture_only", "external_measured"]
-    claim_scope: str
-    benchmark_spec_sha256: str = Field(pattern=SHA256_PATTERN)
-    prediction_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
-    predictions_sha256: str = Field(pattern=SHA256_PATTERN)
-    record_count: int = Field(gt=0)
+    claim_scope: StrictStr
+    benchmark_spec_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    prediction_manifest_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    predictions_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    record_count: StrictInt = Field(gt=0)
     systems: dict[str, SystemMetricsV1] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -553,7 +594,7 @@ class BenchmarkMetricsV1(StrictEvidenceModel):
 
 
 class SystemMetricsV1(StrictEvidenceModel):
-    record_count: int = Field(gt=0)
+    record_count: StrictInt = Field(gt=0)
     metrics: dict[str, MetricEstimateV1]
     failure_stage_counts: dict[FailureStage, NonnegativeCount]
     failure_code_counts: dict[FailureCode, NonnegativeCount]
@@ -742,13 +783,16 @@ class SystemMetricsV1(StrictEvidenceModel):
 
 class ReportManifestV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-report-manifest-v1"]
-    benchmark_id: str
+    benchmark_id: StrictStr
     evidence_label: Literal["deterministic_fixture_only", "external_measured"]
-    benchmark_spec_sha256: str = Field(pattern=SHA256_PATTERN)
-    failure_taxonomy_sha256: str = Field(pattern=SHA256_PATTERN)
-    prediction_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
-    predictions_sha256: str = Field(pattern=SHA256_PATTERN)
-    system_artifact_manifest_sha256s: tuple[Annotated[str, Field(pattern=SHA256_PATTERN)], ...]
+    benchmark_spec_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    failure_taxonomy_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    prediction_manifest_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    predictions_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    system_artifact_manifest_sha256s: tuple[
+        Annotated[StrictStr, Field(pattern=SHA256_PATTERN)],
+        ...,
+    ]
     artifacts: tuple[FileIdentityV1, ...] = Field(min_length=2, max_length=2)
 
     @model_validator(mode="after")

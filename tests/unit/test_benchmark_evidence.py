@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -75,6 +76,44 @@ def _resign_predictions(tmp_path: Path, mutate) -> tuple[Path, Path]:
     return manifest_path, prediction_path
 
 
+@pytest.mark.parametrize(
+    ("model", "payload", "path", "coerced_value"),
+    [
+        (
+            BenchmarkSpecV1,
+            json.loads(SPECIFICATION.read_text()),
+            ("seed",),
+            "1729",
+        ),
+        (
+            PredictionRecordV1,
+            json.loads(PREDICTIONS.read_text().splitlines()[0]),
+            ("frontend", "schema_valid"),
+            "yes",
+        ),
+        (
+            BenchmarkMetricsV1,
+            json.loads((EXPECTED / "metrics.json").read_text()),
+            ("record_count",),
+            "4",
+        ),
+    ],
+)
+def test_evidence_models_reject_coercible_noncanonical_json_primitives(
+    model,
+    payload,
+    path,
+    coerced_value,
+):
+    target = payload
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = coerced_value
+
+    with pytest.raises(ValidationError):
+        model.model_validate_json(json.dumps(payload))
+
+
 def test_fixture_report_reconstructs_byte_for_byte(tmp_path):
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -132,6 +171,93 @@ def test_golden_report_manifest_satisfies_standalone_schema():
         "metrics.json",
         "report.md",
     )
+
+
+def _taxonomy_payload() -> dict:
+    return json.loads(TAXONOMY.read_text())
+
+
+def test_failure_taxonomy_fixture_matches_frozen_v1_inventory():
+    taxonomy = FailureTaxonomyV1.model_validate(_taxonomy_payload())
+
+    assert tuple((item.code, item.stage) for item in taxonomy.codes) == (
+        evidence_module.FAILURE_TAXONOMY_V1
+    )
+    assert get_args(evidence_module.FailureCode) == tuple(
+        code for code, _stage in evidence_module.FAILURE_TAXONOMY_V1
+    )
+
+
+@pytest.mark.parametrize(
+    "index",
+    range(len(evidence_module.FAILURE_TAXONOMY_V1)),
+)
+def test_failure_taxonomy_rejects_each_possible_omission(index):
+    payload = _taxonomy_payload()
+    payload["codes"].pop(index)
+
+    with pytest.raises(
+        ValidationError,
+        match="failure taxonomy must equal the frozen v1 code, order, and stage inventory",
+    ):
+        FailureTaxonomyV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "index",
+    range(len(evidence_module.FAILURE_TAXONOMY_V1) - 1),
+)
+def test_failure_taxonomy_rejects_each_adjacent_reordering(index):
+    payload = _taxonomy_payload()
+    payload["codes"][index], payload["codes"][index + 1] = (
+        payload["codes"][index + 1],
+        payload["codes"][index],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="failure taxonomy must equal the frozen v1 code, order, and stage inventory",
+    ):
+        FailureTaxonomyV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("code", "stage"),
+    (
+        ("frontend.custom_failure", "frontend"),
+        ("realizer.custom_failure", "realizer"),
+        ("validator.custom_failure", "validator"),
+    ),
+)
+def test_failure_taxonomy_rejects_additions_in_each_stage(code, stage):
+    payload = _taxonomy_payload()
+    payload["codes"].append(
+        {
+            "code": code,
+            "stage": stage,
+            "description": "A custom extension that v1 does not permit.",
+        }
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="failure taxonomy must equal the frozen v1 code, order, and stage inventory",
+    ):
+        FailureTaxonomyV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "index",
+    range(len(evidence_module.FAILURE_TAXONOMY_V1)),
+)
+def test_failure_taxonomy_rejects_each_incorrect_stage_mapping(index):
+    payload = _taxonomy_payload()
+    stages = ("frontend", "realizer", "validator")
+    expected_stage = payload["codes"][index]["stage"]
+    payload["codes"][index]["stage"] = next(stage for stage in stages if stage != expected_stage)
+
+    with pytest.raises(ValidationError):
+        FailureTaxonomyV1.model_validate(payload)
 
 
 def test_report_manifest_rejects_malformed_system_artifact_hash():
@@ -366,7 +492,7 @@ def test_benchmark_metrics_schema_rejects_unknown_failure_code_namespace():
     system = next(iter(payload["systems"].values()))
     system["failure_code_counts"]["postprocessor.unknown_failure"] = 0
 
-    with pytest.raises(ValidationError, match="String should match pattern"):
+    with pytest.raises(ValidationError, match="Input should be"):
         BenchmarkMetricsV1.model_validate(payload)
 
 
@@ -868,6 +994,25 @@ def test_schema_invalid_failure_code_requires_invalid_schema():
         PredictionRecordV1.model_validate(record)
 
 
+@pytest.mark.parametrize(
+    ("record_index", "failure_code"),
+    (
+        (1, "frontend.custom_failure"),
+        (2, "realizer.custom_failure"),
+        (3, "validator.custom_failure"),
+    ),
+)
+def test_prediction_schema_rejects_custom_failure_codes_standalone(
+    record_index,
+    failure_code,
+):
+    record = json.loads(PREDICTIONS.read_text().splitlines()[record_index])
+    record["failure_code"] = failure_code
+
+    with pytest.raises(ValidationError, match="Input should be"):
+        PredictionRecordV1.model_validate(record)
+
+
 def _standalone_constraint_rejection() -> dict:
     record = json.loads(PREDICTIONS.read_text().splitlines()[2])
     record["realizer"].update(
@@ -896,10 +1041,7 @@ def test_standalone_constraint_rejection_requires_its_specific_failure_code():
     record = _standalone_constraint_rejection()
     record["failure_code"] = "realizer.other_failure"
 
-    with pytest.raises(
-        ValidationError,
-        match="standalone constraint rejection requires",
-    ):
+    with pytest.raises(ValidationError, match="Input should be"):
         PredictionRecordV1.model_validate(record)
 
 
@@ -1169,7 +1311,7 @@ def test_report_rejects_unknown_failure_code_even_when_predictions_are_resigned(
         ),
     )
 
-    with pytest.raises(ValueError, match="prediction uses an unknown failure code"):
+    with pytest.raises(ValueError, match="Input should be"):
         generate_evidence_report(
             specification_path=SPECIFICATION,
             taxonomy_path=TAXONOMY,
