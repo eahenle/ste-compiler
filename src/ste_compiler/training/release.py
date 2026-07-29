@@ -365,6 +365,7 @@ def _normalized_source(source_text: str) -> str:
 
 def _composition(features: tuple[str, ...]) -> tuple[str, ...]:
     prefixes = (
+        "causal_relation",
         "condition",
         "hazard",
         "instruction.",
