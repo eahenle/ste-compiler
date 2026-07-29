@@ -17,7 +17,7 @@ from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 
 
 class DeterministicRealizer:
-    version = "0.1.0"
+    version = "0.2.0"
 
     def _ref(self, ref: EntityRef | TermReference, terms: TerminologyRegistry) -> str:
         return ref.name if isinstance(ref, EntityRef) else terms.get(ref.term_id).canonical_form
@@ -76,6 +76,12 @@ class DeterministicRealizer:
         text = f"{self._ref(item.subject, terms)} {item.predicate} {value}."
         return text[:1].upper() + text[1:]
 
+    @staticmethod
+    def _causal_relation(cause_text: str, effect_text: str) -> str:
+        cause_clause = cause_text.removesuffix(".")
+        effect_clause = effect_text.removesuffix(".")
+        return f"Cause: {cause_clause}; effect: {effect_clause}."
+
     def realize(
         self,
         document: Document,
@@ -85,6 +91,7 @@ class DeterministicRealizer:
     ) -> RealizationResult:
         del vocabulary, constraints
         mappings: list[SentenceMapping] = []
+        statement_text: dict[str, str] = {}
         for section in document.sections:
             for item in section.statements:
                 if isinstance(item, Instruction):
@@ -113,5 +120,19 @@ class DeterministicRealizer:
                 )
                 features = item.model_dump(mode="json")
                 mappings.append(SentenceMapping(len(mappings) + 1, text, (item.id,), features))
+                statement_text[item.id] = text
+        for relation in document.causal_relations:
+            text = self._causal_relation(
+                statement_text[relation.cause_node_id],
+                statement_text[relation.effect_node_id],
+            )
+            mappings.append(
+                SentenceMapping(
+                    len(mappings) + 1,
+                    text,
+                    (relation.id, relation.cause_node_id, relation.effect_node_id),
+                    relation.model_dump(mode="json"),
+                )
+            )
         metadata = {k: str(v) for k, v in document.metadata.model_dump().items()}
         return RealizationResult("\n".join(m.text for m in mappings), tuple(mappings), metadata)

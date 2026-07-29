@@ -117,10 +117,10 @@ class SemanticValidator:
                                     ir_node_id=item.id,
                                 )
                             )
-                    for relation in item.temporal_relations:
+                    for temporal_relation in item.temporal_relations:
                         if (
-                            relation.relation not in sentence
-                            or relation.event.casefold() not in sentence
+                            temporal_relation.relation not in sentence
+                            or temporal_relation.event.casefold() not in sentence
                         ):
                             out.append(
                                 Diagnostic(
@@ -130,4 +130,59 @@ class SemanticValidator:
                                     ir_node_id=item.id,
                                 )
                             )
+        for causal_relation in document.causal_relations:
+            expected_ids = (
+                causal_relation.id,
+                causal_relation.cause_node_id,
+                causal_relation.effect_node_id,
+            )
+            relation_mapping = next(
+                (
+                    candidate
+                    for candidate in mappings.get(causal_relation.id, [])
+                    if candidate.ir_node_ids == expected_ids
+                ),
+                None,
+            )
+            cause_mapping = next(
+                (
+                    candidate
+                    for candidate in mappings.get(causal_relation.cause_node_id, [])
+                    if candidate.ir_node_ids == (causal_relation.cause_node_id,)
+                ),
+                None,
+            )
+            effect_mapping = next(
+                (
+                    candidate
+                    for candidate in mappings.get(causal_relation.effect_node_id, [])
+                    if candidate.ir_node_ids == (causal_relation.effect_node_id,)
+                ),
+                None,
+            )
+            if relation_mapping is None or cause_mapping is None or effect_mapping is None:
+                out.append(
+                    Diagnostic(
+                        code="CAUSAL_RELATION_NOT_PRESERVED",
+                        severity=Severity.CRITICAL,
+                        message=f"Output omitted causal relation {causal_relation.id}.",
+                        ir_node_id=causal_relation.id,
+                    )
+                )
+                continue
+            cause_clause = cause_mapping.text.removesuffix(".")
+            effect_clause = effect_mapping.text.removesuffix(".")
+            expected_text = f"Cause: {cause_clause}; effect: {effect_clause}."
+            if (
+                relation_mapping.features != causal_relation.model_dump(mode="json")
+                or relation_mapping.text != expected_text
+            ):
+                out.append(
+                    Diagnostic(
+                        code="CAUSAL_RELATION_NOT_PRESERVED",
+                        severity=Severity.CRITICAL,
+                        message=f"Causal relation {causal_relation.id} changed.",
+                        ir_node_id=causal_relation.id,
+                    )
+                )
         return out

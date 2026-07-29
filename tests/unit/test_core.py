@@ -7,7 +7,13 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from ste_compiler.frontend.llm import LLMFrontend
-from ste_compiler.ir.models import Document, EntityRef, Quantity, QuantityConstraint
+from ste_compiler.ir.models import (
+    CausalRelation,
+    Document,
+    EntityRef,
+    Quantity,
+    QuantityConstraint,
+)
 from ste_compiler.ir.serialization import (
     canonical_document_json,
     dumps_document,
@@ -1366,6 +1372,171 @@ def test_actor_instruction_preserves_negation(vocab, terms):
     result = DeterministicRealizer().realize(document, vocab, terms)
     assert result.text == "Technician must not open the shutoff valve."
     assert not SemanticValidator().validate(document, result)
+
+
+def _causal_document() -> Document:
+    raw = load_document(ROOT / "data/examples/installation.yaml").model_dump(mode="json")
+    raw["sections"][0]["statements"][0]["source_spans"] = [
+        {
+            "source_id": "causal.txt",
+            "start": 0,
+            "end": 25,
+            "quote": "Install the access panel.",
+        }
+    ]
+    raw["sections"][0]["statements"].append(
+        {
+            "kind": "instruction",
+            "id": "inspect_pump",
+            "action": {"id": "inspect", "lemma": "inspect"},
+            "object": {"id": "pump", "name": "pump"},
+            "source_spans": [
+                {
+                    "source_id": "causal.txt",
+                    "start": 75,
+                    "end": 92,
+                    "quote": "Inspect the pump.",
+                }
+            ],
+        }
+    )
+    raw["causal_relations"] = [
+        {
+            "id": "installation_causes_inspection",
+            "cause_node_id": "inst_001",
+            "effect_node_id": "inspect_pump",
+            "source_spans": [
+                {
+                    "source_id": "causal.txt",
+                    "start": 26,
+                    "end": 74,
+                    "quote": "Installation of the panel causes pump inspection.",
+                }
+            ],
+        }
+    ]
+    return Document.model_validate(raw)
+
+
+def test_causal_relation_has_explicit_controlled_realization(vocab, terms):
+    document = _causal_document()
+
+    result = DeterministicRealizer().realize(document, vocab, terms)
+
+    assert result.text == (
+        "Install the access panel.\n"
+        "Inspect the pump.\n"
+        "Cause: Install the access panel; effect: Inspect the pump."
+    )
+    assert result.mappings[-1].ir_node_ids == (
+        "installation_causes_inspection",
+        "inst_001",
+        "inspect_pump",
+    )
+    assert not SemanticValidator().validate(document, result)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "expected_message"),
+    [
+        (
+            {"cause_node_id": "missing"},
+            "causal relation endpoints must refer to statements",
+        ),
+        (
+            {"effect_node_id": "inst_001"},
+            "causal relation endpoints must be different",
+        ),
+        (
+            {"id": "inst_001"},
+            "causal relation id 'inst_001' is not unique",
+        ),
+    ],
+)
+def test_causal_relation_schema_rejects_invalid_graph(replacement, expected_message):
+    document = _causal_document().model_dump(mode="json")
+    document["causal_relations"][0].update(replacement)
+
+    with pytest.raises(ValidationError, match=expected_message):
+        Document.model_validate(document)
+
+
+def test_causal_relation_schema_requires_claim_level_provenance():
+    with pytest.raises(ValidationError, match="source_spans"):
+        CausalRelation(
+            id="causal",
+            cause_node_id="cause",
+            effect_node_id="effect",
+        )
+
+
+def test_causal_relation_schema_rejects_duplicate_pairs():
+    document = _causal_document().model_dump(mode="json")
+    duplicate = {
+        **document["causal_relations"][0],
+        "id": "duplicate_relation",
+    }
+    document["causal_relations"].append(duplicate)
+
+    with pytest.raises(ValidationError, match="cause and effect pairs must be unique"):
+        Document.model_validate(document)
+
+
+def test_semantic_validator_rejects_changed_or_omitted_causal_relation(vocab, terms):
+    document = _causal_document()
+    result = DeterministicRealizer().realize(document, vocab, terms)
+    changed_mapping = replace(result.mappings[-1], text="Cause: Inspect the pump.")
+    changed = replace(
+        result,
+        text="\n".join([*(mapping.text for mapping in result.mappings[:-1]), changed_mapping.text]),
+        mappings=(*result.mappings[:-1], changed_mapping),
+    )
+    omitted = replace(
+        result,
+        text="\n".join(mapping.text for mapping in result.mappings[:-1]),
+        mappings=result.mappings[:-1],
+    )
+
+    assert "CAUSAL_RELATION_NOT_PRESERVED" in {
+        diagnostic.code for diagnostic in SemanticValidator().validate(document, changed)
+    }
+    assert "CAUSAL_RELATION_NOT_PRESERVED" in {
+        diagnostic.code for diagnostic in SemanticValidator().validate(document, omitted)
+    }
+
+
+def test_neural_alignment_cannot_inherit_changed_causal_relation(vocab, terms):
+    document = _causal_document()
+    expected = DeterministicRealizer().realize(document, vocab, terms)
+    changed = expected.text.replace("effect: Inspect", "effect: Open")
+
+    result = align_controlled_text(changed, expected)
+
+    assert not result.mappings[-1].ir_node_ids
+    assert {
+        "CAUSAL_RELATION_NOT_PRESERVED",
+        "UNSUPPORTED_SEMANTIC_CHANGE",
+    } <= {diagnostic.code for diagnostic in SemanticValidator().validate(document, result)}
+
+
+def test_llm_frontend_verifies_causal_relation_source_spans():
+    document = _causal_document().model_dump(mode="json")
+    document["causal_relations"][0]["source_spans"][0]["quote"] = "wrong"
+    source = (
+        "Install the access panel. "
+        "Installation of the panel causes pump inspection. "
+        "Inspect the pump."
+    )
+
+    class Provider:
+        model_id = "test"
+
+        def extract_ir(self, source, schema, feedback):
+            del source, schema, feedback
+            return document
+
+    with pytest.raises(ValueError, match="quote does not match"):
+        LLMFrontend(Provider(), retries=0).parse(source, source_id="causal.txt")
 
 
 def test_llm_frontend_rejects_statements_without_source_spans():

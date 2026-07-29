@@ -73,10 +73,9 @@ raw-source examples remain.
 
 Status: in progress. `demonstration-corpus-1` now provides 12 original MIT-licensed records with
 frozen splits, raw source and gold IR, deterministic text and symbolic plans, resource snapshots,
-feature coverage, leakage checks, licensing, manifests, checksums, and byte-for-byte reconstruction
-and verification. Benchmark-scale expansion, exhaustive schema-negative coverage, and publication
-as a versioned downloadable release remain. Causal-relation coverage is intentionally deferred
-until the realizer preserves that relation in controlled text.
+feature coverage, leakage checks, licensing, manifests, checksums, byte-for-byte reconstruction,
+and source-grounded causal-relation realization and validation. Benchmark-scale expansion,
+exhaustive schema-negative coverage, and publication as a versioned downloadable release remain.
 
 ### Deliverables
 

@@ -23,6 +23,7 @@ from ste_compiler.ir.models import (
     StateAssertion,
     TermReference,
 )
+from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.validators import ValidationPipeline
 
@@ -56,6 +57,7 @@ EXPECTED_RELEASE_FILES = frozenset(
 REQUIRED_FEATURES = frozenset(
     {
         "ambiguity",
+        "causal_relation",
         "condition",
         "condition.exception",
         "document.multi_section",
@@ -226,6 +228,23 @@ def _materialize_document(
             raise ValueError(f"construction record {record.id!r} repeats node id {node_id!r}")
         node_ids.add(node_id)
         ambiguity["source_spans"] = [_source_span(record, node_id)]
+    causal_relations = raw.get("causal_relations", [])
+    if not isinstance(causal_relations, list):
+        raise TypeError(f"construction record {record.id!r} causal_relations must be a list")
+    for relation in causal_relations:
+        if not isinstance(relation, dict):
+            raise TypeError(
+                f"construction record {record.id!r} contains an invalid causal relation"
+            )
+        node_id = relation.get("id")
+        if not isinstance(node_id, str):
+            raise TypeError(
+                f"construction record {record.id!r} has a causal relation without an id"
+            )
+        if node_id in node_ids:
+            raise ValueError(f"construction record {record.id!r} repeats node id {node_id!r}")
+        node_ids.add(node_id)
+        relation["source_spans"] = [_source_span(record, node_id)]
     unexpected_quotes = sorted(record.source_quotes.keys() - node_ids)
     if unexpected_quotes:
         raise ValueError(
@@ -237,7 +256,7 @@ def _materialize_document(
         frontend=CONSTRUCTION_FRONTEND,
         frontend_version=CONSTRUCTION_FRONTEND_VERSION,
         realizer=DETERMINISTIC_REALIZER_PROFILE,
-        realizer_version="0.1.0",
+        realizer_version=DeterministicRealizer.version,
         vocabulary_version=vocabulary.data.version,
         terminology_version=terminology.data.version,
         validator_profile=ValidationPipeline.profile,
@@ -290,6 +309,8 @@ def _document_features(document: Document, source_text: str) -> tuple[str, ...]:
         features.add("ambiguity")
     if document.references:
         features.add("reference")
+    if document.causal_relations:
+        features.add("causal_relation")
 
     for section in document.sections:
         features.add(f"section.{section.kind.value}")

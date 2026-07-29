@@ -180,8 +180,8 @@ def test_cli_preserves_crlf_source_offsets_and_hashes_original_bytes(tmp_path):
         "frontend": "offline-replay",
         "frontend_version": "0.1.0",
         "realizer": "deterministic",
-        "realizer_version": "0.1.0",
-        "vocabulary_version": "demo-2",
+        "realizer_version": "0.2.0",
+        "vocabulary_version": "demo-3",
         "terminology_version": "hydraulic-demo-1",
         "validator_profile": "strict-demo-1",
     }

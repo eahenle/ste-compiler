@@ -6,10 +6,10 @@
     "license_id": "MIT",
     "origin": "original synthetic examples authored for ste-compiler",
     "vocabulary": {
-      "version": "demo-2",
+      "version": "demo-3",
       "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
       "origin": "original demonstration vocabulary authored for ste-compiler",
-      "sha256": "bee40f7a3c3e4f487708b520f193cf434cfe660cf814467cecacce6721bfe1b6"
+      "sha256": "a64d2c9b98923be00e766c93d0ab976807b80f88cd7d5ee1d97c5f1feeefc8d5"
     },
     "terminology": {
       "version": "demonstration-corpus-1",
@@ -452,10 +452,11 @@
       "id": "adversarial_reference_sequence",
       "split": "adversarial",
       "source_id": "adversarial_reference_sequence.txt",
-      "source_text": "Open the access panel before the test.\nInspect the pump.",
+      "source_text": "Open the access panel before the test.\nOpening the access panel causes inspection of the pump.\nInspect the pump.",
       "source_quotes": {
         "open_panel": "Open the access panel before the test.",
-        "inspect_pump": "Inspect the pump."
+        "inspect_pump": "Inspect the pump.",
+        "open_panel_causes_inspection": "Opening the access panel causes inspection of the pump."
       },
       "license_id": "MIT",
       "document": {
@@ -488,6 +489,13 @@
           {
             "target": "synthetic-manual-section-1",
             "label": "system manual"
+          }
+        ],
+        "causal_relations": [
+          {
+            "id": "open_panel_causes_inspection",
+            "cause_node_id": "open_panel",
+            "effect_node_id": "inspect_pump"
           }
         ]
       }

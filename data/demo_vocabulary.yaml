@@ -1,4 +1,4 @@
-version: demo-2
+version: demo-3
 license: MIT; original demonstration vocabulary, not ASD-STE100 vocabulary
 units:
 - Pa
@@ -162,6 +162,13 @@ entries:
   parts_of_speech:
   - demo
   meaning_id: demo.electrical
+  inflections: []
+  example: null
+  forbidden_confusions: []
+- lemma: effect
+  parts_of_speech:
+  - demo
+  meaning_id: demo.effect
   inflections: []
   example: null
   forbidden_confusions: []

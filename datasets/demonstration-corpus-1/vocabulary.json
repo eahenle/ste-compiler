@@ -214,6 +214,16 @@
       "example": null,
       "forbidden_confusions": [],
       "inflections": [],
+      "lemma": "effect",
+      "meaning_id": "demo.effect",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
       "lemma": "engine",
       "meaning_id": "demo.engine",
       "parts_of_speech": [
@@ -1553,5 +1563,5 @@
     "degree",
     "degrees"
   ],
-  "version": "demo-2"
+  "version": "demo-3"
 }
