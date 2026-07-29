@@ -1,4 +1,5 @@
 import json
+import shlex
 from pathlib import Path
 from typing import Annotated
 
@@ -13,15 +14,23 @@ from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
 from ste_compiler.realizer.base import RealizationResult
+from ste_compiler.realizer.neural import NeuralRealizerUnavailable
 from ste_compiler.results import CompileSourceResult
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.training import (
+    DecoderLoRATrainingError,
+    DecoderOnlyLoRATrainingConfigV1,
     TrainingRecordValidationError,
+    TrainingReleaseSnapshot,
     build_demonstration_corpus,
     build_training_record,
+    evaluate_decoder_lora_adapter,
     export_symbolic_corpus,
     load_training_config,
+    model_snapshot_manifest_sha256,
+    prepare_decoder_smoke_fixture,
     read_training_release,
+    run_decoder_lora_training,
     training_config_sha256,
     verify_demonstration_corpus,
 )
@@ -35,6 +44,11 @@ PACKAGE_DATA = Path(__file__).with_name("data")
 DATA_ROOT = PACKAGE_DATA if PACKAGE_DATA.is_dir() else ROOT / "data"
 CONTROLLED_INPUT_ERRORS = (KeyError, ValidationError, ValueError)
 SOURCE_INPUT_ERRORS = (*CONTROLLED_INPUT_ERRORS, OSError)
+TRAINING_INPUT_ERRORS = (
+    *SOURCE_INPUT_ERRORS,
+    DecoderLoRATrainingError,
+    NeuralRealizerUnavailable,
+)
 schema_app = typer.Typer(help="Print versioned machine-readable result schemas.")
 app.add_typer(schema_app, name="schema")
 
@@ -331,6 +345,138 @@ def verify_training_release(
             f"({snapshot.manifest.record_count} records, "
             f"manifest sha256: {snapshot.manifest_sha256})"
         )
+
+
+def _decoder_training_inputs(
+    config_path: Path,
+    release_path: Path,
+) -> tuple[DecoderOnlyLoRATrainingConfigV1, TrainingReleaseSnapshot]:
+    config = load_training_config(config_path)
+    if not isinstance(config, DecoderOnlyLoRATrainingConfigV1):
+        raise DecoderLoRATrainingError(
+            "training configuration architecture must be decoder-only-lora"
+        )
+    return config, read_training_release(release_path, config.corpus)
+
+
+@app.command("prepare-decoder-smoke-fixture")
+def prepare_decoder_fixture(
+    config_path: Path,
+    release: Path,
+    output: Path,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Create a tiny safe local causal-LM/tokenizer fixture for offline smoke training."""
+
+    try:
+        config, snapshot = _decoder_training_inputs(config_path, release)
+        manifest = prepare_decoder_smoke_fixture(config, snapshot, output)
+    except TRAINING_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": manifest.schema_version,
+        "fixture_profile": manifest.fixture_profile,
+        "manifest_sha256": model_snapshot_manifest_sha256(output),
+        "artifact_count": len(manifest.artifacts),
+        "output": str(output),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Prepared decoder smoke fixture at {output}")
+
+
+@app.command("train-decoder-lora")
+def train_decoder_lora(
+    config_path: Path,
+    release: Path,
+    model_snapshot: Path,
+    model_snapshot_manifest_sha256: str,
+    output: Path,
+    source_checkout: Annotated[
+        Path,
+        typer.Option(
+            "--source-checkout",
+            help="Exact ste-compiler Git checkout used to derive commit and uv.lock provenance.",
+        ),
+    ],
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run deterministic offline decoder-only LoRA smoke training."""
+
+    evaluation_command = shlex.join(
+        (
+            "ste-compiler",
+            "evaluate-decoder-lora",
+            str(config_path),
+            str(release),
+            str(model_snapshot),
+            model_snapshot_manifest_sha256,
+            str(output / "adapter"),
+        )
+    )
+    try:
+        config, snapshot = _decoder_training_inputs(config_path, release)
+        manifest = run_decoder_lora_training(
+            config,
+            snapshot,
+            model_snapshot,
+            model_snapshot_manifest_sha256,
+            output,
+            source_checkout=source_checkout,
+            evaluation_command=evaluation_command,
+        )
+    except TRAINING_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": manifest.schema_version,
+        "status": manifest.status,
+        "optimizer_steps": manifest.optimizer_steps,
+        "training_losses": manifest.training_losses,
+        "validation_loss": manifest.validation_loss,
+        "trainable_parameters": manifest.trainable_parameters,
+        "output": str(output),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Completed {manifest.optimizer_steps} decoder LoRA optimizer steps at {output}")
+
+
+@app.command("evaluate-decoder-lora")
+def evaluate_decoder_lora(
+    config_path: Path,
+    release: Path,
+    model_snapshot: Path,
+    model_snapshot_manifest_sha256: str,
+    adapter: Path,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Reload a safe decoder LoRA adapter and evaluate its validation loss."""
+
+    try:
+        config, snapshot = _decoder_training_inputs(config_path, release)
+        validation_loss = evaluate_decoder_lora_adapter(
+            config,
+            snapshot,
+            model_snapshot,
+            model_snapshot_manifest_sha256,
+            adapter,
+        )
+    except TRAINING_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": "ste-decoder-lora-evaluation-v1",
+        "split": "validation",
+        "validation_loss": validation_loss,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Decoder LoRA validation loss: {validation_loss}")
 
 
 @app.command("validate-text")

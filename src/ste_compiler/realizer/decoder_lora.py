@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -11,9 +10,16 @@ from operator import index
 from pathlib import Path
 from typing import Any, Protocol, SupportsIndex, cast
 
+from ste_compiler.realizer.decoder_protocol import (
+    DECODER_PROMPT_PROFILE,
+    DecoderProtocolError,
+    canonical_decoder_prompt,
+    lossless_symbol_tokens,
+    validate_lora_adapter_identity,
+)
 from ste_compiler.realizer.neural import NeuralRealizerUnavailable
 
-PROMPT_PROFILE = "decoder-only-symbol-plan-v1"
+PROMPT_PROFILE = DECODER_PROMPT_PROFILE
 ADAPTER_CONFIG = "adapter_config.json"
 SAFE_ADAPTER_WEIGHTS = "adapter_model.safetensors"
 _COMMIT_REVISION = re.compile(r"[0-9a-f]{40}", re.ASCII)
@@ -127,18 +133,10 @@ class _SymbolTokenGrammar:
         encoded: set[tuple[int, ...]] = set()
         for symbol in sorted(symbols):
             text = prefix + symbol
-            token_ids = tuple(tokenizer.encode(text, add_special_tokens=False))
-            if not token_ids:
-                raise DecoderOnlyLoRAError(f"tokenizer produced no tokens for {text!r}")
-            round_trip = tokenizer.decode(
-                token_ids,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )
-            if round_trip != text:
-                raise DecoderOnlyLoRAError(
-                    f"tokenizer does not losslessly encode symbolic form {text!r}"
-                )
+            try:
+                token_ids = lossless_symbol_tokens(tokenizer, text)
+            except DecoderProtocolError as error:
+                raise DecoderOnlyLoRAError(str(error)) from error
             encoded.add(token_ids)
         return tuple(sorted(encoded))
 
@@ -373,36 +371,18 @@ class DecoderOnlyLoRASymbolGenerator:
         config: DecoderOnlyLoRAConfig,
         adapter_config: object,
     ) -> None:
-        def value(name: str) -> str | None:
-            item = getattr(adapter_config, name, None)
-            if item is None:
-                return None
-            return str(getattr(item, "value", item))
-
-        if value("peft_type") != "LORA":
-            raise DecoderOnlyLoRAError("adapter configuration must use PEFT type LORA")
-        if value("task_type") != "CAUSAL_LM":
-            raise DecoderOnlyLoRAError("adapter configuration must target the CAUSAL_LM task")
-        declared_base_model = value("base_model_name_or_path")
-        if declared_base_model != config.base_model_id:
-            raise DecoderOnlyLoRAError(
-                "adapter configuration does not target the configured base model"
+        try:
+            validate_lora_adapter_identity(
+                config.base_model_id,
+                config.base_model_revision,
+                adapter_config,
             )
-        declared_base_revision = value("revision")
-        if declared_base_revision != config.base_model_revision:
-            raise DecoderOnlyLoRAError(
-                "adapter configuration must declare the configured base model revision"
-            )
+        except DecoderProtocolError as error:
+            raise DecoderOnlyLoRAError(str(error)) from error
 
     @staticmethod
     def _prompt(serialized_ir: str) -> str:
-        envelope = json.dumps(
-            {"profile": PROMPT_PROFILE, "serialized_ir": serialized_ir},
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return f"{envelope}\nSYMBOLS\n"
+        return canonical_decoder_prompt(serialized_ir)
 
     def generate_symbols(
         self,

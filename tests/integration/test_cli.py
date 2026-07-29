@@ -380,6 +380,25 @@ def test_cli_validates_training_config_and_hash_pinned_release(tmp_path):
     assert verified_payload["symbol_count"] > 0
 
 
+def test_decoder_smoke_cli_rejects_wrong_architecture_without_traceback(tmp_path):
+    config = tmp_path / "encoder.json"
+    config.write_text(json.dumps(_training_config_payload()))
+
+    result = runner.invoke(
+        app,
+        [
+            "prepare-decoder-smoke-fixture",
+            str(config),
+            str(ROOT / "datasets/demonstration-corpus-1"),
+            str(tmp_path / "model"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "architecture must be decoder-only-lora" in result.stderr
+    assert "Traceback" not in result.output
+
+
 def test_cli_rejects_training_release_identity_mismatch(tmp_path):
     payload = _training_config_payload()
     payload["corpus"]["manifest_sha256"] = "0" * 64
