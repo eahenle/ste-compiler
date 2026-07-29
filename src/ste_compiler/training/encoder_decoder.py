@@ -981,7 +981,7 @@ def _isolated_deterministic_runtime(torch: Any, seed: int) -> Iterator[None]:
         random.seed(seed)
         if numpy is not None:
             numpy.random.seed(seed % (2**32))
-        torch.manual_seed(seed)
+        torch.random.default_generator.manual_seed(seed)
         torch.use_deterministic_algorithms(True)
         torch.set_num_threads(1)
         yield

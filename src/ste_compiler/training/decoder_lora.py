@@ -484,7 +484,7 @@ def _isolated_deterministic_runtime(torch: Any, seed: int) -> Iterator[None]:
     torch_threads = int(torch.get_num_threads())
     try:
         random.seed(seed)
-        torch.manual_seed(seed)
+        torch.random.default_generator.manual_seed(seed)
         torch.use_deterministic_algorithms(True)
         torch.set_num_threads(1)
         yield

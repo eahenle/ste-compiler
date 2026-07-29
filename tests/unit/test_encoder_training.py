@@ -308,6 +308,41 @@ def test_trainer_rejects_unsupported_publication_before_loading_runtime(
         )
 
 
+def test_deterministic_runtime_seeds_only_the_cpu_generator():
+    calls = []
+
+    class Generator:
+        def manual_seed(self, seed):
+            calls.append(("cpu_seed", seed))
+
+    torch = SimpleNamespace(
+        random=SimpleNamespace(default_generator=Generator()),
+        manual_seed=lambda seed: pytest.fail("global PyTorch seeding would mutate CUDA"),
+        get_rng_state=lambda: "original-cpu-state",
+        set_rng_state=lambda state: calls.append(("cpu_restore", state)),
+        are_deterministic_algorithms_enabled=lambda: False,
+        is_deterministic_algorithms_warn_only_enabled=lambda: True,
+        use_deterministic_algorithms=lambda enabled, warn_only=False: calls.append(
+            ("deterministic", enabled, warn_only)
+        ),
+        get_num_threads=lambda: 8,
+        set_num_threads=lambda threads: calls.append(("threads", threads)),
+    )
+
+    with training_module._isolated_deterministic_runtime(torch, 42):
+        calls.append(("body",))
+
+    assert calls == [
+        ("cpu_seed", 42),
+        ("deterministic", True, False),
+        ("threads", 1),
+        ("body",),
+        ("cpu_restore", "original-cpu-state"),
+        ("deterministic", False, True),
+        ("threads", 8),
+    ]
+
+
 def test_no_replace_publication_preserves_concurrent_destination(tmp_path):
     source = tmp_path / "stage"
     destination = tmp_path / "output"
