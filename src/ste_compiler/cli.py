@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from ste_compiler.diagnostics import ValidationReport
 from ste_compiler.evaluation import evaluate as run_evaluation
 from ste_compiler.evaluation import write_reports
-from ste_compiler.frontend import LLMFrontend, ReplayIRProvider
+from ste_compiler.frontend import LLMFrontend, ManualFrontend, ReplayIRProvider
 from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
@@ -57,14 +57,30 @@ def compile_document(
     document: Document,
     vocabulary: Vocabulary,
     terminology: TerminologyRegistry,
-) -> tuple[RealizationResult, ValidationReport]:
-    result = DeterministicRealizer().realize(document, vocabulary, terminology)
+    *,
+    frontend: str,
+    frontend_version: str,
+) -> tuple[Document, RealizationResult, ValidationReport]:
+    realizer = DeterministicRealizer()
+    metadata = document.metadata.model_copy(
+        update={
+            "frontend": frontend,
+            "frontend_version": frontend_version,
+            "realizer": "deterministic",
+            "realizer_version": realizer.version,
+            "vocabulary_version": vocabulary.data.version,
+            "terminology_version": terminology.data.version,
+            "validator_profile": ValidationPipeline.profile,
+        }
+    )
+    document = document.model_copy(update={"metadata": metadata})
+    result = realizer.realize(document, vocabulary, terminology)
     report = ValidationPipeline(LexicalValidator(vocabulary, terminology)).validate(
         result.text,
         document,
         result,
     )
-    return result, report
+    return document, result, report
 
 
 def compiled_payload(
@@ -85,17 +101,24 @@ def compile_replayed_source(
     source: Path,
     ir_fixture: Path,
     source_id: str,
-) -> tuple[str, Document, RealizationResult, ValidationReport]:
-    source_text = source.read_text(encoding="utf-8")
+) -> tuple[bytes, str, Document, RealizationResult, ValidationReport]:
+    source_bytes = source.read_bytes()
+    source_text = source_bytes.decode("utf-8")
     provider = ReplayIRProvider.from_path(ir_fixture)
     document = LLMFrontend(provider).parse(source_text, source_id=source_id)
     vocabulary, terminology = resources()
-    result, report = compile_document(document, vocabulary, terminology)
-    return source_text, document, result, report
+    document, result, report = compile_document(
+        document,
+        vocabulary,
+        terminology,
+        frontend=document.metadata.frontend,
+        frontend_version=document.metadata.frontend_version,
+    )
+    return source_bytes, source_text, document, result, report
 
 
 def emit_source_compilation(
-    source_text: str,
+    source_bytes: bytes,
     source_id: str,
     document: Document,
     result: RealizationResult,
@@ -104,7 +127,7 @@ def emit_source_compilation(
 ) -> None:
     if json_output:
         payload = CompileSourceResult.from_compilation(
-            source_text=source_text,
+            source_bytes=source_bytes,
             source_id=source_id,
             document=document,
             realization=result,
@@ -125,7 +148,7 @@ def run_replay_compilation(
     json_output: bool,
 ) -> None:
     try:
-        source_text, document, result, report = compile_replayed_source(
+        source_bytes, _, document, result, report = compile_replayed_source(
             source,
             ir_fixture,
             source_id,
@@ -134,7 +157,7 @@ def run_replay_compilation(
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     emit_source_compilation(
-        source_text,
+        source_bytes,
         source_id,
         document,
         result,
@@ -236,7 +259,13 @@ def compile(
         raise typer.BadParameter("Only the offline manual frontend is configured.")
     doc = load_document(source)
     vocab, terms = resources()
-    result, report = compile_document(doc, vocab, terms)
+    doc, result, report = compile_document(
+        doc,
+        vocab,
+        terms,
+        frontend="manual",
+        frontend_version=ManualFrontend.version,
+    )
     if json_output:
         payload = compiled_payload(doc, result, report)
         payload.pop("ir")

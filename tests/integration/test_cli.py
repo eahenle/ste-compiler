@@ -1,8 +1,10 @@
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from ste_compiler.cli import app
@@ -39,6 +41,7 @@ def test_cli_prints_versioned_compile_source_json_schema():
     assert schema["properties"]["schema_version"]["const"] == "compile-source-v1"
     assert schema["properties"]["source"]["$ref"].endswith("/SourceIdentity")
     assert schema["required"] == [
+        "schema_version",
         "source",
         "text",
         "mappings",
@@ -46,6 +49,11 @@ def test_cli_prints_versioned_compile_source_json_schema():
         "metadata",
         "ir",
     ]
+
+    payload = json.loads(runner.invoke(app, ["demo", "--json"]).stdout)
+    payload.pop("schema_version")
+    with pytest.raises(ValidationError):
+        CompileSourceResult.model_validate(payload)
 
 
 def test_cli_compiles_raw_source_with_verified_replay_fixture():
@@ -89,6 +97,59 @@ def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
     assert result.exit_code == 1
     assert "quote does not match the source" in result.stderr
     assert "Traceback" not in result.output
+
+
+def test_cli_preserves_crlf_source_offsets_and_hashes_original_bytes(tmp_path):
+    prefix = "Unrepresented heading.\r\n"
+    quote = "Install the access panel."
+    source_bytes = f"{prefix}{quote}\r\n".encode()
+    source = tmp_path / "windows-source.txt"
+    source.write_bytes(source_bytes)
+    proposal = yaml.safe_load((ROOT / "data/examples/installation.yaml").read_text())
+    proposal["sections"][0]["statements"][0]["source_spans"] = [
+        {
+            "source_id": source.name,
+            "start": len(prefix),
+            "end": len(prefix) + len(quote),
+            "quote": quote,
+        }
+    ]
+    proposal["metadata"] = {
+        "frontend": "forged-frontend",
+        "frontend_version": "forged-frontend-version",
+        "realizer": "forged-realizer",
+        "realizer_version": "forged-realizer-version",
+        "vocabulary_version": "forged-vocabulary",
+        "terminology_version": "forged-terminology",
+        "validator_profile": "forged-validator",
+    }
+    fixture = tmp_path / "windows-source.ir.yaml"
+    fixture.write_text(yaml.safe_dump(proposal, sort_keys=False))
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(source),
+            "--ir-fixture",
+            str(fixture),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["source"]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
+    assert payload["metadata"] == {
+        "frontend": "offline-replay",
+        "frontend_version": "0.1.0",
+        "realizer": "deterministic",
+        "realizer_version": "0.1.0",
+        "vocabulary_version": "demo-1",
+        "terminology_version": "hydraulic-demo-1",
+        "validator_profile": "strict-demo-1",
+    }
+    assert payload["ir"]["metadata"] == payload["metadata"]
 
 
 def test_cli_realize_and_validate():

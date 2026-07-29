@@ -29,7 +29,7 @@ class CompiledSentenceMapping(StrictResultModel):
 
 
 class CompileSourceResult(StrictResultModel):
-    schema_version: Literal["compile-source-v1"] = COMPILE_SOURCE_SCHEMA_VERSION
+    schema_version: Literal["compile-source-v1"]
     source: SourceIdentity
     text: str
     mappings: tuple[CompiledSentenceMapping, ...]
@@ -41,16 +41,17 @@ class CompileSourceResult(StrictResultModel):
     def from_compilation(
         cls,
         *,
-        source_text: str,
+        source_bytes: bytes,
         source_id: str,
         document: Document,
         realization: RealizationResult,
         validation: ValidationReport,
     ) -> "CompileSourceResult":
         return cls(
+            schema_version=COMPILE_SOURCE_SCHEMA_VERSION,
             source=SourceIdentity(
                 id=source_id,
-                sha256=hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+                sha256=hashlib.sha256(source_bytes).hexdigest(),
             ),
             text=realization.text,
             mappings=tuple(
