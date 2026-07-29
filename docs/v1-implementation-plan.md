@@ -131,9 +131,10 @@ Status: in progress. Strict versioned configurations now cover both architecture
 artifact identities, seeds, batching, optimizer values, token limits, and architecture-specific
 settings. A race-resistant release reader pins the manifest and train/validation hashes, validates
 the complete release, and rebuilds every deterministic training target before exposing immutable
-split records. CLI validation, schema examples, adversarial tests, and installed-wheel coverage are
-included. The two trainers, run manifests, safe checkpoints, resume/evaluation hooks, public model
-selection, and reference runs remain.
+split records. The decoder-only track includes a two-step, offline CPU LoRA mechanics trainer with
+an atomic safetensors adapter, runtime-derived run manifest, reload/evaluation hook, generated tiny
+local fixture, CLI, CI, and installed-wheel coverage. The encoder-decoder trainer, checkpoint
+resume, public model selection, and measured reference runs remain.
 
 ### Shared deliverables
 
@@ -156,7 +157,7 @@ selection, and reference runs remain.
 
 ### Decoder-only LoRA track
 
-- Versioned canonical prompt/target construction.
+- Versioned canonical prompt/segmented-target construction shared by training and inference.
 - Pinned causal base model and full commit digest.
 - PEFT LoRA configuration with parameter count and target modules.
 - Prompt masking and exact EOS training behavior.
@@ -182,7 +183,8 @@ Every run records:
 
 ### Acceptance gates
 
-- Both smoke-training jobs complete in CI without network access after fixture preparation.
+- The decoder-only smoke-training job completes in CI without network access after fixture
+  preparation; the encoder-decoder job remains.
 - A documented reference run completes on the stated hardware.
 - Resuming a run preserves dataset identity and configuration.
 - Published checkpoints load through the package's production safety boundaries.

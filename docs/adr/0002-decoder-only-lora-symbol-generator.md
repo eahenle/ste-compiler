@@ -51,10 +51,18 @@ label cannot identify their contents. The safetensors requirement and exact-snap
 pickle deserialization from this loader; operators must still authorize the configured
 repositories and revisions.
 
-## Consequences and unshipped work
+## Training consequence and unshipped work
 
-The adapter supports inference wiring and offline fake-based tests. It does not ship trained
-weights, a training loop, chosen public model revisions, benchmark results, or a claim that a
-decoder-only architecture is better than the encoder-decoder alternative. Training and
-evaluation must record the corpus manifest hash, seeds, hardware, dependency versions, base
-and adapter revisions, and constrained versus unconstrained results.
+Training and inference share the versioned prompt and segmented lossless symbol-token protocol.
+The decoder track includes a deterministic manual PEFT/AdamW two-step CPU mechanics run. Prompt
+labels are masked, exactly one trailing EOS is supervised, and overflow fails rather than
+truncates. A generated tiny local causal model and tokenizer make CI network-independent.
+Safetensors-only adapter output is staged and atomically published with a canonical manifest
+derived from the corpus and model snapshots, Git checkout and lock file, installed dependencies,
+hardware, duration, parameter counts, losses, sample order, and output hashes. A fresh base reload
+must evaluate successfully before publication.
+
+The smoke path does not ship trained reference weights, chosen public model revisions, benchmark
+results, resumable optimizer state, or a claim that a decoder-only architecture is better than the
+encoder-decoder alternative. Reference evaluation must additionally report constrained versus
+unconstrained results.

@@ -2,9 +2,10 @@
 
 Training is being added in architecture-specific slices. The shared foundation is complete: strict,
 versioned configurations and a race-resistant reader bind every run to one immutable corpus
-release. The encoder-decoder and decoder-only LoRA trainers, run manifests, and published model
-artifacts are not included yet. The checked-in configurations are schema examples, not runnable
-model selections, and this repository makes no model-quality claim.
+release. The decoder-only track now includes a deterministic, two-step, offline CPU mechanics
+smoke run over a generated tiny local causal model. It is not a selected public model, a published
+checkpoint, a benchmark, or a model-quality claim. The encoder-decoder trainer and reference runs
+remain future work.
 
 ## Configuration identity
 
@@ -16,9 +17,10 @@ that affects a run is represented by an immutable identity:
 - seeds, step counts, effective batching, optimizer values, token limits, and architecture-specific
   settings are part of the canonical configuration hash.
 
-The package commit, dirty-tree state, dependency versions, and lock-file digest are observed at run
-time and belong in the run manifest. They are deliberately not self-reported by the input
-configuration.
+The package commit, clean-tree state, package-source tree digest, dependency versions, and
+`uv.lock` digest are observed at run time and belong in the run manifest. The trainer rejects a
+dirty source checkout or a checkout whose `src/ste_compiler` tree differs from the package code
+that is executing. These values are deliberately not self-reported by the input configuration.
 
 The decoder-only LoRA schema additionally requires one prompt profile, an exact LoRA module list,
 and a tokenizer identity equal to the base-model identity. The encoder-decoder schema currently
@@ -35,8 +37,9 @@ ste-compiler validate-training-config \
   --json
 ```
 
-The model identities in those examples are intentionally illustrative. Replace them with real,
-authorized repositories and exact Hub commit digests before training. Validation proves the
+The model identities in those examples are intentionally illustrative. The decoder example's
+synthetic identity is accepted only by the local fixture builder described below. A reference run
+must instead select authorized repositories and exact Hub commit digests. Validation proves the
 configuration shape and computes its identity; it does not download or authorize a model.
 
 ## Immutable corpus reader
@@ -85,10 +88,71 @@ print(len(release.train), len(release.validation))
 allowed symbol inventory. Trainers may seed and shuffle their own training view; they must not
 mutate or reinterpret the released ordering.
 
+## Decoder-only LoRA smoke run
+
+Install the optional neural dependencies. The versioned demonstration corpus is already checked in
+and verified by each command. These commands create a tiny byte-level BPE tokenizer and
+GPT-2-shaped causal model entirely from released local data, train exactly two AdamW optimizer
+steps, atomically publish a safe adapter, reload it on a fresh base model, and evaluate the
+validation split. `prepare-decoder-smoke-fixture --json` reports the required SHA-256 identity of
+the generated model-snapshot manifest; pass that digest positionally after the snapshot path to
+both training and evaluation:
+
+```bash
+python -m pip install -e '.[dev,neural]'
+MODEL_SNAPSHOT_MANIFEST_SHA256="$(
+  ste-compiler prepare-decoder-smoke-fixture \
+    data/training/decoder-only-lora-schema-example.yaml \
+    datasets/demonstration-corpus-1 \
+    decoder-smoke-model \
+    --json |
+    python -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])'
+)"
+ste-compiler train-decoder-lora \
+  data/training/decoder-only-lora-schema-example.yaml \
+  datasets/demonstration-corpus-1 \
+  decoder-smoke-model \
+  "$MODEL_SNAPSHOT_MANIFEST_SHA256" \
+  decoder-smoke-run \
+  --source-checkout .
+ste-compiler evaluate-decoder-lora \
+  data/training/decoder-only-lora-schema-example.yaml \
+  datasets/demonstration-corpus-1 \
+  decoder-smoke-model \
+  "$MODEL_SNAPSHOT_MANIFEST_SHA256" \
+  decoder-smoke-run/adapter \
+  --json
+```
+
+The versioned `decoder-only-symbol-plan-v1` protocol is shared by training and inference. Each
+example is the canonical JSON prompt followed by segmented, losslessly round-tripped symbol
+tokens. Prompt positions receive label `-100`; target positions and exactly one final EOS token
+are supervised. Before training or evaluation starts, the tokenizer preflights every train,
+validation, test, and adversarial example. Any example that exceeds the configured token limit
+fails instead of truncating.
+
+The output directory must not already exist. Publication uses a private sibling staging directory,
+file and directory synchronization, and one atomic rename. The final artifact set is:
+
+- `adapter/adapter_model.safetensors`, `adapter_config.json`, and a smoke-only model card;
+- canonical `training-config.json` and `run-manifest.json`; and
+- `checksums.sha256` covering every other output file.
+
+The run manifest derives the package commit and dirty state from `--source-checkout`, hashes its
+`uv.lock`, records installed dependency versions, corpus and model-snapshot identities, LoRA
+parameter names and counts, deterministic sample order and losses, CPU/Python details, duration,
+output hashes, and a shell-quoted evaluation command. Model and adapter loading is local-only and
+safetensors-only. There is deliberately no checkpoint resume: optimizer state is not emitted
+because the supported serialization must not introduce pickle-capable artifacts.
+
+The fixture builder is a CI test tool. Its schema contract requires `max_steps: 2`; changing the
+step count is rejected instead of silently changing the meaning of the smoke evidence. The fixture
+is content-bound by its own externally supplied manifest digest and must not be substituted for a
+pinned, authorized public base model in a reference experiment.
+
 ## Remaining training gates
 
-Each architecture still needs an offline, two-optimizer-step CPU smoke trainer, safetensors-only
-atomic outputs, a canonical run manifest, reload and evaluation checks, installed-wheel coverage,
-and a documented reference configuration. Checkpoint resume remains blocked until optimizer state
-can be represented without pickle-capable artifacts. Public reference runs additionally require an
-explicitly selected base-model repository and immutable revision.
+The encoder-decoder architecture still needs its trainer and smoke coverage. Both architectures
+still need documented reference configurations, explicitly selected public base-model repositories
+and immutable revisions, and measured reference runs. Checkpoint resume remains blocked until
+optimizer state can be represented without pickle-capable artifacts.

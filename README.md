@@ -45,6 +45,16 @@ ste-compiler verify-training-release \
   data/training/encoder-decoder-schema-example.yaml \
   datasets/demonstration-corpus-1 \
   --json
+ste-compiler prepare-decoder-smoke-fixture \
+  data/training/decoder-only-lora-schema-example.yaml \
+  datasets/demonstration-corpus-1 \
+  decoder-smoke-model
+ste-compiler train-decoder-lora \
+  data/training/decoder-only-lora-schema-example.yaml \
+  datasets/demonstration-corpus-1 \
+  decoder-smoke-model \
+  decoder-smoke-run \
+  --source-checkout .
 ste-compiler compile data/examples/warning_pressure.yaml --json
 ste-compiler validate-text data/examples/invalid_semantic.txt --ir data/examples/negative.yaml --json
 ste-compiler glossary check data/demo_terminology.yaml
@@ -73,7 +83,7 @@ byte-for-byte identity. See [the corpus guide](docs/demonstration-corpus.md).
 * **Neural realizer:** implement `SymbolGenerator`. `NeuralRealizer` sends it canonical IR and only the symbols present in the deterministic reference plan. Generated inference plans must begin with `PLAN_EXACT_WHITESPACE_V1`; markerless legacy lexicalization is never accepted at the neural trust boundary. Deterministic IR mappings are inherited only when the generated controlled text exactly equals the deterministic surface. `SymbolicLexicalizer` rejects out-of-plan symbols, and the independent aligner withholds IR mappings from changed, reordered, omitted, or extra sentences.
 * **Encoder-decoder adapter:** configure `TransformersEncoderDecoderSymbolGenerator` with an explicit Hugging Face Hub repository ID and full lowercase 40-character model commit digest. Local filesystem model paths are rejected because mutable local contents cannot inherit immutable revision provenance. The exact commit is resolved once to a checked local snapshot; both tokenizer and model load only from that snapshot, and model revisions without safetensors weights fail closed. The adapter records the exact Hub digest, loads `.[neural]` lazily, constrains decoding to the current document's symbols plus EOS, permits only padding after EOS, and post-validates the decoded plan. No trained checkpoint, training result, or benchmark is included.
 * **Training data:** use `plan-symbols --json` for one canonical `(serialized IR, symbolic plan)` record, or `export-symbolic-corpus` for stable path-ordered JSONL plus a SHA-256 manifest. Each export is stored in an immutable content-addressed directory under `training-corpus/generations/`; one atomic `training-corpus/current` selector exposes the canonical `current/corpus.jsonl` and `current/manifest.json` paths. Consumers that need a concurrency-safe pair should call `read_symbolic_corpus()`, which pins one generation before opening either artifact, rather than resolving the two `current` paths independently. Corpus export currently requires POSIX `fcntl` file locking; other CLI commands remain portable to platforms without `fcntl`. Duplicate document IDs, symlinked IR inputs, and metadata profiles that do not match the loaded deterministic realizer, vocabulary, terminology, and validation pipeline are rejected. Current plans start with `PLAN_EXACT_WHITESPACE_V1` and percent-encode observed approved word surfaces. Exact terminology symbols use `TERM_<escaped-id>|<escaped-observed-surface>`; the delimiter is encoded inside either field, preserving both stable identity and observed casing. Plans otherwise contain only `WORD_*`, `TERM_*`, `UNIT_*`, punctuation, `SPACE`/opaque whitespace, newline, and document-specific number symbols. Exact plans preserve casing without implicit sentence capitalization. Markerless legacy plans retain canonical term surfaces plus conventional spacing and capitalization.
-* **LoRA/SLM:** install `.[neural]`; train an adapter over the exported pairs. Record base model/revision, parameter count, adapter revision, seeds, data hash, hardware, and decoding profile. Evaluate constrained and unconstrained variants separately. A practical single-GPU experiment can use a small encoder-decoder model, or a compact decoder-only model with a LoRA adapter.
+* **LoRA/SLM:** install `.[neural]`. The decoder-only track includes a deterministic two-step offline CPU mechanics run with a generated tiny local causal model/tokenizer fixture, exact prompt masking plus one supervised EOS, atomic safetensors adapter output, runtime-derived provenance, and reload evaluation. It is not a trained reference model or quality result. A real experiment must pin and authorize its base revision and evaluate constrained and unconstrained variants separately.
 
 The optional `DecoderOnlyLoRASymbolGenerator` is the concrete decoder-only inference boundary.
 Configure it with Hub repository IDs and full lowercase 40-character commit digests for both the
@@ -85,8 +95,9 @@ configuration to name the exact configured base model revision. Generation expli
 inherited non-greedy and minimum-length modes so EOS remains available at valid symbol boundaries,
 requires one batch of integer token IDs, and remains constrained to the document-specific symbol
 set plus EOS. Pinning records identity; deployments must still authorize the selected artifact
-repositories. This repository does not include trained weights, training results, or a
-model-quality claim.
+repositories. This repository does not include trained reference weights, benchmark results, or a
+model-quality claim. The generated fixture and two-step adapter exist only to exercise training
+mechanics.
 
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 
