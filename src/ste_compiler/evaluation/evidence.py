@@ -286,6 +286,16 @@ class ValidatorObservationV1(StrictEvidenceModel):
             raise ValueError("a validator that did not run cannot have diagnostics")
         if self.status == "rejected" and not self.diagnostic_codes:
             raise ValueError("a rejected validator observation requires diagnostics")
+        rejecting_diagnostic = any(
+            code.startswith(LEXICAL_DIAGNOSTIC_PREFIXES)
+            or code in STRUCTURAL_DIAGNOSTIC_CODES
+            or code in SEMANTIC_DIAGNOSTIC_CODES
+            for code in self.diagnostic_codes
+        )
+        if self.status == "accepted" and rejecting_diagnostic:
+            raise ValueError(
+                "an accepted validator observation cannot contain rejecting diagnostics"
+            )
         return self
 
 

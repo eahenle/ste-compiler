@@ -323,6 +323,32 @@ def test_validator_failure_stage_distinguishes_correct_rejection_and_false_accep
     assert false_accept.failure_stage == "validator"
 
 
+@pytest.mark.parametrize(
+    "diagnostic_code",
+    ("REQUIRED_NODE_OMITTED", "UNAUTHORIZED_WORD", "SENTENCE_TOO_LONG"),
+)
+def test_accepted_validator_observation_rejects_fatal_diagnostics(diagnostic_code):
+    accepted = json.loads(PREDICTIONS.read_text().splitlines()[0])
+    accepted["validator"]["diagnostic_codes"] = [diagnostic_code]
+
+    with pytest.raises(
+        ValidationError,
+        match="accepted validator observation cannot contain rejecting diagnostics",
+    ):
+        PredictionRecordV1.model_validate(accepted)
+
+
+@pytest.mark.parametrize("warning_code", ("AMBIGUOUS_PRONOUN", "PASSIVE_VOICE"))
+def test_accepted_validator_observation_allows_warning_diagnostics(warning_code):
+    accepted = json.loads(PREDICTIONS.read_text().splitlines()[0])
+    accepted["validator"]["diagnostic_codes"] = [warning_code]
+
+    prediction = PredictionRecordV1.model_validate(accepted)
+
+    assert prediction.validator.status == "accepted"
+    assert prediction.validator.diagnostic_codes == (warning_code,)
+
+
 def test_false_accept_cannot_be_mislabeled_as_semantic_rejection():
     accepted = json.loads(PREDICTIONS.read_text().splitlines()[0])
     accepted["validator"]["gold_should_accept"] = False
