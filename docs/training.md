@@ -73,9 +73,7 @@ from pathlib import Path
 
 from ste_compiler.training import load_training_config, read_training_release
 
-config = load_training_config(
-    Path("data/training/encoder-decoder-schema-example.yaml")
-)
+config = load_training_config(Path("data/training/encoder-decoder-schema-example.yaml"))
 release = read_training_release(
     Path("datasets/demonstration-corpus-1"),
     config.corpus,
