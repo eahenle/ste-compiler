@@ -2,6 +2,10 @@
 
 > Deterministic fixture evidence only. These values test the evidence pipeline; they are not model-quality measurements, certification evidence, or external benchmark results.
 
+Specification non-certification notice:
+
+    This fixture is not model-quality evidence, external benchmark evidence, certification evidence, or a claim of ASD-STE100 compliance.
+
 Benchmark: `ste-compiler-pipeline-fixture-1`
 
 Claim scope:

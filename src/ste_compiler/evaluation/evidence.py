@@ -535,6 +535,12 @@ class SystemMetricsV1(StrictEvidenceModel):
     failure_stage_counts: dict[str, int]
     failure_code_counts: dict[str, int]
 
+    @model_validator(mode="after")
+    def frozen_metric_inventory(self) -> SystemMetricsV1:
+        if set(self.metrics) != set(SUPPORTED_METRICS):
+            raise ValueError("system metrics must equal the frozen v1 metric inventory")
+        return self
+
 
 class ReportManifestV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-report-manifest-v1"]
@@ -859,6 +865,10 @@ def _markdown(
         "# Benchmark evidence report",
         "",
         evidence_notice,
+        "",
+        "Specification non-certification notice:",
+        "",
+        *_indented_markdown(spec.non_certification_notice),
         "",
         f"Benchmark: `{spec.benchmark_id}`",
         "",

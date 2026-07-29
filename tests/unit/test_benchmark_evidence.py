@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from ste_compiler.evaluation import (
+    BenchmarkMetricsV1,
     BenchmarkSpecV1,
     FailureTaxonomyV1,
     MetricEstimateV1,
@@ -97,6 +98,11 @@ def test_fixture_report_reconstructs_byte_for_byte(tmp_path):
     report = (first / "report.md").read_text()
     assert "Deterministic fixture evidence only" in report
     assert "not model-quality measurements" in report
+    assert (
+        "Specification non-certification notice:\n\n"
+        "    This fixture is not model-quality evidence, external benchmark evidence, "
+        "certification evidence, or a claim of ASD-STE100 compliance."
+    ) in report
     assert "No external measured runs are included" in report
     assert (
         "| Failure code | Count |\n"
@@ -191,6 +197,33 @@ def test_metric_schema_rejects_tampered_wilson_bounds():
         match="Wilson confidence bounds do not match the metric counts",
     ):
         MetricEstimateV1.model_validate(estimate)
+
+
+def test_benchmark_metrics_schema_accepts_exact_frozen_metric_inventory():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+
+    metrics = BenchmarkMetricsV1.model_validate(payload)
+
+    system = next(iter(metrics.systems.values()))
+    assert set(system.metrics) == set(evidence_module.SUPPORTED_METRICS)
+
+
+@pytest.mark.parametrize("mutation", ("missing", "additional", "empty"))
+def test_benchmark_metrics_schema_rejects_non_frozen_metric_inventory(mutation):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system_metrics = next(iter(payload["systems"].values()))["metrics"]
+    if mutation == "missing":
+        system_metrics.pop(evidence_module.SUPPORTED_METRICS[0])
+    elif mutation == "additional":
+        system_metrics["invented_metric"] = system_metrics[evidence_module.SUPPORTED_METRICS[0]]
+    else:
+        system_metrics.clear()
+
+    with pytest.raises(
+        ValidationError,
+        match="system metrics must equal the frozen v1 metric inventory",
+    ):
+        BenchmarkMetricsV1.model_validate(payload)
 
 
 def test_fixture_stage_observations_are_causally_distinct():
@@ -536,6 +569,50 @@ def test_report_renders_untrusted_notes_as_indented_code(tmp_path):
     report = (output / "report.md").read_text()
     assert "\n## Fabricated external result" not in report
     assert "\n    ## Fabricated external result" in report
+
+
+def test_report_renders_specification_notice_as_indented_code():
+    specification = json.loads(SPECIFICATION.read_text())
+    specification["non_certification_notice"] = (
+        "Not certification evidence.\n\n"
+        "## Fabricated certification\n"
+        "> Certified by an external authority\n"
+        "<script>alert('certified')</script>\n"
+        "```markdown\n"
+        "# Fabricated result\n"
+        "```"
+    )
+    spec = BenchmarkSpecV1.model_validate(specification)
+    records = tuple(
+        PredictionRecordV1.model_validate_json(line)
+        for line in PREDICTIONS.read_text().splitlines()
+    )
+    metrics = evidence_module.recompute_metrics(
+        spec,
+        records,
+        spec_sha256="0" * 64,
+        prediction_manifest_sha256="1" * 64,
+        predictions_sha256="2" * 64,
+    )
+
+    report = evidence_module._markdown(spec, metrics, records).decode()
+
+    assert "\n## Fabricated certification" not in report
+    assert "\n> Certified by an external authority" not in report
+    assert "\n<script>alert('certified')</script>" not in report
+    assert "\n```markdown" not in report
+    assert "\n# Fabricated result" not in report
+    assert (
+        "Specification non-certification notice:\n\n"
+        "    Not certification evidence.\n"
+        "    \n"
+        "    ## Fabricated certification\n"
+        "    > Certified by an external authority\n"
+        "    <script>alert('certified')</script>\n"
+        "    ```markdown\n"
+        "    # Fabricated result\n"
+        "    ```"
+    ) in report
 
 
 def test_failure_examples_identify_each_system_for_the_same_case():
