@@ -108,10 +108,25 @@ class ConstructionRecord(StrictConstructionModel):
     document: dict[str, object]
 
 
+class ResourceProvenance(StrictConstructionModel):
+    version: str = Field(min_length=1, pattern=r"\S")
+    license: str = Field(min_length=1, pattern=r"\S")
+    origin: str = Field(min_length=1, pattern=r"\S")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConstructionProvenance(StrictConstructionModel):
+    license_id: str = Field(min_length=1, pattern=r"\S")
+    origin: str = Field(min_length=1, pattern=r"\S")
+    vocabulary: ResourceProvenance
+    terminology: ResourceProvenance
+
+
 class CorpusConstruction(StrictConstructionModel):
     schema_version: Literal["demonstration-corpus-construction-v1"]
     dataset_version: str = Field(min_length=1, pattern=r"\S")
     seed: int = Field(ge=0)
+    provenance: ConstructionProvenance
     records: tuple[ConstructionRecord, ...] = Field(min_length=1)
 
 
@@ -341,6 +356,55 @@ def _composition(features: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(feature for feature in features if feature.startswith(prefixes))
 
 
+def _resource_artifacts(
+    vocabulary: Vocabulary,
+    terminology: TerminologyRegistry,
+) -> dict[str, bytes]:
+    return {
+        "vocabulary.json": _canonical_json(
+            vocabulary.data.model_dump(mode="json"),
+            indent=2,
+        ),
+        "terminology.json": _canonical_json(
+            terminology.data.model_dump(mode="json"),
+            indent=2,
+        ),
+    }
+
+
+def _validate_provenance(
+    construction: CorpusConstruction,
+    vocabulary: Vocabulary,
+    terminology: TerminologyRegistry,
+    resource_artifacts: dict[str, bytes],
+) -> None:
+    resources = (
+        ("vocabulary", construction.provenance.vocabulary, vocabulary.data),
+        ("terminology", construction.provenance.terminology, terminology.data),
+    )
+    for name, declared, actual in resources:
+        if declared.version != actual.version:
+            raise ValueError(
+                f"{name} version does not match construction provenance: "
+                f"{actual.version!r} != {declared.version!r}"
+            )
+        if declared.license != actual.license:
+            raise ValueError(f"{name} license does not match construction provenance")
+        actual_sha256 = _sha256(resource_artifacts[f"{name}.json"])
+        if declared.sha256 != actual_sha256:
+            raise ValueError(f"{name} SHA-256 does not match construction provenance")
+    mismatched_licenses = [
+        record.id
+        for record in construction.records
+        if record.license_id != construction.provenance.license_id
+    ]
+    if mismatched_licenses:
+        raise ValueError(
+            "record licenses do not match construction provenance: "
+            + ", ".join(mismatched_licenses)
+        )
+
+
 def _dataset_card(
     construction: CorpusConstruction,
     split_counts: dict[str, int],
@@ -348,8 +412,9 @@ def _dataset_card(
 ) -> bytes:
     return (
         "# ste-compiler demonstration corpus\n\n"
-        f"Version: `{construction.dataset_version}`  \n"
-        "License: MIT (original examples authored for this repository)  \n"
+        f"Version: `{construction.dataset_version}`\n"
+        f"License: `{construction.provenance.license_id}`\n"
+        f"Origin: {construction.provenance.origin}\n"
         f"Construction seed: `{construction.seed}`\n\n"
         "This small, synthetic corpus demonstrates auditable technical-source to semantic-IR to "
         "controlled-text workflows. It is not ASD-STE100 data, does not reproduce the standard or "
@@ -410,6 +475,13 @@ def build_demonstration_corpus(
         raise ValueError("construction records must have unique ids")
     if len({record.source_id for record in construction.records}) != len(construction.records):
         raise ValueError("construction records must have unique source ids")
+    resource_artifacts = _resource_artifacts(vocabulary, terminology)
+    _validate_provenance(
+        construction,
+        vocabulary,
+        terminology,
+        resource_artifacts,
+    )
 
     split_records: dict[str, list[dict[str, object]]] = {split: [] for split in SPLITS}
     coverage: Counter[str] = Counter()
@@ -483,7 +555,7 @@ def build_demonstration_corpus(
             {
                 "record_id": source_record.id,
                 "source_id": source_record.source_id,
-                "origin": "original synthetic example authored for ste-compiler",
+                "origin": construction.provenance.origin,
                 "license_id": source_record.license_id,
             }
         )
@@ -523,29 +595,24 @@ def build_demonstration_corpus(
             "resources": [
                 {
                     "path": "vocabulary.json",
-                    "origin": "original demonstration resource authored for ste-compiler",
-                    "license": vocabulary.data.license,
-                    "version": vocabulary.data.version,
+                    "origin": construction.provenance.vocabulary.origin,
+                    "license": construction.provenance.vocabulary.license,
+                    "version": construction.provenance.vocabulary.version,
+                    "sha256": construction.provenance.vocabulary.sha256,
                 },
                 {
                     "path": "terminology.json",
-                    "origin": "original demonstration resource authored for ste-compiler",
-                    "license": terminology.data.license,
-                    "version": terminology.data.version,
+                    "origin": construction.provenance.terminology.origin,
+                    "license": construction.provenance.terminology.license,
+                    "version": construction.provenance.terminology.version,
+                    "sha256": construction.provenance.terminology.sha256,
                 },
             ],
             "entries": license_entries,
         },
         indent=2,
     )
-    artifacts["vocabulary.json"] = _canonical_json(
-        vocabulary.data.model_dump(mode="json"),
-        indent=2,
-    )
-    artifacts["terminology.json"] = _canonical_json(
-        terminology.data.model_dump(mode="json"),
-        indent=2,
-    )
+    artifacts.update(resource_artifacts)
     artifacts["feature-coverage.json"] = _canonical_json(
         {
             "schema_version": "feature-coverage-v1",

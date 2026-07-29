@@ -49,8 +49,10 @@ runtime profile, split, license ID, and machine-reported semantic features.
 
 The constructor rejects empty splits, missing required feature coverage, duplicate record or source
 IDs, normalized source duplicates across splits, and test/adversarial feature compositions that are
-identical to a training composition. It runs every record through IR validation, deterministic
-realization, symbolization, and the validation pipeline before writing any release.
+identical to a training composition. Construction metadata declares the dataset and resource
+licenses, origins, versions, and canonical SHA-256 values; supplied records and resource snapshots
+must match those declarations. The constructor runs every record through IR validation,
+deterministic realization, symbolization, and the validation pipeline before writing any release.
 
 ## Scope
 

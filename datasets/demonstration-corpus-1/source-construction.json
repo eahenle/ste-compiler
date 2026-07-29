@@ -1,5 +1,21 @@
 {
   "dataset_version": "demonstration-corpus-1",
+  "provenance": {
+    "license_id": "MIT",
+    "origin": "original synthetic examples authored for ste-compiler",
+    "terminology": {
+      "license": "MIT; original demonstration terminology, not ASD-STE100 terminology",
+      "origin": "original demonstration terminology authored for ste-compiler",
+      "sha256": "75cb44690ac9bbe49bd5f40b66af34a0d2f2cc11cec027760afd8646439948f6",
+      "version": "demonstration-corpus-1"
+    },
+    "vocabulary": {
+      "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
+      "origin": "original demonstration vocabulary authored for ste-compiler",
+      "sha256": "bee40f7a3c3e4f487708b520f193cf434cfe660cf814467cecacce6721bfe1b6",
+      "version": "demo-2"
+    }
+  },
   "records": [
     {
       "document": {

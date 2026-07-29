@@ -6,9 +6,9 @@
       "sha256": "a080742d6c30d76138578b0bec1d8fdd5dadec7e8af796c6e55cac68c03e0141"
     },
     {
-      "bytes": 746,
+      "bytes": 757,
       "path": "dataset-card.md",
-      "sha256": "605271cd379349001d4b16870547bc689e47c97b005cbf1cd2a0b6e61267740c"
+      "sha256": "1479f252e26ea07df7673205405cfb302e9a1dd7d7576223ae62ec11db2b5fca"
     },
     {
       "bytes": 5255,
@@ -21,14 +21,14 @@
       "sha256": "8e36ad2c4bfcd5b0d7470c892b035dce3716e40340dab163a3ff6bf15e50f026"
     },
     {
-      "bytes": 3105,
+      "bytes": 3290,
       "path": "license-inventory.json",
-      "sha256": "379cc351f72f3de0eff9cd843a67e09b82833681ef732ebd425e111f801f9ada"
+      "sha256": "7de83ffc9948e40ab8d576b8314724e8ed22afda72a53a0306887ce0313ea1b8"
     },
     {
-      "bytes": 17207,
+      "bytes": 17949,
       "path": "source-construction.json",
-      "sha256": "73c1255d57cfd34507cd99e8518296138bbaa2d7beb0820bc8a8aa50ebe7e2c4"
+      "sha256": "dee6a766eca91e25536189e35231c1eaf4b72b45d49546dff198d4c14ba49c95"
     },
     {
       "bytes": 2076,
@@ -56,7 +56,7 @@
       "sha256": "bee40f7a3c3e4f487708b520f193cf434cfe660cf814467cecacce6721bfe1b6"
     }
   ],
-  "construction_sha256": "73c1255d57cfd34507cd99e8518296138bbaa2d7beb0820bc8a8aa50ebe7e2c4",
+  "construction_sha256": "dee6a766eca91e25536189e35231c1eaf4b72b45d49546dff198d4c14ba49c95",
   "dataset_version": "demonstration-corpus-1",
   "profiles": [
     {

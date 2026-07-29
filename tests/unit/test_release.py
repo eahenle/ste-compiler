@@ -7,7 +7,7 @@ import pytest
 
 from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import canonical_document_json
-from ste_compiler.terminology import TerminologyRegistry
+from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.training import (
     build_demonstration_corpus,
     build_training_record,
@@ -159,6 +159,35 @@ def test_release_rejects_missing_required_coverage(tmp_path, vocab):
             incomplete,
             tmp_path / "release",
             vocab,
+            _corpus_terms(),
+        )
+
+
+def test_release_rejects_license_claims_that_do_not_match_provenance(tmp_path, vocab):
+    construction = json.loads(CONSTRUCTION.read_text())
+    construction["records"][0]["license_id"] = "Proprietary"
+    mismatched = tmp_path / "construction.json"
+    mismatched.write_text(json.dumps(construction))
+
+    with pytest.raises(ValueError, match="record licenses do not match construction provenance"):
+        build_demonstration_corpus(
+            mismatched,
+            tmp_path / "release",
+            vocab,
+            _corpus_terms(),
+        )
+
+
+def test_release_rejects_replacement_resources_with_reused_identity(tmp_path, vocab):
+    raw_vocabulary = vocab.data.model_dump(mode="json")
+    raw_vocabulary["entries"][0]["meaning_id"] = "replacement-content"
+    replacement = Vocabulary(type(vocab.data).model_validate(raw_vocabulary))
+
+    with pytest.raises(ValueError, match="vocabulary SHA-256 does not match"):
+        build_demonstration_corpus(
+            CONSTRUCTION,
+            tmp_path / "release",
+            replacement,
             _corpus_terms(),
         )
 
