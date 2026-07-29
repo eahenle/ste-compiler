@@ -176,9 +176,19 @@ class Document(StrictModel):
 
     @model_validator(mode="after")
     def valid_causal_graph(self) -> Document:
-        statement_ids = {
+        ordered_statement_ids = [
             statement.id for section in self.sections for statement in section.statements
-        }
+        ]
+        statement_ids = set(ordered_statement_ids)
+        if len(statement_ids) != len(ordered_statement_ids):
+            duplicate_ids = sorted(
+                {
+                    statement_id
+                    for statement_id in statement_ids
+                    if ordered_statement_ids.count(statement_id) > 1
+                }
+            )
+            raise ValueError("statement ids must be unique: " + ", ".join(duplicate_ids))
         occupied_ids = set(statement_ids)
         occupied_ids.update(
             hazard.id

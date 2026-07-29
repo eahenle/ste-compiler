@@ -131,19 +131,6 @@ class SemanticValidator:
                                 )
                             )
         for causal_relation in document.causal_relations:
-            expected_ids = (
-                causal_relation.id,
-                causal_relation.cause_node_id,
-                causal_relation.effect_node_id,
-            )
-            relation_mapping = next(
-                (
-                    candidate
-                    for candidate in mappings.get(causal_relation.id, [])
-                    if candidate.ir_node_ids == expected_ids
-                ),
-                None,
-            )
             cause_mapping = next(
                 (
                     candidate
@@ -160,28 +147,41 @@ class SemanticValidator:
                 ),
                 None,
             )
-            if relation_mapping is None or cause_mapping is None or effect_mapping is None:
+            relation_features = causal_relation.model_dump(mode="json")
+            causal_role_mappings: list[SentenceMapping] = []
+            for role, endpoint_id, endpoint_mapping in (
+                ("cause", causal_relation.cause_node_id, cause_mapping),
+                ("effect", causal_relation.effect_node_id, effect_mapping),
+            ):
+                expected_ids = (causal_relation.id, endpoint_id)
+                role_mapping = next(
+                    (
+                        candidate
+                        for candidate in mappings.get(causal_relation.id, [])
+                        if candidate.ir_node_ids == expected_ids
+                    ),
+                    None,
+                )
+                expected_text = (
+                    f"{role.capitalize()}: {endpoint_mapping.text}"
+                    if endpoint_mapping is not None
+                    else None
+                )
+                if (
+                    role_mapping is None
+                    or expected_text is None
+                    or role_mapping.features != {**relation_features, "causal_role": role}
+                    or role_mapping.text != expected_text
+                ):
+                    causal_role_mappings = []
+                    break
+                causal_role_mappings.append(role_mapping)
+            if len(causal_role_mappings) != 2:
                 out.append(
                     Diagnostic(
                         code="CAUSAL_RELATION_NOT_PRESERVED",
                         severity=Severity.CRITICAL,
                         message=f"Output omitted causal relation {causal_relation.id}.",
-                        ir_node_id=causal_relation.id,
-                    )
-                )
-                continue
-            cause_clause = cause_mapping.text.removesuffix(".")
-            effect_clause = effect_mapping.text.removesuffix(".")
-            expected_text = f"Cause: {cause_clause}; effect: {effect_clause}."
-            if (
-                relation_mapping.features != causal_relation.model_dump(mode="json")
-                or relation_mapping.text != expected_text
-            ):
-                out.append(
-                    Diagnostic(
-                        code="CAUSAL_RELATION_NOT_PRESERVED",
-                        severity=Severity.CRITICAL,
-                        message=f"Causal relation {causal_relation.id} changed.",
                         ir_node_id=causal_relation.id,
                     )
                 )

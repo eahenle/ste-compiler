@@ -12,7 +12,10 @@ class StructuralValidator:
         out: list[Diagnostic] = []
         sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
         for number, sentence in enumerate(sentences, 1):
-            if len(re.findall(r"\b[\w-]+\b", sentence)) > self.max_sentence_words:
+            words = re.findall(r"\b[\w-]+\b", sentence)
+            if re.match(r"^(?:Cause|Effect):\s", sentence) is not None:
+                words = words[1:]
+            if len(words) > self.max_sentence_words:
                 out.append(
                     Diagnostic(
                         code="SENTENCE_TOO_LONG",

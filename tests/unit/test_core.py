@@ -1,3 +1,4 @@
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -1426,11 +1427,15 @@ def test_causal_relation_has_explicit_controlled_realization(vocab, terms):
     assert result.text == (
         "Install the access panel.\n"
         "Inspect the pump.\n"
-        "Cause: Install the access panel; effect: Inspect the pump."
+        "Cause: Install the access panel.\n"
+        "Effect: Inspect the pump."
+    )
+    assert result.mappings[-2].ir_node_ids == (
+        "installation_causes_inspection",
+        "inst_001",
     )
     assert result.mappings[-1].ir_node_ids == (
         "installation_causes_inspection",
-        "inst_001",
         "inspect_pump",
     )
     assert not SemanticValidator().validate(document, result)
@@ -1482,10 +1487,19 @@ def test_causal_relation_schema_rejects_duplicate_pairs():
         Document.model_validate(document)
 
 
+def test_causal_relation_schema_rejects_duplicate_statement_ids():
+    document = _causal_document().model_dump(mode="json")
+    document["sections"][0]["statements"][1]["id"] = "inst_001"
+    document["causal_relations"][0]["effect_node_id"] = "inst_001"
+
+    with pytest.raises(ValidationError, match="statement ids must be unique: inst_001"):
+        Document.model_validate(document)
+
+
 def test_semantic_validator_rejects_changed_or_omitted_causal_relation(vocab, terms):
     document = _causal_document()
     result = DeterministicRealizer().realize(document, vocab, terms)
-    changed_mapping = replace(result.mappings[-1], text="Cause: Inspect the pump.")
+    changed_mapping = replace(result.mappings[-1], text="Effect: Open the pump.")
     changed = replace(
         result,
         text="\n".join([*(mapping.text for mapping in result.mappings[:-1]), changed_mapping.text]),
@@ -1508,7 +1522,7 @@ def test_semantic_validator_rejects_changed_or_omitted_causal_relation(vocab, te
 def test_neural_alignment_cannot_inherit_changed_causal_relation(vocab, terms):
     document = _causal_document()
     expected = DeterministicRealizer().realize(document, vocab, terms)
-    changed = expected.text.replace("effect: Inspect", "effect: Open")
+    changed = expected.text.replace("Effect: Inspect", "Effect: Open")
 
     result = align_controlled_text(changed, expected)
 
@@ -1517,6 +1531,27 @@ def test_neural_alignment_cannot_inherit_changed_causal_relation(vocab, terms):
         "CAUSAL_RELATION_NOT_PRESERVED",
         "UNSUPPORTED_SEMANTIC_CHANGE",
     } <= {diagnostic.code for diagnostic in SemanticValidator().validate(document, result)}
+
+
+def test_causal_labels_do_not_break_sentence_limit(vocab, terms):
+    document = _causal_document()
+    instruction = document.sections[0].statements[0]
+    document.sections[0].statements[0] = instruction.model_copy(
+        update={"manner": " ".join(["slowly"] * 21)}
+    )
+    result = DeterministicRealizer().realize(document, vocab, terms)
+
+    assert len(re.findall(r"\b[\w-]+\b", result.mappings[0].text)) == 25
+    assert not StructuralValidator(max_sentence_words=25).validate(result.text)
+
+    overlong = result.text.replace(
+        "Cause: Install the access panel ",
+        "Cause: Install the access panel carefully ",
+    )
+    assert "SENTENCE_TOO_LONG" in {
+        diagnostic.code
+        for diagnostic in StructuralValidator(max_sentence_words=25).validate(overlong)
+    }
 
 
 def test_llm_frontend_verifies_causal_relation_source_spans():

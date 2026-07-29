@@ -1,9 +1,9 @@
 {
   "artifacts": [
     {
-      "bytes": 11581,
+      "bytes": 11565,
       "path": "adversarial.jsonl",
-      "sha256": "4b102ff80448ff322c65b59b61f226b5170639d601a5537097bebf2d02b7047f"
+      "sha256": "76a433ec0aa8974521976f4d865bd421910149fee6f02e001abb19f2fd3b2663"
     },
     {
       "bytes": 757,

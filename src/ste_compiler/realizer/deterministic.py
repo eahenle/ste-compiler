@@ -77,10 +77,8 @@ class DeterministicRealizer:
         return text[:1].upper() + text[1:]
 
     @staticmethod
-    def _causal_relation(cause_text: str, effect_text: str) -> str:
-        cause_clause = cause_text.removesuffix(".")
-        effect_clause = effect_text.removesuffix(".")
-        return f"Cause: {cause_clause}; effect: {effect_clause}."
+    def _causal_role(role: str, statement_text: str) -> str:
+        return f"{role}: {statement_text}"
 
     def realize(
         self,
@@ -122,17 +120,19 @@ class DeterministicRealizer:
                 mappings.append(SentenceMapping(len(mappings) + 1, text, (item.id,), features))
                 statement_text[item.id] = text
         for relation in document.causal_relations:
-            text = self._causal_relation(
-                statement_text[relation.cause_node_id],
-                statement_text[relation.effect_node_id],
-            )
-            mappings.append(
-                SentenceMapping(
-                    len(mappings) + 1,
-                    text,
-                    (relation.id, relation.cause_node_id, relation.effect_node_id),
-                    relation.model_dump(mode="json"),
+            relation_features = relation.model_dump(mode="json")
+            for role, endpoint_id in (
+                ("Cause", relation.cause_node_id),
+                ("Effect", relation.effect_node_id),
+            ):
+                text = self._causal_role(role, statement_text[endpoint_id])
+                mappings.append(
+                    SentenceMapping(
+                        len(mappings) + 1,
+                        text,
+                        (relation.id, endpoint_id),
+                        {**relation_features, "causal_role": role.casefold()},
+                    )
                 )
-            )
         metadata = {k: str(v) for k, v in document.metadata.model_dump().items()}
         return RealizationResult("\n".join(m.text for m in mappings), tuple(mappings), metadata)

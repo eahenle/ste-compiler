@@ -137,7 +137,7 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
         "Opening the access panel causes inspection of the pump."
     )
     assert records_by_id["adversarial_reference_sequence"]["text"].endswith(
-        "Cause: Open the access panel before the test; effect: Inspect the pump."
+        "Cause: Open the access panel before the test.\nEffect: Inspect the pump."
     )
 
 
