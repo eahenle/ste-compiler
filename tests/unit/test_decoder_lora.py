@@ -526,6 +526,44 @@ def test_decoder_lora_runtime_requires_safe_pinned_artifacts(monkeypatch, tmp_pa
     assert adapter_model.evaluated
 
 
+def test_decoder_lora_wraps_third_party_artifact_loading_failure(
+    monkeypatch,
+    tmp_path,
+):
+    class BrokenFactory:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise RuntimeError("incompatible PEFT metadata")
+
+    modules = {
+        "transformers": SimpleNamespace(
+            AutoTokenizer=BrokenFactory,
+            AutoModelForCausalLM=BrokenFactory,
+        ),
+        "peft": SimpleNamespace(
+            PeftConfig=BrokenFactory,
+            PeftModel=BrokenFactory,
+        ),
+        "huggingface_hub": object(),
+    }
+    monkeypatch.setattr(decoder_lora.importlib, "import_module", modules.__getitem__)
+    monkeypatch.setattr(
+        DecoderOnlyLoRASymbolGenerator,
+        "_resolve_safe_adapter_snapshot",
+        lambda config, hub: tmp_path,
+    )
+
+    with pytest.raises(
+        DecoderOnlyLoRAError,
+        match="artifacts could not be loaded safely",
+    ) as caught:
+        DecoderOnlyLoRASymbolGenerator._load_runtime(
+            _config(local_files_only=True),
+        )
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
 @pytest.mark.parametrize(
     "missing",
     ["adapter_config.json", "adapter_model.safetensors"],

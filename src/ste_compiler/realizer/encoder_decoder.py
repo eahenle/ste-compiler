@@ -276,15 +276,20 @@ class TransformersEncoderDecoderSymbolGenerator:
             "local_files_only": True,
             "trust_remote_code": False,
         }
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            str(snapshot),
-            **common,
-        )
-        model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
-            str(snapshot),
-            **common,
-            use_safetensors=True,
-        )
+        try:
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                str(snapshot),
+                **common,
+            )
+            model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
+                str(snapshot),
+                **common,
+                use_safetensors=True,
+            )
+        except Exception as error:
+            raise EncoderDecoderError(
+                "configured encoder-decoder artifacts could not be loaded safely"
+            ) from error
         return tokenizer, model
 
     @staticmethod

@@ -195,6 +195,44 @@ def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, t
     ]
 
 
+def test_encoder_decoder_wraps_third_party_artifact_loading_failure(
+    monkeypatch,
+    tmp_path,
+):
+    class BrokenFactory:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise RuntimeError("corrupt safetensors")
+
+    modules = {
+        "transformers": SimpleNamespace(
+            AutoTokenizer=BrokenFactory,
+            AutoModelForSeq2SeqLM=BrokenFactory,
+        ),
+        "huggingface_hub": object(),
+    }
+    monkeypatch.setattr(encoder_decoder, "import_module", modules.__getitem__)
+    monkeypatch.setattr(
+        TransformersEncoderDecoderSymbolGenerator,
+        "_resolve_safe_model_snapshot",
+        lambda config, hub: tmp_path,
+    )
+
+    with pytest.raises(
+        EncoderDecoderError,
+        match="artifacts could not be loaded safely",
+    ) as caught:
+        TransformersEncoderDecoderSymbolGenerator._load_transformers_components(
+            EncoderDecoderConfig(
+                model_id="organization/small-seq2seq",
+                revision=MODEL_REVISION,
+                local_files_only=True,
+            )
+        )
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
 @pytest.mark.parametrize(
     ("resource", "pattern"),
     [
