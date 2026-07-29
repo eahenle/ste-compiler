@@ -114,6 +114,8 @@ class TrainingReleaseSnapshot:
     validation: tuple[ReleasedTrainingRecordV1, ...]
     test: tuple[ReleasedTrainingRecordV1, ...]
     adversarial: tuple[ReleasedTrainingRecordV1, ...]
+    vocabulary_json: bytes
+    terminology_json: bytes
 
     @property
     def symbol_inventory(self) -> frozenset[str]:
@@ -532,4 +534,6 @@ def read_training_release(
         validation=tuple(_freeze_record(record) for record in records["validation"]),
         test=tuple(_freeze_record(record) for record in records["test"]),
         adversarial=tuple(_freeze_record(record) for record in records["adversarial"]),
+        vocabulary_json=files["vocabulary.json"],
+        terminology_json=files["terminology.json"],
     )

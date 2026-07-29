@@ -30,6 +30,14 @@ from ste_compiler.realizer.decoder_lora import DecoderOnlyLoRAError
 from ste_compiler.realizer.encoder_decoder import EncoderDecoderError
 from ste_compiler.realizer.factory import build_realizer
 from ste_compiler.realizer.neural import NeuralRealizerUnavailable
+from ste_compiler.reference_release import (
+    ReferencePredictionV1,
+    ReferenceReleaseManifestV1,
+    ReferenceReleaseMetadataV1,
+    build_reference_release,
+    load_reference_release_metadata,
+    verify_reference_release,
+)
 from ste_compiler.results import CompileSourceResult
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
 from ste_compiler.training import (
@@ -75,6 +83,11 @@ TRAINING_INPUT_ERRORS = (
     *SOURCE_INPUT_ERRORS,
     DecoderLoRATrainingError,
     NeuralRealizerUnavailable,
+)
+REFERENCE_RELEASE_INPUT_ERRORS = (
+    *TRAINING_INPUT_ERRORS,
+    DecoderOnlyLoRAError,
+    EncoderDecoderError,
 )
 schema_app = typer.Typer(help="Print versioned machine-readable result schemas.")
 app.add_typer(schema_app, name="schema")
@@ -701,6 +714,101 @@ def preflight_artifact(
         )
 
 
+@app.command("build-reference-release")
+def build_reference_artifact_release(
+    metadata_path: Path,
+    corpus_release: Path,
+    encoder_bundle: Path,
+    encoder_artifact_manifest_sha256: str,
+    decoder_bundle: Path,
+    decoder_artifact_manifest_sha256: str,
+    decoder_model_snapshot: Path,
+    decoder_model_snapshot_manifest_sha256: str,
+    output: Path,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Build a dual-architecture mechanics release through production local loaders."""
+
+    try:
+        result = build_reference_release(
+            load_reference_release_metadata(metadata_path),
+            corpus_release,
+            encoder_bundle,
+            encoder_artifact_manifest_sha256,
+            decoder_bundle,
+            decoder_artifact_manifest_sha256,
+            decoder_model_snapshot,
+            decoder_model_snapshot_manifest_sha256,
+            output,
+        )
+    except REFERENCE_RELEASE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": result.manifest.schema_version,
+        "release_id": result.manifest.release_id,
+        "manifest_sha256": result.manifest_sha256,
+        "corpus_manifest_sha256": result.manifest.corpus_manifest_sha256,
+        "architectures": [item.architecture for item in result.manifest.architectures],
+        "output": str(output),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Wrote reference release {result.manifest.release_id} to {output} "
+            f"(manifest sha256: {result.manifest_sha256})"
+        )
+
+
+@app.command("verify-reference-release")
+def verify_reference_artifact_release(
+    release: Path,
+    release_manifest_sha256: str,
+    regenerate: bool = typer.Option(
+        False,
+        "--regenerate",
+        help="Regenerate predictions and every metadata byte through both local loaders.",
+    ),
+    corpus_release: Annotated[Path | None, typer.Option()] = None,
+    encoder_bundle: Annotated[Path | None, typer.Option()] = None,
+    decoder_bundle: Annotated[Path | None, typer.Option()] = None,
+    decoder_model_snapshot: Annotated[Path | None, typer.Option()] = None,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Verify one externally identified reference release, optionally by regeneration."""
+
+    try:
+        verified = verify_reference_release(
+            release,
+            release_manifest_sha256,
+            corpus_release=corpus_release,
+            encoder_bundle=encoder_bundle,
+            decoder_bundle=decoder_bundle,
+            decoder_model_snapshot=decoder_model_snapshot,
+            regenerate=regenerate,
+        )
+    except REFERENCE_RELEASE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": verified.manifest.schema_version,
+        "release_id": verified.manifest.release_id,
+        "manifest_sha256": verified.manifest_sha256,
+        "corpus_manifest_sha256": verified.manifest.corpus_manifest_sha256,
+        "architectures": [item.architecture for item in verified.manifest.architectures],
+        "regenerated": regenerate,
+        "status": "verified",
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Verified reference release {verified.manifest.release_id} "
+            f"(manifest sha256: {verified.manifest_sha256})"
+        )
+
+
 @app.command("evaluate-encoder-decoder-checkpoint")
 def evaluate_encoder_decoder(
     config_path: Path,
@@ -913,6 +1021,27 @@ def artifact_preflight_schema() -> None:
     """Print the JSON Schema for `preflight-artifact --json`."""
 
     typer.echo(json.dumps(ArtifactPreflightResultV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("reference-release")
+def reference_release_schema() -> None:
+    """Print the JSON Schema for dual-architecture reference release manifests."""
+
+    typer.echo(json.dumps(ReferenceReleaseManifestV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("reference-release-metadata")
+def reference_release_metadata_schema() -> None:
+    """Print the JSON Schema for reviewed release origin and license declarations."""
+
+    typer.echo(json.dumps(ReferenceReleaseMetadataV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("reference-prediction")
+def reference_prediction_schema() -> None:
+    """Print the JSON Schema for one canonical neural prediction or rejection."""
+
+    typer.echo(json.dumps(ReferencePredictionV1.model_json_schema(), indent=2))
 
 
 @app.command()
