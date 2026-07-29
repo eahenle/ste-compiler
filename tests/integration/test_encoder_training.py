@@ -472,7 +472,7 @@ def test_failed_checkpoint_save_leaves_no_partial_output(tmp_path, tiny_snapshot
     assert not list(tmp_path.glob(".failed.stage-*"))
 
 
-def test_bundle_result_retains_verified_staged_digest_after_publication(
+def test_bundle_publication_rejects_stage_swap_after_preflight(
     tmp_path,
     tiny_snapshot,
     monkeypatch,
@@ -480,37 +480,40 @@ def test_bundle_result_retains_verified_staged_digest_after_publication(
     _, config = _config(tmp_path)
     output = tmp_path / "bundle-result"
     staged_digests = []
+    displaced_stage = tmp_path / "displaced-stage"
     real_preflight = training_module.preflight_encoder_decoder_artifact_bundle
-    real_rename = training_module._rename_no_replace
 
-    def capture_staged_digest(root, expected_manifest_sha256):
+    def verify_then_swap_stage(root, expected_manifest_sha256):
         result = real_preflight(root, expected_manifest_sha256)
         staged_digests.append(result.artifact_manifest_sha256)
+        root.rename(displaced_stage)
+        root.mkdir()
+        (root / "counterfeit").write_bytes(b"not the verified stage")
         return result
-
-    def publish_then_corrupt_manifest(source, destination):
-        real_rename(source, destination)
-        (destination / ARTIFACT_MANIFEST_NAME).write_bytes(b"changed after publication\n")
 
     monkeypatch.setattr(
         training_module,
         "preflight_encoder_decoder_artifact_bundle",
-        capture_staged_digest,
+        verify_then_swap_stage,
     )
-    monkeypatch.setattr(training_module, "_rename_no_replace", publish_then_corrupt_manifest)
 
-    result = run_encoder_decoder_training_bundle(
-        config,
-        RELEASE,
-        output,
-        source_root=ROOT,
-        dependency_lock=ROOT / "uv.lock",
-    )
-    published_digest = hashlib.sha256((output / ARTIFACT_MANIFEST_NAME).read_bytes()).hexdigest()
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="changed during staged artifact publication",
+    ):
+        run_encoder_decoder_training_bundle(
+            config,
+            RELEASE,
+            output,
+            source_root=ROOT,
+            dependency_lock=ROOT / "uv.lock",
+        )
 
-    assert staged_digests == [result.artifact_manifest_sha256]
-    assert result.artifact_manifest_sha256 != published_digest
-    assert result.run_manifest.optimizer_steps == config.max_steps
+    assert len(staged_digests) == 1
+    assert len(staged_digests[0]) == 64
+    assert displaced_stage.is_dir()
+    assert not output.exists()
+    assert not list(tmp_path.glob(".bundle-result.stage-*"))
 
 
 def test_installed_wheel_runs_offline_encoder_training(tmp_path, tiny_snapshot):

@@ -40,6 +40,7 @@ from ste_compiler.artifacts import (
     canonical_artifact_manifest_json,
     open_verified_artifact_bundle,
     parse_canonical_artifact_manifest,
+    verify_artifact_bundle,
 )
 from ste_compiler.realizer.decoder_protocol import (
     DECODER_PROMPT_PROFILE,
@@ -612,9 +613,66 @@ def _fsync_tree(root: Path) -> None:
             os.close(descriptor)
 
 
+@dataclass(frozen=True)
+class _PinnedOutputDirectory:
+    descriptor: int
+    device: int
+    inode: int
+
+
+def _open_pinned_output_directory(directory: Path) -> _PinnedOutputDirectory:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        metadata = os.fstat(descriptor)
+    except OSError as error:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise DecoderLoRATrainingError(f"cannot pin staged training output: {directory}") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        os.close(descriptor)
+        raise DecoderLoRATrainingError(
+            f"staged training output must be a real directory: {directory}"
+        )
+    return _PinnedOutputDirectory(
+        descriptor=descriptor,
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+    )
+
+
+def _assert_pinned_output_directory(
+    directory: Path,
+    pinned: _PinnedOutputDirectory,
+    *,
+    operation: str,
+) -> None:
+    try:
+        descriptor_metadata = os.fstat(pinned.descriptor)
+        path_metadata = os.stat(directory, follow_symlinks=False)
+    except OSError as error:
+        raise DecoderLoRATrainingError(
+            f"training output changed during {operation}: {directory}"
+        ) from error
+    expected_identity = (pinned.device, pinned.inode)
+    if (
+        not stat.S_ISDIR(descriptor_metadata.st_mode)
+        or not stat.S_ISDIR(path_metadata.st_mode)
+        or (descriptor_metadata.st_dev, descriptor_metadata.st_ino) != expected_identity
+        or (path_metadata.st_dev, path_metadata.st_ino) != expected_identity
+    ):
+        raise DecoderLoRATrainingError(f"training output changed during {operation}: {directory}")
+
+
 def _atomic_output_directory(
     output: Path,
     builder: Callable[[Path], Any],
+    *,
+    verify_staged: Callable[[Path, Any], None] | None = None,
+    verify_published: Callable[[Path, Any], None] | None = None,
 ) -> Any:
     if output.exists() or output.is_symlink():
         raise DecoderLoRATrainingError(f"output path already exists: {output}")
@@ -622,20 +680,49 @@ def _atomic_output_directory(
     if not parent.is_dir() or parent.is_symlink():
         raise DecoderLoRATrainingError(f"output parent must be a real directory: {parent}")
     stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.stage-", dir=parent))
+    pinned_stage: _PinnedOutputDirectory | None = None
     try:
+        pinned_stage = _open_pinned_output_directory(stage)
         result = builder(stage)
+        _assert_pinned_output_directory(
+            stage,
+            pinned_stage,
+            operation="staged artifact verification",
+        )
         _fsync_tree(stage)
+        if verify_staged is not None:
+            verify_staged(stage, result)
+        _assert_pinned_output_directory(
+            stage,
+            pinned_stage,
+            operation="staged artifact publication",
+        )
         _rename_no_replace(stage, output)
+        _assert_pinned_output_directory(
+            output,
+            pinned_stage,
+            operation="atomic artifact publication",
+        )
         parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             os.fsync(parent_fd)
         finally:
             os.close(parent_fd)
+        if verify_published is not None:
+            verify_published(output, result)
+            _assert_pinned_output_directory(
+                output,
+                pinned_stage,
+                operation="published artifact verification",
+            )
         return result
     except BaseException:
         if stage.exists():
             shutil.rmtree(stage)
         raise
+    finally:
+        if pinned_stage is not None:
+            os.close(pinned_stage.descriptor)
 
 
 def _snapshot_artifacts(directory: Path) -> tuple[ArtifactDigestV1, ...]:
@@ -1699,22 +1786,56 @@ def run_decoder_lora_training_bundle(
         )
         _write_checksums(stage)
         artifact_digest = _write_decoder_artifact_manifest(stage)
-        try:
-            with open_verified_artifact_bundle(stage, artifact_digest) as verified:
-                _preflight_verified_decoder_bundle(verified, modules)
-        except ArtifactVerificationError as error:
-            raise DecoderLoRATrainingError(
-                f"decoder artifact bundle verification failed: {error}"
-            ) from error
         return DecoderLoRATrainingBundleResult(
             run_manifest=manifest,
             artifact_manifest_sha256=artifact_digest,
         )
 
+    def verify_staged(
+        staged: Path,
+        result: DecoderLoRATrainingBundleResult,
+    ) -> None:
+        try:
+            with open_verified_artifact_bundle(
+                staged,
+                result.artifact_manifest_sha256,
+            ) as verified:
+                _preflight_verified_decoder_bundle(verified, modules)
+        except ArtifactVerificationError as error:
+            raise DecoderLoRATrainingError(
+                f"decoder artifact bundle verification failed: {error}"
+            ) from error
+
+    def verify_published(
+        published: Path,
+        result: DecoderLoRATrainingBundleResult,
+    ) -> None:
+        try:
+            published_manifest = verify_artifact_bundle(
+                published,
+                result.artifact_manifest_sha256,
+            )
+        except ArtifactVerificationError as error:
+            raise DecoderLoRATrainingError(
+                f"published artifact bundle does not match the verified stage: {error}"
+            ) from error
+        expected_run_manifest_sha256 = hashlib.sha256(
+            canonical_decoder_lora_run_manifest_json(result.run_manifest)
+        ).hexdigest()
+        if published_manifest.run_manifest_sha256 != expected_run_manifest_sha256:
+            raise DecoderLoRATrainingError(
+                "published artifact run manifest does not match the completed training run"
+            )
+
     with _isolated_deterministic_runtime(torch, config.seed):
         return cast(
             DecoderLoRATrainingBundleResult,
-            _atomic_output_directory(output, build),
+            _atomic_output_directory(
+                output,
+                build,
+                verify_staged=verify_staged,
+                verify_published=verify_published,
+            ),
         )
 
 

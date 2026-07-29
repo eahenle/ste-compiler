@@ -293,6 +293,58 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         )
 
 
+def test_decoder_bundle_publication_rejects_stage_modification_after_preflight(
+    tmp_path,
+    monkeypatch,
+):
+    _offline(monkeypatch)
+    config, release = _training_inputs()
+    model_snapshot = tmp_path / "model"
+    output = tmp_path / "changed-stage"
+    prepare_decoder_smoke_fixture(config, release, model_snapshot)
+    snapshot_digest = model_snapshot_manifest_sha256(model_snapshot)
+    staged_digests = []
+    real_write_manifest = decoder_training._write_decoder_artifact_manifest
+    real_fsync_tree = decoder_training._fsync_tree
+
+    def capture_manifest_digest(root):
+        digest = real_write_manifest(root)
+        staged_digests.append(digest)
+        return digest
+
+    def modify_after_fsync(root):
+        real_fsync_tree(root)
+        manifest = root / decoder_training.ARTIFACT_MANIFEST_NAME
+        if manifest.is_file():
+            manifest.write_bytes(b"changed after staged preflight\n")
+
+    monkeypatch.setattr(
+        decoder_training,
+        "_write_decoder_artifact_manifest",
+        capture_manifest_digest,
+    )
+    monkeypatch.setattr(decoder_training, "_fsync_tree", modify_after_fsync)
+
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match="decoder artifact bundle verification failed",
+    ):
+        run_decoder_lora_training_bundle(
+            config,
+            release,
+            model_snapshot,
+            snapshot_digest,
+            output,
+            source_checkout=ROOT,
+            evaluation_command="ste-compiler evaluate-decoder-lora ...",
+        )
+
+    assert len(staged_digests) == 1
+    assert len(staged_digests[0]) == 64
+    assert not output.exists()
+    assert not list(tmp_path.glob(".changed-stage.stage-*"))
+
+
 def test_decoder_fixture_is_content_bound_and_refuses_existing_output(
     tmp_path,
     monkeypatch,

@@ -38,6 +38,7 @@ from ste_compiler.artifacts import (
     canonical_artifact_manifest_json,
     open_verified_artifact_bundle,
     parse_canonical_artifact_manifest,
+    verify_artifact_bundle,
 )
 
 from .config import (
@@ -1226,6 +1227,64 @@ def _fsync_tree(directory: Path) -> None:
         os.close(directory_fd)
 
 
+@dataclass(frozen=True)
+class _PinnedOutputDirectory:
+    descriptor: int
+    device: int
+    inode: int
+
+
+def _open_pinned_output_directory(directory: Path) -> _PinnedOutputDirectory:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        metadata = os.fstat(descriptor)
+    except OSError as error:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise EncoderDecoderTrainingError(
+            f"cannot pin staged training output: {directory}"
+        ) from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        os.close(descriptor)
+        raise EncoderDecoderTrainingError(
+            f"staged training output must be a real directory: {directory}"
+        )
+    return _PinnedOutputDirectory(
+        descriptor=descriptor,
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+    )
+
+
+def _assert_pinned_output_directory(
+    directory: Path,
+    pinned: _PinnedOutputDirectory,
+    *,
+    operation: str,
+) -> None:
+    try:
+        descriptor_metadata = os.fstat(pinned.descriptor)
+        path_metadata = os.stat(directory, follow_symlinks=False)
+    except OSError as error:
+        raise EncoderDecoderTrainingError(
+            f"training output changed during {operation}: {directory}"
+        ) from error
+    expected_identity = (pinned.device, pinned.inode)
+    if (
+        not stat.S_ISDIR(descriptor_metadata.st_mode)
+        or not stat.S_ISDIR(path_metadata.st_mode)
+        or (descriptor_metadata.st_dev, descriptor_metadata.st_ino) != expected_identity
+        or (path_metadata.st_dev, path_metadata.st_ino) != expected_identity
+    ):
+        raise EncoderDecoderTrainingError(
+            f"training output changed during {operation}: {directory}"
+        )
+
+
 def _write_bytes(path: Path, data: bytes) -> None:
     with path.open("xb") as handle:
         if handle.write(data) != len(data):
@@ -1350,8 +1409,10 @@ def _run_encoder_decoder_training(
             dir=output.parent,
         )
     )
+    pinned_stage: _PinnedOutputDirectory | None = None
     installed = False
     try:
+        pinned_stage = _open_pinned_output_directory(stage)
         torch, transformers, tokenizer, model, base_snapshot = _load_components(
             config,
             cache_dir=cache_dir,
@@ -1433,25 +1494,57 @@ def _run_encoder_decoder_training(
             stage / ARTIFACT_MANIFEST_NAME,
             canonical_artifact_manifest_json(artifact_manifest),
         )
-        preflight = preflight_encoder_decoder_artifact_bundle(
+        _fsync_tree(stage)
+        _assert_pinned_output_directory(
             stage,
-            artifact_digest,
+            pinned_stage,
+            operation="staged artifact verification",
         )
+        preflight = preflight_encoder_decoder_artifact_bundle(stage, artifact_digest)
         if preflight.run_manifest != manifest:
             raise EncoderDecoderTrainingError("staged artifact bundle changed before publication")
-        _fsync_tree(stage)
+        _assert_pinned_output_directory(
+            stage,
+            pinned_stage,
+            operation="staged artifact publication",
+        )
         _rename_no_replace(stage, output)
         installed = True
+        _assert_pinned_output_directory(
+            output,
+            pinned_stage,
+            operation="atomic artifact publication",
+        )
         parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             os.fsync(parent_fd)
         finally:
             os.close(parent_fd)
+        try:
+            published_manifest = verify_artifact_bundle(output, artifact_digest)
+        except ArtifactVerificationError as error:
+            raise EncoderDecoderTrainingError(
+                f"published artifact bundle does not match the verified stage: {error}"
+            ) from error
+        if (
+            published_manifest.run_manifest_sha256
+            != hashlib.sha256(canonical_run_manifest_json(manifest)).hexdigest()
+        ):
+            raise EncoderDecoderTrainingError(
+                "published artifact run manifest does not match the completed training run"
+            )
+        _assert_pinned_output_directory(
+            output,
+            pinned_stage,
+            operation="published artifact verification",
+        )
         return EncoderDecoderTrainingBundleResult(
             run_manifest=manifest,
             artifact_manifest_sha256=preflight.artifact_manifest_sha256,
         )
     finally:
+        if pinned_stage is not None:
+            os.close(pinned_stage.descriptor)
         if not installed:
             shutil.rmtree(stage, ignore_errors=True)
         shutil.rmtree(runtime, ignore_errors=True)
