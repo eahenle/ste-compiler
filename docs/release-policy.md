@@ -25,7 +25,8 @@ contract.
 A public release requires:
 
 1. formatting, lint, strict typing, tests, and installed-wheel smoke checks;
-2. wheel and source-distribution inspection from a clean checkout;
+2. reproducible wheel and source-distribution builds, member inspection, and an outside-checkout
+   offline execution smoke from a clean checkout;
 3. an updated changelog and version-coherent citation metadata;
 4. immutable checksums and provenance for included data, reports, and neural artifacts;
 5. license and intended-use review; and
@@ -36,6 +37,11 @@ assets must include checksums. Model and dataset artifacts too large for the pac
 by immutable repository revision and digest. A model bundle publication must carry the externally
 retained `artifact-manifest.json` SHA-256 in signed or otherwise reviewed release metadata; the
 colocated manifest alone is not sufficient.
+
+CI executes `scripts/ci/distribution_smoke.py` with the reviewed commit timestamp as
+`SOURCE_DATE_EPOCH`. The gate builds wheel and source distributions twice, requires byte-identical
+hashes, inspects required package and release members, installs the wheel outside the checkout with
+network access blocked, runs the packaged demo, and reconstructs and verifies corpus version 2.
 
 ## Deprecation
 
