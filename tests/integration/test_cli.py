@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from ste_compiler.training import TrainingRecordValidationError, build_training_
 
 ROOT = Path(__file__).parents[2]
 runner = CliRunner()
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def test_cli_runs_packaged_end_to_end_demo():
@@ -152,7 +154,10 @@ def test_cli_rejects_ambiguous_realizer_selectors_without_traceback():
     )
 
     assert result.exit_code == 2
-    assert "--realizer and --realizer-config cannot be combined" in result.stderr
+    assert "--realizer and --realizer-config cannot be combined" in ANSI_ESCAPE.sub(
+        "",
+        result.stderr,
+    )
     assert "Traceback" not in result.output
 
 
