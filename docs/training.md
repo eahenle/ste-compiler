@@ -142,11 +142,11 @@ file and directory synchronization, and one atomic rename. The final artifact se
 - `checksums.sha256` covering every other output file.
 
 The run manifest derives the package commit and dirty state from `--source-checkout`, hashes its
-`uv.lock`, records installed dependency versions, corpus and model-snapshot identities, LoRA
-parameter names and counts, deterministic sample order and losses, CPU/Python details, duration,
-output hashes, and a shell-quoted evaluation command. Model and adapter loading is local-only and
-safetensors-only. There is deliberately no checkpoint resume: optimizer state is not emitted
-because the supported serialization must not introduce pickle-capable artifacts.
+`uv.lock`, records the complete installed-distribution inventory, corpus and model-snapshot
+identities, LoRA parameter names and counts, deterministic sample order and losses, CPU/Python
+details, duration, output hashes, and a shell-quoted evaluation command. Model and adapter loading
+is local-only and safetensors-only. There is deliberately no checkpoint resume: optimizer state is
+not emitted because the supported serialization must not introduce pickle-capable artifacts.
 
 The fixture builder is a CI test tool. Its schema contract requires `max_steps: 2`; changing the
 step count is rejected instead of silently changing the meaning of the smoke evidence. The fixture

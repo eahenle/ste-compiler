@@ -129,15 +129,19 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
     assert first.source.dirty is False
     assert len(first.source.package_tree_sha256) == 64
     assert first.model_snapshot_manifest_sha256 == snapshot_digest
-    assert {dependency.name for dependency in first.dependencies} == {
+    dependency_names = {dependency.name for dependency in first.dependencies}
+    assert {
+        "accelerate",
         "huggingface-hub",
+        "numpy",
         "peft",
         "safetensors",
         "ste-compiler",
         "tokenizers",
         "torch",
         "transformers",
-    }
+    } <= dependency_names
+    assert len(dependency_names) > 9
     assert _sha256(first_output / "adapter/adapter_model.safetensors") == _sha256(
         second_output / "adapter/adapter_model.safetensors"
     )

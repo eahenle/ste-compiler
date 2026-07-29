@@ -1007,7 +1007,21 @@ def _source_provenance(source_checkout: Path) -> SourceProvenanceV1:
 
 
 def _dependency_versions() -> tuple[DependencyVersionV1, ...]:
-    names = (
+    installed: dict[str, str] = {}
+    for distribution in importlib.metadata.distributions():
+        raw_name = distribution.metadata.get("Name")
+        if raw_name is None or not raw_name.strip() or not distribution.version:
+            raise DecoderLoRATrainingError(
+                "cannot derive a complete installed-distribution inventory"
+            )
+        name = re.sub(r"[-_.]+", "-", raw_name.strip()).lower()
+        existing = installed.get(name)
+        if existing is not None and existing != distribution.version:
+            raise DecoderLoRATrainingError(
+                f"multiple installed versions prevent reproducible provenance: {name}"
+            )
+        installed[name] = distribution.version
+    required = {
         "huggingface-hub",
         "peft",
         "safetensors",
@@ -1015,17 +1029,16 @@ def _dependency_versions() -> tuple[DependencyVersionV1, ...]:
         "tokenizers",
         "torch",
         "transformers",
+    }
+    missing = sorted(required - installed.keys())
+    if missing:
+        raise DecoderLoRATrainingError(
+            "runtime dependency inventory is missing required distributions: " + ", ".join(missing)
+        )
+    return tuple(
+        DependencyVersionV1(name=name, version=version)
+        for name, version in sorted(installed.items())
     )
-    versions: list[DependencyVersionV1] = []
-    for name in names:
-        try:
-            version = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError as error:
-            raise DecoderLoRATrainingError(
-                f"cannot derive runtime dependency version for {name}"
-            ) from error
-        versions.append(DependencyVersionV1(name=name, version=version))
-    return tuple(versions)
 
 
 def _hardware(torch: Any) -> HardwareProvenanceV1:
