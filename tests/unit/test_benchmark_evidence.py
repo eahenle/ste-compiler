@@ -208,6 +208,86 @@ def test_benchmark_metrics_schema_accepts_exact_frozen_metric_inventory():
     assert set(system.metrics) == set(evidence_module.SUPPORTED_METRICS)
 
 
+def test_benchmark_metrics_schema_rejects_empty_system_inventory():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    payload["systems"] = {}
+
+    with pytest.raises(ValidationError, match="Dictionary should have at least 1 item"):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("metric_name", "replacement_name", "expected_method"),
+    [
+        (
+            "complete_success_rate",
+            "frontend.required_field_f1",
+            "wilson-score-95",
+        ),
+        (
+            "frontend.required_field_f1",
+            "complete_success_rate",
+            "none-derived",
+        ),
+    ],
+)
+def test_system_metrics_schema_binds_confidence_methods_to_metric_names(
+    metric_name,
+    replacement_name,
+    expected_method,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["metrics"][metric_name] = system["metrics"][replacement_name]
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"{metric_name} must use the {expected_method} confidence method",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_rejects_mismatched_derived_f1():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["metrics"]["frontend.required_field_f1"]["value"] = 0.5
+
+    with pytest.raises(
+        ValidationError,
+        match="must equal the harmonic mean of precision and recall",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+@pytest.mark.parametrize(
+    ("precision", "recall", "expected_f1"),
+    [
+        ((0, 3), (0, 4), 0.0),
+        ((0, 0), (0, 4), None),
+        ((2, 4), (3, 4), 0.6),
+    ],
+)
+def test_system_metrics_schema_accepts_recomputed_f1_for_zero_and_nonzero_cases(
+    precision,
+    recall,
+    expected_f1,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    precision_estimate = evidence_module._wilson(*precision)
+    recall_estimate = evidence_module._wilson(*recall)
+    f1_estimate = evidence_module._derived_f1(precision_estimate, recall_estimate)
+    system["metrics"]["frontend.required_field_precision"] = precision_estimate.model_dump(
+        mode="json"
+    )
+    system["metrics"]["frontend.required_field_recall"] = recall_estimate.model_dump(mode="json")
+    system["metrics"]["frontend.required_field_f1"] = f1_estimate.model_dump(mode="json")
+
+    metrics = evidence_module.SystemMetricsV1.model_validate(system)
+
+    assert metrics.metrics["frontend.required_field_f1"].value == expected_f1
+
+
 @pytest.mark.parametrize("mutation", ("missing", "additional", "empty"))
 def test_benchmark_metrics_schema_rejects_non_frozen_metric_inventory(mutation):
     payload = json.loads((EXPECTED / "metrics.json").read_text())

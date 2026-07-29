@@ -526,7 +526,7 @@ class BenchmarkMetricsV1(StrictEvidenceModel):
     prediction_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     predictions_sha256: str = Field(pattern=SHA256_PATTERN)
     record_count: int = Field(gt=0)
-    systems: dict[str, SystemMetricsV1]
+    systems: dict[str, SystemMetricsV1] = Field(min_length=1)
 
 
 class SystemMetricsV1(StrictEvidenceModel):
@@ -539,6 +539,30 @@ class SystemMetricsV1(StrictEvidenceModel):
     def frozen_metric_inventory(self) -> SystemMetricsV1:
         if set(self.metrics) != set(SUPPORTED_METRICS):
             raise ValueError("system metrics must equal the frozen v1 metric inventory")
+        f1_name = "frontend.required_field_f1"
+        for name, estimate in self.metrics.items():
+            expected_method = "none-derived" if name == f1_name else "wilson-score-95"
+            if estimate.confidence_interval.method != expected_method:
+                raise ValueError(f"{name} must use the {expected_method} confidence method")
+
+        precision = self.metrics["frontend.required_field_precision"].value
+        recall = self.metrics["frontend.required_field_recall"].value
+        expected_f1 = _f1_value(precision, recall)
+        actual_f1 = self.metrics[f1_name].value
+        if expected_f1 is None:
+            if actual_f1 is not None:
+                raise ValueError(
+                    "frontend.required_field_f1 must be null when precision or recall is null"
+                )
+        elif actual_f1 is None or not math.isclose(
+            actual_f1,
+            expected_f1,
+            rel_tol=0.0,
+            abs_tol=1e-15,
+        ):
+            raise ValueError(
+                "frontend.required_field_f1 must equal the harmonic mean of precision and recall"
+            )
         return self
 
 
@@ -669,11 +693,16 @@ def _wilson(numerator: int, denominator: int) -> MetricEstimateV1:
     )
 
 
+def _f1_value(precision: float | None, recall: float | None) -> float | None:
+    if precision is None or recall is None:
+        return None
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
 def _derived_f1(precision: MetricEstimateV1, recall: MetricEstimateV1) -> MetricEstimateV1:
-    if precision.value is None or recall.value is None or precision.value + recall.value == 0:
-        value = None if precision.value is None or recall.value is None else 0.0
-    else:
-        value = 2 * precision.value * recall.value / (precision.value + recall.value)
+    value = _f1_value(precision.value, recall.value)
     return MetricEstimateV1(
         numerator=None,
         denominator=None,
