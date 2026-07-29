@@ -1243,3 +1243,51 @@ def test_evaluation_reports(tmp_path):
     assert result.exit_code == 0
     assert (tmp_path / "report.json").is_file()
     assert (tmp_path / "report.md").is_file()
+
+
+def test_benchmark_report_cli_recomputes_fixture_evidence(tmp_path):
+    fixture = ROOT / "data/benchmark/v1"
+    output = tmp_path / "benchmark-report"
+    result = runner.invoke(
+        app,
+        [
+            "benchmark-report",
+            str(fixture / "benchmark-spec.json"),
+            str(fixture / "failure-taxonomy.json"),
+            str(fixture / "prediction-manifest.json"),
+            str(fixture / "predictions.jsonl"),
+            str(ROOT / "datasets/demonstration-corpus-2"),
+            "--output",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    manifest = json.loads(result.stdout)
+    assert manifest["evidence_label"] == "deterministic_fixture_only"
+    assert manifest["predictions_sha256"] == (
+        "a82e7dc064256c43fc1df72c767bfd171ff3ba5151e823211d479b4921cef956"
+    )
+    assert (output / "metrics.json").is_file()
+    assert (output / "report.md").is_file()
+    assert (output / "report-manifest.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "schema_name,expected_version",
+    [
+        ("benchmark-spec", "ste-benchmark-spec-v1"),
+        ("benchmark-prediction", "ste-benchmark-prediction-v1"),
+        ("benchmark-prediction-manifest", "ste-benchmark-prediction-manifest-v1"),
+        ("benchmark-failure-taxonomy", "ste-benchmark-failure-taxonomy-v1"),
+        ("benchmark-metrics", "ste-benchmark-metrics-v1"),
+        ("benchmark-report-manifest", "ste-benchmark-report-manifest-v1"),
+    ],
+)
+def test_benchmark_schemas_are_available(schema_name, expected_version):
+    result = runner.invoke(app, ["schema", schema_name])
+
+    assert result.exit_code == 0, result.output
+    schema = json.loads(result.stdout)
+    assert expected_version in json.dumps(schema)

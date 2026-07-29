@@ -283,6 +283,32 @@ assert result.exit_code == 0, result.output
         text=True,
     )
 
+    benchmark_fixture = installed / "ste_compiler/data/benchmark/v1"
+    benchmark_report = tmp_path / "benchmark-report"
+    generated_benchmark = subprocess.run(
+        [
+            *command,
+            "benchmark-report",
+            str(benchmark_fixture / "benchmark-spec.json"),
+            str(benchmark_fixture / "failure-taxonomy.json"),
+            str(benchmark_fixture / "prediction-manifest.json"),
+            str(benchmark_fixture / "predictions.jsonl"),
+            str(demonstration_corpus_v2),
+            "--output",
+            str(benchmark_report),
+            "--json",
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    benchmark_manifest = json.loads(generated_benchmark.stdout)
+    assert benchmark_manifest["evidence_label"] == "deterministic_fixture_only"
+    for expected in (benchmark_fixture / "expected-report").iterdir():
+        assert (benchmark_report / expected.name).read_bytes() == expected.read_bytes()
+
     training_config = installed / "ste_compiler/data/training/encoder-decoder-schema-example.yaml"
     decoder_config = installed / "ste_compiler/data/training/decoder-only-lora-schema-example.yaml"
     reference_metadata = (

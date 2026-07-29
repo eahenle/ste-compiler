@@ -13,6 +13,9 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A reproducible, MIT-licensed demonstration corpus with frozen splits and checksummed artifacts.
 - An expanded 24-record `demonstration-corpus-2` benchmark-contract release with terminology and
   source-boundary coverage plus version-selectable offline construction.
+- A hash-bound benchmark evidence scaffold with raw prediction schemas, recomputable metrics,
+  deterministic reports, and stage-specific failure fixtures that are explicitly not model-quality
+  results.
 - A credential-free raw-source-to-validated-text reference workflow.
 - Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
   adapter runs, with portable typed identities and untrusted CLI locators kept separate.

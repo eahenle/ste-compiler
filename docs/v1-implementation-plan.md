@@ -253,6 +253,13 @@ benchmark reports are published.
 
 ## Phase 5: Evaluation and evidence
 
+Status: scaffolded. A frozen, hash-bound v1 benchmark specification, raw prediction schema,
+prediction manifest, failure taxonomy, recomputable metrics with Wilson intervals, deterministic
+Markdown/JSON reporting, and frontend/realizer/validator failure fixtures are implemented. The
+checked-in evidence is explicitly deterministic fixture evidence only. External measured model
+runs, constrained/unconstrained ablations, resource measurements, human review, and publishable
+model-quality claims remain.
+
 ### Systems
 
 - direct unconstrained prose baseline

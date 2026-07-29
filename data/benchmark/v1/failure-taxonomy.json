@@ -1,0 +1,71 @@
+{
+  "schema_version": "ste-benchmark-failure-taxonomy-v1",
+  "version": "1.0.0",
+  "codes": [
+    {
+      "code": "frontend.schema_invalid",
+      "stage": "frontend",
+      "description": "The frontend proposal does not validate against the frozen IR schema."
+    },
+    {
+      "code": "frontend.required_field_omission",
+      "stage": "frontend",
+      "description": "The frontend proposal omits a required gold field."
+    },
+    {
+      "code": "frontend.source_span_mismatch",
+      "stage": "frontend",
+      "description": "A proposed source span does not match the frozen source bytes."
+    },
+    {
+      "code": "frontend.hallucinated_node",
+      "stage": "frontend",
+      "description": "The frontend proposal contains a node absent from the frozen gold IR."
+    },
+    {
+      "code": "frontend.ambiguity_not_preserved",
+      "stage": "frontend",
+      "description": "The frontend proposal loses an ambiguity recorded in the frozen gold IR."
+    },
+    {
+      "code": "realizer.unauthorized_symbol",
+      "stage": "realizer",
+      "description": "The generated symbolic plan contains a symbol outside its allowed set."
+    },
+    {
+      "code": "realizer.incomplete_eos",
+      "stage": "realizer",
+      "description": "Generation does not complete at an allowed end-of-sequence boundary."
+    },
+    {
+      "code": "realizer.grammar_invalid",
+      "stage": "realizer",
+      "description": "The predicted symbolic plan cannot be parsed by the frozen grammar."
+    },
+    {
+      "code": "realizer.constraint_rejection",
+      "stage": "realizer",
+      "description": "Constrained generation rejects an otherwise grammar-valid, EOS-complete, symbol-authorized plan."
+    },
+    {
+      "code": "validator.semantic_rejection",
+      "stage": "validator",
+      "description": "Independent semantic validation rejects the realized output."
+    },
+    {
+      "code": "validator.lexical_rejection",
+      "stage": "validator",
+      "description": "Independent vocabulary or terminology validation rejects the output."
+    },
+    {
+      "code": "validator.structural_rejection",
+      "stage": "validator",
+      "description": "Independent structural validation rejects the realized output."
+    },
+    {
+      "code": "validator.false_accept",
+      "stage": "validator",
+      "description": "The validation pipeline accepts an output whose frozen gold outcome is rejection."
+    }
+  ]
+}

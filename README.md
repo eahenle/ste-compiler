@@ -42,6 +42,13 @@ ste-compiler build-demonstration-corpus --output demonstration-corpus
 ste-compiler verify-demonstration-corpus demonstration-corpus
 ste-compiler build-demonstration-corpus --version 2 --output demonstration-corpus-2
 ste-compiler verify-demonstration-corpus demonstration-corpus-2
+ste-compiler benchmark-report \
+  data/benchmark/v1/benchmark-spec.json \
+  data/benchmark/v1/failure-taxonomy.json \
+  data/benchmark/v1/prediction-manifest.json \
+  data/benchmark/v1/predictions.jsonl \
+  datasets/demonstration-corpus-2 \
+  --output benchmark-report
 ste-compiler validate-training-config data/training/encoder-decoder-schema-example.yaml --json
 ste-compiler verify-training-release \
   data/training/encoder-decoder-schema-example.yaml \
@@ -179,7 +186,7 @@ suitability for deployment.
 * **Vocabulary:** add an original/authorized entry to `data/demo_vocabulary.yaml`, including lemma, roles, meaning ID, inflections, example, and confusion notes. Keep its license explicit. Word forms must be unique under case folding and match the lexicalizer's single-word grammar. Unit surfaces must be stripped, nonblank, nonnumeric, and unique.
 * **Terminology:** add a versioned term with canonical form, aliases, role, domain, provenance, approval status, and optional replacement. IDs must be unique. Canonical forms and aliases must be stripped, nonblank, nonnumeric, and uniquely owned under case folding. Deprecated replacements must exist and must not form cycles. `glossary check` reports these resource errors before realization; frontends resolve aliases and realizers copy canonical forms.
 * **Neural realizer:** implement `SymbolGenerator`. `NeuralRealizer` sends it canonical IR and only the symbols present in the deterministic reference plan. Generated inference plans must begin with `PLAN_EXACT_WHITESPACE_V1`; markerless legacy lexicalization is never accepted at the neural trust boundary. Deterministic IR mappings are inherited only when the generated controlled text exactly equals the deterministic surface. `SymbolicLexicalizer` rejects out-of-plan symbols, and the independent aligner withholds IR mappings from changed, reordered, omitted, or extra sentences.
-* **Encoder-decoder adapter:** configure `TransformersEncoderDecoderSymbolGenerator` with an explicit Hugging Face Hub repository ID and full lowercase 40-character model commit digest. Local filesystem model paths are rejected because mutable local contents cannot inherit immutable revision provenance. The exact commit is resolved once to a checked local snapshot; both tokenizer and model load only from that snapshot, and model revisions without safetensors weights fail closed. The adapter records the exact Hub digest, loads `.[neural]` lazily, constrains decoding to the current document's symbols plus EOS, permits only padding after EOS, and post-validates the decoded plan. The optional `.[encoder-training]` extra provides the corresponding safe two-step training smoke path. No trained checkpoint, training result, or benchmark is included.
+* **Encoder-decoder adapter:** configure `TransformersEncoderDecoderSymbolGenerator` with an explicit Hugging Face Hub repository ID and full lowercase 40-character model commit digest. Local filesystem model paths are rejected because mutable local contents cannot inherit immutable revision provenance. The exact commit is resolved once to a checked local snapshot; both tokenizer and model load only from that snapshot, and model revisions without safetensors weights fail closed. The adapter records the exact Hub digest, loads `.[neural]` lazily, constrains decoding to the current document's symbols plus EOS, permits only padding after EOS, and post-validates the decoded plan. The optional `.[encoder-training]` extra provides the corresponding safe two-step training smoke path. No trained checkpoint, measured training result, or model-quality benchmark result is included; the checked benchmark evidence is a deterministic reporting fixture only.
 * **Training data:** use `plan-symbols --json` for one canonical `(serialized IR, symbolic plan)` record, or `export-symbolic-corpus` for stable path-ordered JSONL plus a SHA-256 manifest. Each export is stored in an immutable content-addressed directory under `training-corpus/generations/`; one atomic `training-corpus/current` selector exposes the canonical `current/corpus.jsonl` and `current/manifest.json` paths. Consumers that need a concurrency-safe pair should call `read_symbolic_corpus()`, which pins one generation before opening either artifact, rather than resolving the two `current` paths independently. Corpus export currently requires POSIX `fcntl` file locking; other CLI commands remain portable to platforms without `fcntl`. Duplicate document IDs, symlinked IR inputs, and metadata profiles that do not match the loaded deterministic realizer, vocabulary, terminology, and validation pipeline are rejected. Current plans start with `PLAN_EXACT_WHITESPACE_V1` and percent-encode observed approved word surfaces. Exact terminology symbols use `TERM_<escaped-id>|<escaped-observed-surface>`; the delimiter is encoded inside either field, preserving both stable identity and observed casing. Plans otherwise contain only `WORD_*`, `TERM_*`, `UNIT_*`, punctuation, `SPACE`/opaque whitespace, newline, and document-specific number symbols. Exact plans preserve casing without implicit sentence capitalization. Markerless legacy plans retain canonical term surfaces plus conventional spacing and capitalization.
 * **LoRA/SLM:** install `.[neural]`. The decoder-only track includes a deterministic two-step offline CPU mechanics run with a generated tiny local causal model/tokenizer fixture, exact prompt masking plus one supervised EOS, atomic safetensors adapter output, runtime-derived provenance, and reload evaluation. It is not a trained reference model or quality result. A real experiment must pin and authorize its base revision and evaluate constrained and unconstrained variants separately.
 
@@ -193,14 +200,15 @@ configuration to name the exact configured base model revision. Generation expli
 inherited non-greedy and minimum-length modes so EOS remains available at valid symbol boundaries,
 requires one batch of integer token IDs, and remains constrained to the document-specific symbol
 set plus EOS. Pinning records identity; deployments must still authorize the selected artifact
-repositories. This repository does not include trained reference weights, benchmark results, or a
-model-quality claim. The generated fixture and two-step adapter exist only to exercise training
-mechanics.
+repositories. This repository does not include trained reference weights, measured benchmark
+results, or a model-quality claim. The generated training and benchmark fixtures exist only to
+exercise mechanics and evidence plumbing.
 
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 
 See the [end-to-end demo](docs/end-to-end-demo.md),
 [reproducible training guide](docs/training.md),
+[benchmark evidence guide](docs/benchmark-evidence.md),
 [typed offline neural runtime guide](docs/neural-runtime.md),
 [dual-architecture release guide](docs/reference-artifact-release.md),
 [V1 implementation plan](docs/v1-implementation-plan.md),

@@ -14,8 +14,17 @@ from ste_compiler.artifacts import (
     read_artifact_manifest_for_routing,
 )
 from ste_compiler.diagnostics import ValidationReport
+from ste_compiler.evaluation import (
+    BenchmarkMetricsV1,
+    BenchmarkSpecV1,
+    FailureTaxonomyV1,
+    PredictionManifestV1,
+    PredictionRecordV1,
+    ReportManifestV1,
+    generate_evidence_report,
+    write_reports,
+)
 from ste_compiler.evaluation import evaluate as run_evaluation
-from ste_compiler.evaluation import write_reports
 from ste_compiler.frontend import LLMFrontend, ManualFrontend, ReplayIRProvider
 from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import load_document
@@ -1042,6 +1051,95 @@ def reference_prediction_schema() -> None:
     """Print the JSON Schema for one canonical neural prediction or rejection."""
 
     typer.echo(json.dumps(ReferencePredictionV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("benchmark-spec")
+def benchmark_spec_schema() -> None:
+    """Print the frozen benchmark specification schema."""
+
+    typer.echo(json.dumps(BenchmarkSpecV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("benchmark-prediction")
+def benchmark_prediction_schema() -> None:
+    """Print the raw per-example benchmark prediction schema."""
+
+    typer.echo(json.dumps(PredictionRecordV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("benchmark-prediction-manifest")
+def benchmark_prediction_manifest_schema() -> None:
+    """Print the cross-bound benchmark prediction manifest schema."""
+
+    typer.echo(json.dumps(PredictionManifestV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("benchmark-failure-taxonomy")
+def benchmark_failure_taxonomy_schema() -> None:
+    """Print the benchmark failure taxonomy schema."""
+
+    typer.echo(json.dumps(FailureTaxonomyV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("benchmark-metrics")
+def benchmark_metrics_schema() -> None:
+    """Print the recomputable benchmark metrics schema."""
+
+    typer.echo(json.dumps(BenchmarkMetricsV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("benchmark-report-manifest")
+def benchmark_report_manifest_schema() -> None:
+    """Print the benchmark report manifest schema."""
+
+    typer.echo(json.dumps(ReportManifestV1.model_json_schema(), indent=2))
+
+
+@app.command("benchmark-report")
+def benchmark_report(
+    specification: Annotated[Path, typer.Argument(help="Frozen benchmark specification.")],
+    taxonomy: Annotated[Path, typer.Argument(help="Frozen failure taxonomy.")],
+    prediction_manifest: Annotated[
+        Path,
+        typer.Argument(help="Manifest binding specification, dataset, systems, and predictions."),
+    ],
+    predictions: Annotated[Path, typer.Argument(help="Raw per-example prediction JSONL.")],
+    dataset_release: Annotated[
+        Path,
+        typer.Argument(help="Hash-pinned demonstration-corpus release."),
+    ],
+    output: Annotated[Path, typer.Option(help="New benchmark report output directory.")],
+    system_manifest: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--system-manifest",
+            help="Artifact manifest for an external measured system; repeat for each system.",
+        ),
+    ] = None,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Recompute a cross-bound benchmark report from raw predictions."""
+
+    try:
+        manifest = generate_evidence_report(
+            specification_path=specification,
+            taxonomy_path=taxonomy,
+            prediction_manifest_path=prediction_manifest,
+            predictions_path=predictions,
+            dataset_release=dataset_release,
+            output=output,
+            system_manifest_paths=tuple(system_manifest or ()),
+        )
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    if json_output:
+        typer.echo(manifest.model_dump_json(indent=2))
+    else:
+        typer.echo(
+            f"Wrote benchmark evidence ({manifest.evidence_label}) to {output} "
+            f"(predictions sha256: {manifest.predictions_sha256})"
+        )
 
 
 @app.command()

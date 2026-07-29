@@ -1,0 +1,66 @@
+{
+  "schema_version": "ste-benchmark-spec-v1",
+  "benchmark_id": "ste-compiler-pipeline-fixture-1",
+  "version": "1.0.0",
+  "evidence_label": "deterministic_fixture_only",
+  "claim_scope": "Exercises benchmark cross-binding, metric recomputation, reporting, and stage-specific failure attribution with deterministic fixtures.",
+  "non_certification_notice": "This fixture is not model-quality evidence, external benchmark evidence, certification evidence, or a claim of ASD-STE100 compliance.",
+  "dataset": {
+    "dataset_version": "demonstration-corpus-2",
+    "manifest_sha256": "384264f6327129b535b8cd71b95633649a56ed071a5d0fc37cad1a8978af54fe"
+  },
+  "cases": [
+    {
+      "case_id": "test_negated_quantity_condition",
+      "split": "test",
+      "source_sha256": "2635bc0aabb550501f03f30881c9cf2a1fbf2064d768891fd378457992fa0793"
+    },
+    {
+      "case_id": "adversarial_ambiguity",
+      "split": "adversarial",
+      "source_sha256": "4500f8b50ce4bd302e169e353346cd30dde57600419baac59142f3db2ae4a217"
+    },
+    {
+      "case_id": "adversarial_unicode_term",
+      "split": "adversarial",
+      "source_sha256": "c1d9a3a21034a22baea161015f4ea5d42bcccdb19587742432747b4d4d59e25d"
+    },
+    {
+      "case_id": "adversarial_tab_casing",
+      "split": "adversarial",
+      "source_sha256": "df329278ee7314b63d8ad6fef39327df9241e9c60dc550340834b912ed31b1c1"
+    }
+  ],
+  "systems": [
+    {
+      "system_id": "failure-taxonomy-fixture-v1",
+      "evidence_kind": "deterministic_fixture",
+      "artifact_manifest_sha256": null,
+      "description": "Hand-authored deterministic fixture observations for evidence-pipeline tests; not model predictions."
+    }
+  ],
+  "metrics": [
+    "complete_success_rate",
+    "frontend.schema_valid_rate",
+    "frontend.required_field_precision",
+    "frontend.required_field_recall",
+    "frontend.required_field_f1",
+    "frontend.hallucinated_node_rate",
+    "frontend.ambiguity_preservation_rate",
+    "frontend.source_span_exact_rate",
+    "frontend.source_span_overlap_rate",
+    "realizer.exact_symbolic_plan_rate",
+    "realizer.grammar_valid_rate",
+    "realizer.eos_completion_rate",
+    "realizer.unauthorized_symbol_rate",
+    "realizer.constraint_rejection_rate",
+    "validator.accepted_rate",
+    "validator.rejected_rate",
+    "validator.false_accept_rate",
+    "provenance_coverage_rate",
+    "deterministic_repeatability_rate"
+  ],
+  "failure_taxonomy_sha256": "03770cddecb193e4f34bb75a041a22d3f457042387ee7f7393dbc6c4f51b7f7e",
+  "confidence_interval": "wilson-score-95",
+  "seed": 20260729
+}
