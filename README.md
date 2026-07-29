@@ -29,7 +29,7 @@ paragraph's sentence limit.
 Requires Python 3.12+.
 
 ```bash
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,neural]'
 ste-compiler demo --json
 ste-compiler compile-source data/end_to_end/hydraulic_warning.txt \
   --ir-fixture data/end_to_end/hydraulic_warning.ir.yaml \
@@ -45,14 +45,19 @@ ste-compiler verify-training-release \
   data/training/encoder-decoder-schema-example.yaml \
   datasets/demonstration-corpus-1 \
   --json
-ste-compiler prepare-decoder-smoke-fixture \
-  data/training/decoder-only-lora-schema-example.yaml \
-  datasets/demonstration-corpus-1 \
-  decoder-smoke-model
+MODEL_SNAPSHOT_MANIFEST_SHA256="$(
+  ste-compiler prepare-decoder-smoke-fixture \
+    data/training/decoder-only-lora-schema-example.yaml \
+    datasets/demonstration-corpus-1 \
+    decoder-smoke-model \
+    --json |
+    python -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])'
+)"
 ste-compiler train-decoder-lora \
   data/training/decoder-only-lora-schema-example.yaml \
   datasets/demonstration-corpus-1 \
   decoder-smoke-model \
+  "$MODEL_SNAPSHOT_MANIFEST_SHA256" \
   decoder-smoke-run \
   --source-checkout .
 ste-compiler compile data/examples/warning_pressure.yaml --json

@@ -31,3 +31,18 @@ def test_required_open_source_policy_files_are_present_and_complete():
     for path in required:
         assert (ROOT / path).is_file(), path
     assert "TODO" not in (ROOT / "SECURITY.md").read_text()
+
+
+def test_reproducible_lock_and_decoder_quick_start_are_shipped():
+    ignored = {
+        line.strip()
+        for line in (ROOT / ".gitignore").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    readme = (ROOT / "README.md").read_text()
+
+    assert (ROOT / "uv.lock").is_file()
+    assert "uv.lock" not in ignored
+    assert "'.[dev,neural]'" in readme
+    assert 'MODEL_SNAPSHOT_MANIFEST_SHA256="$(' in readme
+    assert '"$MODEL_SNAPSHOT_MANIFEST_SHA256"' in readme
