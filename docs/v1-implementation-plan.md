@@ -127,6 +127,14 @@ Each released dataset version includes:
 
 ## Phase 2: Reproducible training
 
+Status: in progress. Strict versioned configurations now cover both architectures, including full
+artifact identities, seeds, batching, optimizer values, token limits, and architecture-specific
+settings. A race-resistant release reader pins the manifest and train/validation hashes, validates
+the complete release, and rebuilds every deterministic training target before exposing immutable
+split records. CLI validation, schema examples, adversarial tests, and installed-wheel coverage are
+included. The two trainers, run manifests, safe checkpoints, resume/evaluation hooks, public model
+selection, and reference runs remain.
+
 ### Shared deliverables
 
 - Versioned training configuration schema.

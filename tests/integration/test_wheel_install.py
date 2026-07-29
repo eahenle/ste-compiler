@@ -181,6 +181,44 @@ assert result.exit_code == 0, result.output
         text=True,
     )
 
+    training_config = installed / "ste_compiler/data/training/encoder-decoder-schema-example.yaml"
+    decoder_config = installed / "ste_compiler/data/training/decoder-only-lora-schema-example.yaml"
+    assert training_config.is_file()
+    assert decoder_config.is_file()
+    validated_training = subprocess.run(
+        [*command, "validate-training-config", str(training_config), "--json"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(validated_training.stdout)["architecture"] == "encoder-decoder"
+    validated_decoder = subprocess.run(
+        [*command, "validate-training-config", str(decoder_config), "--json"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(validated_decoder.stdout)["architecture"] == "decoder-only-lora"
+    verified_training = subprocess.run(
+        [
+            *command,
+            "verify-training-release",
+            str(training_config),
+            str(demonstration_corpus),
+            "--json",
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(verified_training.stdout)["split_counts"] == release_manifest["split_counts"]
+
     reports = tmp_path / "reports"
     subprocess.run(
         [*command, "evaluate", "--output", str(reports)],

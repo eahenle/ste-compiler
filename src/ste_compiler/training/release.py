@@ -292,7 +292,7 @@ def _condition_features(condition: Condition, features: set[str]) -> None:
         _quantity_features(condition.value, features)
 
 
-def _document_features(document: Document, source_text: str) -> tuple[str, ...]:
+def document_features(document: Document, source_text: str) -> tuple[str, ...]:
     features: set[str] = set()
     statements = [statement for section in document.sections for statement in section.statements]
     if len(document.sections) > 1:
@@ -523,7 +523,7 @@ def build_demonstration_corpus(
                 f"invalid construction record {source_record.id!r}: {error}"
             ) from error
         training_record = build_training_record(document, vocabulary, terminology)
-        features = _document_features(document, source_record.source_text)
+        features = document_features(document, source_record.source_text)
         for feature in features:
             coverage[feature] += 1
             feature_splits[feature].add(source_record.split)

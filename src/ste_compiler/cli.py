@@ -20,6 +20,9 @@ from ste_compiler.training import (
     build_demonstration_corpus,
     build_training_record,
     export_symbolic_corpus,
+    load_training_config,
+    read_training_release,
+    training_config_sha256,
     verify_demonstration_corpus,
 )
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
@@ -270,6 +273,64 @@ def verify_corpus_release(release: Path) -> None:
         f"Verified {manifest['record_count']} records in {release} "
         f"(construction sha256: {manifest['construction_sha256']})"
     )
+
+
+@app.command("validate-training-config")
+def validate_training_config(
+    path: Path,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate and identify one versioned neural-training configuration."""
+
+    try:
+        config = load_training_config(path)
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": config.schema_version,
+        "architecture": config.architecture,
+        "config_sha256": training_config_sha256(config),
+        "dataset_version": config.corpus.dataset_version,
+        "manifest_sha256": config.corpus.manifest_sha256,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Validated {config.architecture} training config (sha256: {payload['config_sha256']})"
+        )
+
+
+@app.command("verify-training-release")
+def verify_training_release(
+    config_path: Path,
+    release: Path,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Read one exact release through the immutable training-data boundary."""
+
+    try:
+        config = load_training_config(config_path)
+        snapshot = read_training_release(release, config.corpus)
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": snapshot.manifest.schema_version,
+        "dataset_version": snapshot.manifest.dataset_version,
+        "manifest_sha256": snapshot.manifest_sha256,
+        "split_counts": dict(snapshot.manifest.split_counts),
+        "symbol_count": len(snapshot.symbol_inventory),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Verified training release {snapshot.manifest.dataset_version} "
+            f"({snapshot.manifest.record_count} records, "
+            f"manifest sha256: {snapshot.manifest_sha256})"
+        )
 
 
 @app.command("validate-text")

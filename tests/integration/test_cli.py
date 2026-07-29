@@ -320,6 +320,86 @@ def test_cli_reconstructs_demonstration_corpus(tmp_path):
     assert "Traceback" not in repeated.output
 
 
+def _training_config_payload() -> dict[str, object]:
+    identity = {"repo_id": "example/tiny-model", "revision": "a" * 40}
+    return {
+        "schema_version": "ste-training-config-v1",
+        "architecture": "encoder-decoder",
+        "corpus": {
+            "dataset_version": "demonstration-corpus-1",
+            "manifest_sha256": ("f6ae4582669c4d7d06e33018088b900ffa0f8aa8b6e0d9f1beeccca2023faa7b"),
+            "train_sha256": ("1772fbe01a15c28d174e139f93e5c3b0fd6744c01cf5c81b79fb842c9609ebd0"),
+            "validation_sha256": (
+                "ea16d6bae1f624c26581e05b02cb693282805d93f945bd6e00e73a48a79d15dd"
+            ),
+        },
+        "base_model": identity,
+        "tokenizer": identity,
+        "seed": 1729,
+        "max_steps": 2,
+        "micro_batch_size": 1,
+        "gradient_accumulation_steps": 1,
+        "optimizer": {"learning_rate": 0.0001, "weight_decay": 0},
+        "strategy": "full",
+        "max_source_tokens": 1024,
+        "max_target_tokens": 256,
+    }
+
+
+def test_cli_validates_training_config_and_hash_pinned_release(tmp_path):
+    config = tmp_path / "training.json"
+    config.write_text(json.dumps(_training_config_payload()))
+
+    validated = runner.invoke(app, ["validate-training-config", str(config), "--json"])
+    assert validated.exit_code == 0, validated.output
+    validated_payload = json.loads(validated.stdout)
+    assert validated_payload["architecture"] == "encoder-decoder"
+    assert len(validated_payload["config_sha256"]) == 64
+
+    verified = runner.invoke(
+        app,
+        [
+            "verify-training-release",
+            str(config),
+            str(ROOT / "datasets/demonstration-corpus-1"),
+            "--json",
+        ],
+    )
+    assert verified.exit_code == 0, verified.output
+    verified_payload = json.loads(verified.stdout)
+    assert verified_payload["split_counts"] == {
+        "adversarial": 3,
+        "test": 3,
+        "train": 4,
+        "validation": 2,
+    }
+    assert (
+        verified_payload["manifest_sha256"]
+        == _training_config_payload()["corpus"]["manifest_sha256"]
+    )
+    assert verified_payload["symbol_count"] > 0
+
+
+def test_cli_rejects_training_release_identity_mismatch(tmp_path):
+    payload = _training_config_payload()
+    payload["corpus"]["manifest_sha256"] = "0" * 64
+    config = tmp_path / "training.json"
+    config.write_text(json.dumps(payload))
+
+    result = runner.invoke(
+        app,
+        [
+            "verify-training-release",
+            str(config),
+            str(ROOT / "datasets/demonstration-corpus-1"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "manifest SHA-256 does not match" in result.stderr
+    assert "Traceback" not in result.output
+
+
 def test_cli_rejects_mismatched_corpus_profile(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

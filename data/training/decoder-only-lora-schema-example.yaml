@@ -1,0 +1,28 @@
+schema_version: ste-training-config-v1
+architecture: decoder-only-lora
+corpus:
+  dataset_version: demonstration-corpus-1
+  manifest_sha256: f6ae4582669c4d7d06e33018088b900ffa0f8aa8b6e0d9f1beeccca2023faa7b
+  train_sha256: 1772fbe01a15c28d174e139f93e5c3b0fd6744c01cf5c81b79fb842c9609ebd0
+  validation_sha256: ea16d6bae1f624c26581e05b02cb693282805d93f945bd6e00e73a48a79d15dd
+base_model: &model
+  repo_id: example/tiny-model
+  revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+tokenizer: *model
+seed: 1729
+max_steps: 2
+micro_batch_size: 1
+gradient_accumulation_steps: 1
+optimizer:
+  learning_rate: 0.0001
+  weight_decay: 0
+prompt_profile: decoder-only-symbol-plan-v1
+max_sequence_tokens: 1280
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  bias: none
+  target_modules:
+    - q_proj
+    - v_proj
