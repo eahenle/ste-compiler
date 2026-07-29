@@ -21,10 +21,6 @@ from typer.testing import CliRunner
 from ste_compiler.cli import app
 from ste_compiler.examples import catalog_runner
 from tests.executable_example_helpers import (
-    DEFAULT_TERMINOLOGY_FIXTURE,
-    DEFAULT_VOCABULARY_FIXTURE,
-    DEMO_IR_FIXTURE,
-    DEMO_SOURCE_FIXTURE,
     forbid_network,
     load_example_manifest,
 )
@@ -113,12 +109,20 @@ def _assert_expected(
     if paths := expected.get("stdout_json_paths"):
         payload = json.loads(stdout)
         for path, value in paths.items():
-            assert _json_path(payload, path) == value
+            observed = _json_path(payload, path)
+            assert catalog_runner.strict_json_equal(observed, value), (
+                f"{path!r}: expected {value!r} ({type(value).__name__}), "
+                f"got {observed!r} ({type(observed).__name__})"
+            )
     for raw_path, paths in expected.get("file_json_paths", {}).items():
         artifact = Path(raw_path.replace("{tmp}", str(temporary)))
         payload = json.loads(artifact.read_text(encoding="utf-8"))
         for path, value in paths.items():
-            assert _json_path(payload, path) == value
+            observed = _json_path(payload, path)
+            assert catalog_runner.strict_json_equal(observed, value), (
+                f"{path!r}: expected {value!r} ({type(value).__name__}), "
+                f"got {observed!r} ({type(observed).__name__})"
+            )
     for raw_path, frozen_path in expected.get("file_matches", {}).items():
         assert frozen_path in fixtures
         artifact = Path(raw_path.replace("{tmp}", str(temporary)))
@@ -161,31 +165,15 @@ def test_example_manifest_is_complete_and_honest():
 
 def test_manifest_declares_cli_defaults_and_every_package_relative_argument():
     scenarios = {scenario["id"]: scenario for scenario in _load_manifest()["scenarios"]}
-    defaults = {
-        1: {
-            DEMO_SOURCE_FIXTURE,
-            DEMO_IR_FIXTURE,
-            DEFAULT_VOCABULARY_FIXTURE,
-            DEFAULT_TERMINOLOGY_FIXTURE,
-        },
-        2: {DEFAULT_VOCABULARY_FIXTURE, DEFAULT_TERMINOLOGY_FIXTURE},
-        5: {DEFAULT_VOCABULARY_FIXTURE},
-        10: {DEFAULT_VOCABULARY_FIXTURE, DEFAULT_TERMINOLOGY_FIXTURE},
-        11: {DEFAULT_VOCABULARY_FIXTURE, DEFAULT_TERMINOLOGY_FIXTURE},
-        12: {
-            "data/examples/negative.yaml",
-            DEFAULT_VOCABULARY_FIXTURE,
-            DEFAULT_TERMINOLOGY_FIXTURE,
-        },
-        13: {DEFAULT_VOCABULARY_FIXTURE},
-    }
-    for scenario_id, required in defaults.items():
-        assert required <= set(scenarios[scenario_id]["fixtures"])
 
     for scenario in scenarios.values():
         fixtures = set(scenario["fixtures"])
         assert len(fixtures) == len(scenario["fixtures"])
         for command in scenario["commands"]:
+            catalog_runner.validate_command_contract(
+                command,
+                fixtures=frozenset(fixtures),
+            )
             if command["argv"] != ["python", "examples/custom_resources.py"]:
                 for argument in command["argv"][1:]:
                     if "{tmp}" not in argument and (ROOT / argument).exists():
@@ -403,3 +391,207 @@ def test_installed_catalog_runner_rejects_undeclared_package_argument(tmp_path: 
             package_root=ROOT,
             temporary_root=tmp_path / "undeclared-argument",
         )
+
+
+@pytest.mark.parametrize(
+    ("duplicate_field", "replacement", "message"),
+    [
+        ("id", 1, "scenario id is duplicated"),
+        ("slug", "raw-source-deterministic", "scenario slug is duplicated"),
+    ],
+)
+def test_installed_catalog_runner_rejects_duplicate_scenario_identity(
+    duplicate_field: str,
+    replacement: object,
+    message: str,
+    tmp_path: Path,
+) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    first = manifest["scenarios"][0]
+    duplicate = copy.deepcopy(manifest["scenarios"][1])
+    duplicate[duplicate_field] = replacement
+    manifest["scenarios"] = [first, duplicate]
+
+    with pytest.raises(catalog_runner.CatalogExecutionError, match=message):
+        catalog_runner.run_portable_catalog(
+            manifest,
+            package_root=ROOT,
+            temporary_root=tmp_path / "duplicate-scenario",
+        )
+
+
+def test_installed_catalog_runner_rejects_slug_escape_before_creating_output(
+    tmp_path: Path,
+) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    scenario = manifest["scenarios"][0]
+    manifest["scenarios"] = [scenario]
+    scenario["slug"] = "seed/../../outside"
+    output = tmp_path / "catalog-output"
+
+    with pytest.raises(catalog_runner.CatalogExecutionError, match="lowercase kebab-case"):
+        catalog_runner.run_portable_catalog(
+            manifest,
+            package_root=ROOT,
+            temporary_root=output,
+        )
+
+    assert not output.exists()
+    assert not (tmp_path / "outside").exists()
+
+
+@pytest.mark.parametrize(
+    "escape_kind",
+    ["absolute", "traversal"],
+)
+def test_installed_catalog_runner_rejects_equals_form_output_escape(
+    escape_kind: str,
+    tmp_path: Path,
+) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    scenario = manifest["scenarios"][4]
+    manifest["scenarios"] = [scenario]
+    outside = tmp_path / "ste-compiler-catalog-escape"
+    unsafe_value = (
+        str(outside) if escape_kind == "absolute" else "../../ste-compiler-catalog-escape"
+    )
+    unsafe_option = f"--output={unsafe_value}"
+    argv = scenario["commands"][0]["argv"]
+    output_index = argv.index("--output")
+    argv[output_index : output_index + 2] = [unsafe_option]
+
+    with pytest.raises(catalog_runner.CatalogExecutionError, match="not equals form"):
+        catalog_runner.run_portable_catalog(
+            manifest,
+            package_root=ROOT,
+            temporary_root=tmp_path / "equals-output",
+        )
+    assert not outside.exists()
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "required_fixture", "wrong_fixture"),
+    [
+        (
+            4,
+            "examples/resources/custom_vocabulary.yaml",
+            "data/demo_vocabulary.yaml",
+        ),
+        (
+            5,
+            "data/demonstration_corpus/v2/source-construction.json",
+            "data/demonstration_corpus/v1/source-construction.json",
+        ),
+        (
+            12,
+            "data/demo_vocabulary.yaml",
+            "data/training/encoder-decoder-schema-example.yaml",
+        ),
+    ],
+)
+def test_source_manifest_validation_binds_implicit_command_resources(
+    scenario_id: int,
+    required_fixture: str,
+    wrong_fixture: str,
+) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    scenario = next(item for item in manifest["scenarios"] if item["id"] == scenario_id)
+    scenario["fixtures"].remove(required_fixture)
+    scenario["fixtures"].append(wrong_fixture)
+    fixtures = frozenset(scenario["fixtures"])
+
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="implicit fixtures are not declared",
+    ):
+        for command in scenario["commands"]:
+            catalog_runner.validate_command_contract(command, fixtures=fixtures)
+
+
+def test_installed_catalog_validation_binds_implicit_command_resources(
+    tmp_path: Path,
+) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    scenario = manifest["scenarios"][4]
+    manifest["scenarios"] = [scenario]
+    scenario["fixtures"].remove("data/demonstration_corpus/v2/terminology.yaml")
+    scenario["fixtures"].append("data/demonstration_corpus/v1/terminology.yaml")
+
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="implicit fixtures are not declared.*v2/terminology",
+    ):
+        catalog_runner.run_portable_catalog(
+            manifest,
+            package_root=ROOT,
+            temporary_root=tmp_path / "wrong-implicit-fixture",
+        )
+
+
+@pytest.mark.parametrize(
+    ("observed", "expected"),
+    [
+        (True, 1),
+        (1, 1.0),
+        ({"nested": [True, 1, 1.0]}, {"nested": [1, 1.0, 1]}),
+    ],
+)
+def test_installed_json_expectations_reject_recursive_type_coercion(
+    observed: object,
+    expected: object,
+) -> None:
+    with pytest.raises(catalog_runner.CatalogExecutionError, match="expected"):
+        catalog_runner._assert_json_paths(
+            {"value": observed},
+            {"value": expected},
+            description="strict paths",
+        )
+
+
+@pytest.mark.parametrize(
+    ("observed", "expected"),
+    [
+        (True, 1),
+        (1, 1.0),
+        ({"nested": [True, 1, 1.0]}, {"nested": [1, 1.0, 1]}),
+    ],
+)
+def test_source_json_expectations_reject_recursive_type_coercion(
+    observed: object,
+    expected: object,
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(AssertionError, match="expected"):
+        _assert_expected(
+            expected={
+                "exit_code": 0,
+                "stdout_json_paths": {"value": expected},
+            },
+            exit_code=0,
+            stdout=json.dumps({"value": observed}),
+            stderr="",
+            temporary=tmp_path,
+            fixtures=set(),
+        )
+
+
+def test_installed_and_source_json_expectations_accept_same_type_values(
+    tmp_path: Path,
+) -> None:
+    value = {"nested": [True, 1, 1.0, "one", None]}
+    catalog_runner._assert_json_paths(
+        {"value": value},
+        {"value": value},
+        description="strict paths",
+    )
+    _assert_expected(
+        expected={
+            "exit_code": 0,
+            "stdout_json_paths": {"value": value},
+        },
+        exit_code=0,
+        stdout=json.dumps({"value": value}),
+        stderr="",
+        temporary=tmp_path,
+        fixtures=set(),
+    )

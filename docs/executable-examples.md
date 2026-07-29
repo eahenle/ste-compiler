@@ -49,9 +49,14 @@ python -m ste_compiler.examples.catalog_runner ./ste-example-output
 ```
 
 The output argument must name a directory that does not yet exist. The runner creates it, gives each
-scenario an isolated subdirectory, rejects package or output path traversal, executes every
-`portable_execution` command, and prints a JSON summary only after all expected exits, output fields,
-and frozen report artifacts match.
+scenario an isolated subdirectory, and requires unique positive IDs plus unique lowercase kebab-case
+slugs. It resolves each scenario directory and proves that it remains below the output root before
+creation. Portable options use separate value arguments; `--option=value` is rejected so a path
+value cannot bypass package/output confinement. A shared command-dependency registry binds implicit
+CLI, module, and pytest resources to each scenario's declared fixtures in both source and installed
+catalog validation. The runner executes every `portable_execution` command and prints a JSON summary
+only after all expected exits, recursively type-exact JSON fields, and frozen report artifacts
+match. In particular, JSON booleans, integers, and floating-point numbers are not interchangeable.
 
 Code that wants to inspect the installed catalog can obtain it without assuming a checkout:
 

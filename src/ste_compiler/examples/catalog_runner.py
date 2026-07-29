@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,69 @@ import yaml
 CATALOG_NAME = "examples/manifest.yaml"
 CATALOG_SCHEMA = "ste-executable-examples-v1"
 WHEEL_FIXTURE_BASE = "ste_compiler"
+SCENARIO_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+DEFAULT_RESOURCE_FIXTURES = (
+    "data/demo_vocabulary.yaml",
+    "data/demo_terminology.yaml",
+)
+IMPLICIT_COMMAND_FIXTURES: Mapping[tuple[str, str], tuple[str, ...]] = {
+    ("ste-compiler", "demo"): (
+        "data/end_to_end/hydraulic_warning.txt",
+        "data/end_to_end/hydraulic_warning.ir.yaml",
+        *DEFAULT_RESOURCE_FIXTURES,
+    ),
+    ("ste-compiler", "compile-source"): DEFAULT_RESOURCE_FIXTURES,
+    ("ste-compiler", "compile"): DEFAULT_RESOURCE_FIXTURES,
+    ("ste-compiler", "validate-text"): DEFAULT_RESOURCE_FIXTURES,
+    ("python", "examples/custom_resources.py"): (
+        "examples/resources/custom_installation.yaml",
+        "examples/resources/custom_terminology.yaml",
+        "examples/resources/custom_vocabulary.yaml",
+    ),
+}
+IMPLICIT_EXACT_COMMAND_FIXTURES: Mapping[tuple[str, ...], tuple[str, ...]] = {
+    (
+        "pytest",
+        "-q",
+        (
+            "tests/integration/test_encoder_training.py::"
+            "test_offline_two_step_trainer_is_deterministic_safe_and_reloadable"
+        ),
+    ): (
+        "data/training/encoder-decoder-schema-example.yaml",
+        "datasets/demonstration-corpus-1",
+        "tests/neural_helpers.py",
+    ),
+    (
+        "pytest",
+        "-q",
+        (
+            "tests/integration/test_decoder_lora_training_smoke.py::"
+            "test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadable"
+        ),
+    ): (
+        "data/training/decoder-only-lora-schema-example.yaml",
+        "datasets/demonstration-corpus-1",
+    ),
+    (
+        "pytest",
+        "-q",
+        "tests/integration/test_cli.py::test_cli_routes_neural_configs_offline_through_compiler",
+    ): (
+        "data/realizers/encoder-decoder-schema-example.yaml",
+        "data/realizers/decoder-only-lora-schema-example.yaml",
+        "data/examples/negative.yaml",
+        *DEFAULT_RESOURCE_FIXTURES,
+    ),
+}
+DEMONSTRATION_CORPUS_FIXTURES: Mapping[str, tuple[str, ...]] = {
+    version: (
+        f"data/demonstration_corpus/v{version}/source-construction.json",
+        f"data/demonstration_corpus/v{version}/terminology.yaml",
+        "data/demo_vocabulary.yaml",
+    )
+    for version in ("1", "2")
+}
 
 
 class CatalogExecutionError(RuntimeError):
@@ -125,6 +189,85 @@ def _json_path(payload: object, dotted_path: str) -> object:
     return current
 
 
+def strict_json_equal(observed: object, expected: object) -> bool:
+    """Compare JSON-compatible values recursively without Python numeric coercion."""
+
+    if type(observed) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        assert isinstance(observed, dict)
+        return observed.keys() == expected.keys() and all(
+            strict_json_equal(observed[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        assert isinstance(observed, list)
+        return len(observed) == len(expected) and all(
+            strict_json_equal(observed_item, expected_item)
+            for observed_item, expected_item in zip(observed, expected, strict=True)
+        )
+    return observed == expected
+
+
+def _reject_equals_form_options(arguments: tuple[str, ...]) -> None:
+    for argument in arguments:
+        if argument.startswith("-") and "=" in argument:
+            raise CatalogExecutionError(
+                "portable catalog options must use a separate value argument, "
+                f"not equals form: {argument!r}"
+            )
+
+
+def _option_value(arguments: tuple[str, ...], option: str, *, default: str) -> str:
+    indexes = [index for index, argument in enumerate(arguments) if argument == option]
+    if not indexes:
+        return default
+    if len(indexes) != 1 or indexes[0] + 1 >= len(arguments):
+        raise CatalogExecutionError(
+            f"portable catalog option {option!r} must occur once with a value"
+        )
+    return arguments[indexes[0] + 1]
+
+
+def required_command_fixtures(arguments: tuple[str, ...]) -> frozenset[str]:
+    """Return package resources a catalog command consumes without naming in argv."""
+
+    if len(arguments) < 2:
+        return frozenset()
+    required: tuple[str, ...] = IMPLICIT_EXACT_COMMAND_FIXTURES.get(arguments, ())
+    if not required:
+        required = IMPLICIT_COMMAND_FIXTURES.get((arguments[0], arguments[1]), ())
+    if arguments[:2] == ("ste-compiler", "build-demonstration-corpus"):
+        version = _option_value(arguments, "--version", default="1")
+        try:
+            required = DEMONSTRATION_CORPUS_FIXTURES[version]
+        except KeyError as error:
+            raise CatalogExecutionError(
+                f"unsupported demonstration corpus version in portable catalog: {version!r}"
+            ) from error
+    return frozenset(required)
+
+
+def validate_command_contract(
+    command_raw: object,
+    *,
+    fixtures: frozenset[str],
+) -> tuple[str, ...]:
+    """Validate argv safety and bind every implicit package resource to the scenario."""
+
+    command = _require_mapping(command_raw, "scenario command")
+    arguments = _require_string_sequence(command.get("argv"), "command argv")
+    if not arguments:
+        raise CatalogExecutionError("command argv cannot be empty")
+    _reject_equals_form_options(arguments)
+    missing = required_command_fixtures(arguments) - fixtures
+    if missing:
+        raise CatalogExecutionError(
+            "command implicit fixtures are not declared by its scenario: "
+            + ", ".join(sorted(missing))
+        )
+    return arguments
+
+
 def _format_argument(
     argument: str,
     *,
@@ -151,15 +294,12 @@ def _format_argument(
 
 
 def _installed_command(
-    argv: object,
+    arguments: tuple[str, ...],
     *,
     package_root: Path,
     temporary: Path,
     fixtures: frozenset[str],
 ) -> tuple[str, ...]:
-    arguments = _require_string_sequence(argv, "command argv")
-    if not arguments:
-        raise CatalogExecutionError("command argv cannot be empty")
     if arguments[0] == "ste-compiler":
         tail = arguments[1:]
         prefix = (sys.executable, "-m", "ste_compiler.cli")
@@ -209,9 +349,11 @@ def _assert_json_paths(
     paths = _require_mapping(raw_paths, description)
     for dotted_path, expected_value in paths.items():
         observed = _json_path(payload, dotted_path)
-        if observed != expected_value:
+        if not strict_json_equal(observed, expected_value):
             raise CatalogExecutionError(
-                f"{description} {dotted_path!r} expected {expected_value!r}, got {observed!r}"
+                f"{description} {dotted_path!r} expected {expected_value!r}, "
+                f"got {observed!r} (types: {type(expected_value).__name__} expected, "
+                f"{type(observed).__name__} observed)"
             )
 
 
@@ -308,6 +450,48 @@ def _validate_fixtures(scenario: Mapping[str, Any], package_root: Path) -> froze
     return frozenset(fixtures)
 
 
+def _portable_scenarios(
+    scenarios_raw: Sequence[object],
+    *,
+    execution: tuple[str, ...],
+    package_root: Path,
+) -> list[tuple[int, str, frozenset[str], Sequence[object]]]:
+    selected: list[tuple[int, str, frozenset[str], Sequence[object]]] = []
+    scenario_ids: set[int] = set()
+    slugs: set[str] = set()
+    for scenario_raw in scenarios_raw:
+        scenario = _require_mapping(scenario_raw, "scenario")
+        scenario_id = scenario.get("id")
+        slug = scenario.get("slug")
+        if type(scenario_id) is not int or scenario_id <= 0 or not isinstance(slug, str):
+            raise CatalogExecutionError(
+                "catalog scenario must have a positive integer id and string slug"
+            )
+        if SCENARIO_SLUG.fullmatch(slug) is None:
+            raise CatalogExecutionError(f"scenario slug must be lowercase kebab-case: {slug!r}")
+        if scenario_id in scenario_ids:
+            raise CatalogExecutionError(f"catalog scenario id is duplicated: {scenario_id}")
+        if slug in slugs:
+            raise CatalogExecutionError(f"catalog scenario slug is duplicated: {slug!r}")
+        scenario_ids.add(scenario_id)
+        slugs.add(slug)
+
+        if scenario.get("execution") not in execution:
+            continue
+        fixtures = _validate_fixtures(scenario, package_root)
+        commands_raw = scenario.get("commands")
+        if (
+            not isinstance(commands_raw, Sequence)
+            or isinstance(commands_raw, str | bytes)
+            or not commands_raw
+        ):
+            raise CatalogExecutionError(f"portable scenario {scenario_id} must define commands")
+        for command in commands_raw:
+            validate_command_contract(command, fixtures=fixtures)
+        selected.append((scenario_id, slug, fixtures, commands_raw))
+    return selected
+
+
 def _execute_and_evaluate(
     command_raw: object,
     *,
@@ -316,8 +500,9 @@ def _execute_and_evaluate(
     fixtures: frozenset[str],
 ) -> None:
     command = _require_mapping(command_raw, "scenario command")
+    arguments = validate_command_contract(command, fixtures=fixtures)
     argv = _installed_command(
-        command.get("argv"),
+        arguments,
         package_root=package_root,
         temporary=temporary,
         fixtures=fixtures,
@@ -347,22 +532,24 @@ def run_portable_catalog(
     if not isinstance(scenarios_raw, Sequence) or isinstance(scenarios_raw, str | bytes):
         raise CatalogExecutionError("catalog scenarios must be a sequence")
 
+    scenarios = _portable_scenarios(
+        scenarios_raw,
+        execution=execution,
+        package_root=package_root,
+    )
+    if not scenarios:
+        raise CatalogExecutionError("catalog does not select any portable scenarios")
+
     temporary_root.mkdir(parents=True, exist_ok=False)
+    resolved_root = temporary_root.resolve()
     selected: list[int] = []
     command_count = 0
-    for scenario_raw in scenarios_raw:
-        scenario = _require_mapping(scenario_raw, "scenario")
-        if scenario.get("execution") not in execution:
-            continue
-        scenario_id = scenario.get("id")
-        slug = scenario.get("slug")
-        if not isinstance(scenario_id, int) or not isinstance(slug, str):
-            raise CatalogExecutionError("portable scenario must have an integer id and string slug")
-        fixtures = _validate_fixtures(scenario, package_root)
-        commands = scenario.get("commands")
-        if not isinstance(commands, Sequence) or isinstance(commands, str | bytes) or not commands:
-            raise CatalogExecutionError(f"portable scenario {scenario_id} must define commands")
-        temporary = temporary_root / f"{scenario_id}-{slug}"
+    for scenario_id, slug, fixtures, commands in scenarios:
+        temporary = (resolved_root / f"{scenario_id}-{slug}").resolve()
+        if not temporary.is_relative_to(resolved_root) or temporary == resolved_root:
+            raise CatalogExecutionError(
+                f"scenario output directory escapes the catalog root: {scenario_id}-{slug}"
+            )
         temporary.mkdir()
         for command in commands:
             _execute_and_evaluate(
@@ -374,8 +561,6 @@ def run_portable_catalog(
             command_count += 1
         selected.append(scenario_id)
 
-    if not selected:
-        raise CatalogExecutionError("catalog does not select any portable scenarios")
     return CatalogResult(execution, tuple(selected), command_count)
 
 
