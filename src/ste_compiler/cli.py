@@ -11,7 +11,7 @@ from ste_compiler.artifacts import (
     ArtifactBundleManifestV1,
     ArtifactPreflightResultV1,
     ArtifactValidationProfile,
-    verify_artifact_bundle,
+    read_artifact_manifest_for_routing,
 )
 from ste_compiler.diagnostics import ValidationReport
 from ste_compiler.evaluation import evaluate as run_evaluation
@@ -634,7 +634,7 @@ def preflight_artifact(
     """Verify one exact local training-output bundle without network access."""
 
     try:
-        manifest = verify_artifact_bundle(root, manifest_sha256)
+        manifest = read_artifact_manifest_for_routing(root, manifest_sha256)
         validation_profile: ArtifactValidationProfile
         if manifest.architecture == "encoder-decoder":
             preflight_encoder_decoder_artifact_bundle(root, manifest_sha256)

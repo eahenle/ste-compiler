@@ -20,6 +20,7 @@ from ste_compiler.artifacts import (
     canonical_artifact_manifest_json,
     open_verified_artifact_bundle,
     parse_canonical_artifact_manifest,
+    read_artifact_manifest_for_routing,
     verify_artifact_bundle,
 )
 
@@ -228,6 +229,22 @@ def test_convenience_verifier_returns_the_bound_manifest(tmp_path):
 
     assert manifest.architecture == "encoder-decoder"
     assert artifact_manifest_sha256(manifest) == digest
+
+
+def test_manifest_routing_is_content_bound_without_capturing_bundle_files(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    digest = _write_bundle(source)
+    (source / "model.safetensors").write_bytes(b"changed after manifest creation")
+
+    manifest = read_artifact_manifest_for_routing(source, digest)
+
+    assert manifest.architecture == "encoder-decoder"
+    with (
+        pytest.raises(ArtifactVerificationError, match="size does not match"),
+        open_verified_artifact_bundle(source, digest),
+    ):
+        pass
 
 
 def test_verifier_requires_external_digest_and_canonical_manifest(tmp_path):

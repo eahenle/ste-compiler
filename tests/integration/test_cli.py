@@ -116,7 +116,7 @@ def test_cli_validates_and_prints_strict_realizer_config_schema():
         ),
     ],
 )
-def test_cli_preflights_content_bound_artifact_bundle(
+def test_cli_routes_artifact_preflight_with_one_architecture_capture(
     monkeypatch,
     tmp_path,
     architecture,
@@ -149,21 +149,22 @@ def test_cli_preflights_content_bound_artifact_bundle(
             ),
         ),
     )
-    calls = []
+    routing_calls = []
+    capture_calls = []
     monkeypatch.setattr(
         cli_module,
-        "verify_artifact_bundle",
-        lambda root, digest: manifest,
+        "read_artifact_manifest_for_routing",
+        lambda root, digest: routing_calls.append((root, digest)) or manifest,
     )
     monkeypatch.setattr(
         cli_module,
         "preflight_encoder_decoder_artifact_bundle",
-        lambda root, digest: calls.append(("encoder-decoder", root, digest)),
+        lambda root, digest: capture_calls.append(("encoder-decoder", root, digest)),
     )
     monkeypatch.setattr(
         cli_module,
         "preflight_decoder_lora_artifact_bundle",
-        lambda root, digest: calls.append(("decoder-only-lora", root, digest)),
+        lambda root, digest: capture_calls.append(("decoder-only-lora", root, digest)),
     )
 
     result = runner.invoke(
@@ -186,7 +187,8 @@ def test_cli_preflights_content_bound_artifact_bundle(
     assert payload["run_manifest_sha256"] == run_digest
     assert payload["validation_profile"] == validation_profile
     assert payload["network_access"] == "none"
-    assert calls == [(architecture, tmp_path, artifact_digest)]
+    assert routing_calls == [(tmp_path, artifact_digest)]
+    assert capture_calls == [(architecture, tmp_path, artifact_digest)]
 
 
 def test_cli_prints_artifact_schemas():

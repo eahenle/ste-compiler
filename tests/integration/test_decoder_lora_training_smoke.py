@@ -18,6 +18,7 @@ pytest.importorskip("transformers")
 pytest.importorskip("peft")
 pytest.importorskip("safetensors")
 pytest.importorskip("tokenizers")
+from safetensors.torch import load_file, save_file
 
 from ste_compiler.training import (
     DecoderLoRATrainingError,
@@ -217,6 +218,45 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         match="checksums are not canonical or complete",
     ):
         preflight_decoder_lora_artifact_bundle(first_output, checksum_mismatch_digest)
+    (first_output / "checksums.sha256").write_bytes(original_checksums)
+    assert decoder_training._write_decoder_artifact_manifest(first_output) == first_artifact_digest
+
+    adapter_weights = first_output / "adapter/adapter_model.safetensors"
+    original_adapter_weights = adapter_weights.read_bytes()
+    original_run_manifest = (first_output / "run-manifest.json").read_bytes()
+    tensors = load_file(adapter_weights)
+    removed_key = next(key for key in tensors if key.endswith(".lora_B.weight"))
+    del tensors[removed_key]
+    save_file(tensors, adapter_weights, metadata={"format": "pt"})
+    run_manifest = decoder_training.DecoderLoRARunManifestV1.model_validate_json(
+        original_run_manifest
+    )
+    adapter_identity = decoder_training._artifact(
+        "adapter/adapter_model.safetensors",
+        adapter_weights.read_bytes(),
+    )
+    run_manifest = run_manifest.model_copy(
+        update={
+            "output_artifacts": tuple(
+                adapter_identity
+                if artifact.path == "adapter/adapter_model.safetensors"
+                else artifact
+                for artifact in run_manifest.output_artifacts
+            )
+        }
+    )
+    (first_output / "run-manifest.json").write_bytes(
+        decoder_training.canonical_decoder_lora_run_manifest_json(run_manifest)
+    )
+    decoder_training._write_checksums(first_output)
+    unpaired_weights_digest = decoder_training._write_decoder_artifact_manifest(first_output)
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match="complete LoRA A/B pairs",
+    ):
+        preflight_decoder_lora_artifact_bundle(first_output, unpaired_weights_digest)
+    adapter_weights.write_bytes(original_adapter_weights)
+    (first_output / "run-manifest.json").write_bytes(original_run_manifest)
     (first_output / "checksums.sha256").write_bytes(original_checksums)
     assert decoder_training._write_decoder_artifact_manifest(first_output) == first_artifact_digest
 

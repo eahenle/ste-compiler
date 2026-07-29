@@ -359,3 +359,102 @@ def test_decoder_preflight_rejects_oversized_sparse_metadata_before_capture(
             root,
             artifact_manifest_sha256(manifest),
         )
+
+
+class _FakeSafeTensorSlice:
+    def __init__(self, shape):
+        self._shape = shape
+
+    def get_shape(self):
+        return self._shape
+
+
+class _FakeSafeTensorState:
+    def __init__(self, tensors):
+        self._tensors = tensors
+
+    def keys(self):
+        return self._tensors.keys()
+
+    def get_slice(self, key):
+        return _FakeSafeTensorSlice(self._tensors[key])
+
+
+def _adapter_training_config(*, targets=("c_attn",), rank=8):
+    return SimpleNamespace(
+        lora=SimpleNamespace(
+            rank=rank,
+            target_modules=targets,
+        )
+    )
+
+
+def test_lora_safetensors_state_dict_requires_complete_pairs_for_configured_targets():
+    tensors = _FakeSafeTensorState(
+        {
+            "base_model.model.transformer.h.0.attn.c_attn.lora_A.weight": (8, 16),
+            "base_model.model.transformer.h.0.attn.c_attn.lora_B.weight": (48, 8),
+            "base_model.model.transformer.h.1.attn.c_attn.lora_A.weight": (8, 16),
+            "base_model.model.transformer.h.1.attn.c_attn.lora_B.weight": (48, 8),
+        }
+    )
+
+    decoder_training._validate_lora_safetensors_state_dict(
+        tensors,
+        _adapter_training_config(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("tensors", "config", "message"),
+    [
+        (
+            {
+                "base_model.model.transformer.h.0.attn.c_attn.weight": (16, 16),
+            },
+            _adapter_training_config(),
+            "invalid LoRA state-dict keys",
+        ),
+        (
+            {
+                "base_model.model.transformer.h.0.attn.c_attn.lora_A.weight": (8, 16),
+            },
+            _adapter_training_config(),
+            "complete LoRA A/B pairs",
+        ),
+        (
+            {
+                "base_model.model.transformer.h.0.attn.c_attn.lora_A.weight": (4, 16),
+                "base_model.model.transformer.h.0.attn.c_attn.lora_B.weight": (48, 4),
+            },
+            _adapter_training_config(rank=8),
+            "do not match configured rank 8",
+        ),
+        (
+            {
+                "base_model.model.transformer.h.0.attn.c_proj.lora_A.weight": (8, 16),
+                "base_model.model.transformer.h.0.attn.c_proj.lora_B.weight": (16, 8),
+            },
+            _adapter_training_config(),
+            "outside configured target_modules",
+        ),
+        (
+            {
+                "base_model.model.transformer.h.0.attn.c_attn.lora_A.weight": (8, 16),
+                "base_model.model.transformer.h.0.attn.c_attn.lora_B.weight": (48, 8),
+            },
+            _adapter_training_config(targets=("c_attn", "c_proj")),
+            "do not represent configured target_modules: c_proj",
+        ),
+    ],
+)
+def test_lora_safetensors_state_dict_rejects_malformed_or_misdirected_weights(
+    tensors,
+    config,
+    message,
+):
+    with pytest.raises(DecoderLoRATrainingError, match=message):
+        decoder_training._validate_lora_safetensors_state_dict(
+            _FakeSafeTensorState(tensors),
+            config,
+        )

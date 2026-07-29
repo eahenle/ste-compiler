@@ -103,6 +103,10 @@ UNSAFE_ARTIFACT_SUFFIXES = frozenset(
 )
 _COMMIT = re.compile(r"[0-9a-f]{40}", re.ASCII)
 _SHA256 = re.compile(r"[0-9a-f]{64}", re.ASCII)
+_LORA_WEIGHT_KEY = re.compile(
+    r"^(?P<module>.+)\.lora_(?P<side>[AB])\.weight$",
+    re.ASCII,
+)
 DECODER_BUNDLE_FILES: Final = frozenset(
     {
         "adapter/README.md",
@@ -980,13 +984,103 @@ def _validate_saved_adapter(
                 device="cpu",
             ) as weights,
         ):
-            if not list(weights.keys()):
-                raise DecoderLoRATrainingError("saved adapter safetensors contain no tensors")
+            _validate_lora_safetensors_state_dict(weights, config)
     except DecoderLoRATrainingError:
         raise
     except Exception as error:
         raise DecoderLoRATrainingError("saved adapter safetensors are invalid") from error
     return files
+
+
+def _validate_lora_safetensors_state_dict(
+    weights: Any,
+    config: DecoderOnlyLoRATrainingConfigV1,
+) -> None:
+    """Require exact, paired LoRA matrices for every configured target-module family."""
+
+    keys = tuple(sorted(cast(Sequence[str], weights.keys())))
+    if not keys:
+        raise DecoderLoRATrainingError("saved adapter safetensors contain no tensors")
+
+    pairs: dict[str, dict[str, tuple[int, ...]]] = {}
+    invalid_keys: list[str] = []
+    invalid_shapes: list[str] = []
+    for key in keys:
+        match = _LORA_WEIGHT_KEY.fullmatch(key)
+        if match is None:
+            invalid_keys.append(key)
+            continue
+        module_name = match.group("module")
+        side = match.group("side")
+        raw_shape = weights.get_slice(key).get_shape()
+        try:
+            shape = tuple(index(cast(SupportsIndex, dimension)) for dimension in raw_shape)
+        except TypeError:
+            invalid_shapes.append(key)
+            continue
+        if len(shape) != 2 or any(dimension <= 0 for dimension in shape):
+            invalid_shapes.append(key)
+            continue
+        pairs.setdefault(module_name, {})[side] = shape
+
+    if invalid_keys:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors contain invalid LoRA state-dict keys: "
+            + ", ".join(invalid_keys)
+        )
+    if invalid_shapes:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors contain invalid LoRA matrix shapes: "
+            + ", ".join(invalid_shapes)
+        )
+
+    incomplete = [
+        f"{module_name} (missing {''.join(sorted({'A', 'B'} - set(sides)))})"
+        for module_name, sides in sorted(pairs.items())
+        if set(sides) != {"A", "B"}
+    ]
+    if incomplete:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors must contain complete LoRA A/B pairs: "
+            + ", ".join(incomplete)
+        )
+
+    rank = config.lora.rank
+    rank_mismatches = [
+        module_name
+        for module_name, sides in sorted(pairs.items())
+        if sides["A"][0] != rank or sides["B"][1] != rank
+    ]
+    if rank_mismatches:
+        raise DecoderLoRATrainingError(
+            f"saved adapter LoRA A/B matrix shapes do not match configured rank {rank}: "
+            + ", ".join(rank_mismatches)
+        )
+
+    target_modules = config.lora.target_modules
+    matched_targets: set[str] = set()
+    unexpected_modules: list[str] = []
+    for module_name in sorted(pairs):
+        matches = {
+            target
+            for target in target_modules
+            if module_name == target or module_name.endswith(f".{target}")
+        }
+        if not matches:
+            unexpected_modules.append(module_name)
+        matched_targets.update(matches)
+    if unexpected_modules:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors contain LoRA weights outside configured target_modules: "
+            + ", ".join(unexpected_modules)
+        )
+
+    missing_targets = sorted(set(target_modules) - matched_targets)
+    if missing_targets:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors do not represent configured target_modules: "
+            + ", ".join(missing_targets)
+        )
 
 
 def _package_tree_sha256(package_root: Path) -> str:

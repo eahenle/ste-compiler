@@ -278,6 +278,13 @@ def _file_flags() -> int:
     return os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
+def _validate_expected_manifest_sha256(expected_manifest_sha256: str) -> None:
+    if _SHA256.fullmatch(expected_manifest_sha256) is None:
+        raise ArtifactVerificationError(
+            "artifact manifest SHA-256 must be 64 lowercase hexadecimal characters"
+        )
+
+
 def _read_regular_bytes(
     directory_fd: int,
     name: str,
@@ -548,6 +555,34 @@ def _capture_directory(
         raise ArtifactVerificationError("artifact directory changed while read")
 
 
+def read_artifact_manifest_for_routing(
+    root: Path,
+    expected_manifest_sha256: str,
+) -> ArtifactBundleManifestV1:
+    """Read only the content-pinned manifest needed to route one later full verification."""
+
+    _require_hardened_posix()
+    _validate_expected_manifest_sha256(expected_manifest_sha256)
+    try:
+        source_fd = os.open(root, _directory_flags())
+    except OSError as error:
+        raise ArtifactVerificationError(
+            f"artifact root must be a real directory: {root}"
+        ) from error
+    try:
+        manifest_bytes = _read_regular_bytes(
+            source_fd,
+            ARTIFACT_MANIFEST_NAME,
+            display_path=ARTIFACT_MANIFEST_NAME,
+            max_bytes=MAX_ARTIFACT_MANIFEST_BYTES,
+        )
+    finally:
+        os.close(source_fd)
+    if hashlib.sha256(manifest_bytes).hexdigest() != expected_manifest_sha256:
+        raise ArtifactVerificationError("artifact manifest SHA-256 does not match")
+    return parse_canonical_artifact_manifest(manifest_bytes)
+
+
 @contextmanager
 def open_verified_artifact_bundle(
     root: Path,
@@ -556,10 +591,7 @@ def open_verified_artifact_bundle(
     """Capture and verify an exact artifact tree, then yield its private materialization."""
 
     _require_hardened_posix()
-    if _SHA256.fullmatch(expected_manifest_sha256) is None:
-        raise ArtifactVerificationError(
-            "artifact manifest SHA-256 must be 64 lowercase hexadecimal characters"
-        )
+    _validate_expected_manifest_sha256(expected_manifest_sha256)
     try:
         source_fd = os.open(root, _directory_flags())
     except OSError as error:
