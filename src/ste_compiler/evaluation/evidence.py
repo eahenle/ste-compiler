@@ -13,7 +13,7 @@ import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
@@ -76,6 +76,11 @@ SEMANTIC_DIAGNOSTIC_CODES: Final = frozenset(
 )
 EvidenceKind = Literal["deterministic_fixture", "external_measured"]
 FailureStage = Literal["none", "frontend", "realizer", "validator"]
+FailureCode = Annotated[
+    str,
+    Field(pattern=r"^(frontend|realizer|validator)\.[a-z0-9_]+$"),
+]
+NonnegativeCount = Annotated[int, Field(ge=0)]
 
 
 class StrictEvidenceModel(BaseModel):
@@ -284,14 +289,14 @@ class ValidatorObservationV1(StrictEvidenceModel):
     def not_run_has_no_diagnostics(self) -> ValidatorObservationV1:
         if self.status == "not_run" and self.diagnostic_codes:
             raise ValueError("a validator that did not run cannot have diagnostics")
-        if self.status == "rejected" and not self.diagnostic_codes:
-            raise ValueError("a rejected validator observation requires diagnostics")
         rejecting_diagnostic = any(
             code.startswith(LEXICAL_DIAGNOSTIC_PREFIXES)
             or code in STRUCTURAL_DIAGNOSTIC_CODES
             or code in SEMANTIC_DIAGNOSTIC_CODES
             for code in self.diagnostic_codes
         )
+        if self.status == "rejected" and not rejecting_diagnostic:
+            raise ValueError("a rejected validator observation requires a rejecting diagnostic")
         if self.status == "accepted" and rejecting_diagnostic:
             raise ValueError(
                 "an accepted validator observation cannot contain rejecting diagnostics"
@@ -528,17 +533,37 @@ class BenchmarkMetricsV1(StrictEvidenceModel):
     record_count: int = Field(gt=0)
     systems: dict[str, SystemMetricsV1] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def record_count_matches_systems(self) -> BenchmarkMetricsV1:
+        if self.record_count != sum(system.record_count for system in self.systems.values()):
+            raise ValueError("benchmark record count must equal the sum of system record counts")
+        return self
+
 
 class SystemMetricsV1(StrictEvidenceModel):
     record_count: int = Field(gt=0)
     metrics: dict[str, MetricEstimateV1]
-    failure_stage_counts: dict[str, int]
-    failure_code_counts: dict[str, int]
+    failure_stage_counts: dict[FailureStage, NonnegativeCount]
+    failure_code_counts: dict[FailureCode, NonnegativeCount]
 
     @model_validator(mode="after")
     def frozen_metric_inventory(self) -> SystemMetricsV1:
         if set(self.metrics) != set(SUPPORTED_METRICS):
             raise ValueError("system metrics must equal the frozen v1 metric inventory")
+        if sum(self.failure_stage_counts.values()) != self.record_count:
+            raise ValueError("failure stage counts must sum to the system record count")
+        failed_record_count = self.record_count - self.failure_stage_counts.get("none", 0)
+        if sum(self.failure_code_counts.values()) != failed_record_count:
+            raise ValueError("failure code counts must equal the failed record count")
+        for stage in ("frontend", "realizer", "validator"):
+            stage_count = self.failure_stage_counts.get(stage, 0)
+            code_count = sum(
+                count
+                for code, count in self.failure_code_counts.items()
+                if code.startswith(stage + ".")
+            )
+            if code_count != stage_count:
+                raise ValueError(f"{stage} failure code counts must equal its failure stage count")
         f1_name = "frontend.required_field_f1"
         for name, estimate in self.metrics.items():
             expected_method = "none-derived" if name == f1_name else "wilson-score-95"

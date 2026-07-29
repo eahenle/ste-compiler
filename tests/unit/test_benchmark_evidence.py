@@ -216,6 +216,119 @@ def test_benchmark_metrics_schema_rejects_empty_system_inventory():
         BenchmarkMetricsV1.model_validate(payload)
 
 
+def test_benchmark_metrics_schema_rejects_unknown_failure_stage():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["failure_stage_counts"]["postprocessor"] = 0
+
+    with pytest.raises(ValidationError, match="Input should be"):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+def test_benchmark_metrics_schema_rejects_unknown_failure_code_namespace():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["failure_code_counts"]["postprocessor.unknown_failure"] = 0
+
+    with pytest.raises(ValidationError, match="String should match pattern"):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("inventory_name", "key"),
+    [
+        ("failure_stage_counts", "frontend"),
+        ("failure_code_counts", "frontend.schema_invalid"),
+    ],
+)
+def test_benchmark_metrics_schema_rejects_negative_failure_counts(inventory_name, key):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system[inventory_name][key] = -1
+
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+def test_benchmark_metrics_schema_rejects_failure_stage_total_mismatch():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["failure_stage_counts"]["frontend"] += 1
+
+    with pytest.raises(
+        ValidationError,
+        match="failure stage counts must sum to the system record count",
+    ):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+def test_benchmark_metrics_schema_rejects_failure_code_total_mismatch():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["failure_code_counts"]["frontend.schema_invalid"] += 1
+
+    with pytest.raises(
+        ValidationError,
+        match="failure code counts must equal the failed record count",
+    ):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+def test_benchmark_metrics_schema_rejects_failure_code_stage_mismatch():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["failure_code_counts"]["frontend.schema_invalid"] = 0
+    system["failure_code_counts"]["validator.semantic_rejection"] = 2
+
+    with pytest.raises(
+        ValidationError,
+        match="frontend failure code counts must equal its failure stage count",
+    ):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
+@pytest.mark.parametrize("explicit_zero_counts", (False, True))
+def test_benchmark_metrics_schema_accepts_omitted_or_explicit_zero_failure_stages(
+    explicit_zero_counts,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    system["failure_stage_counts"] = {"none": system["record_count"]}
+    system["failure_code_counts"] = {}
+    if explicit_zero_counts:
+        system["failure_stage_counts"].update(
+            {
+                "frontend": 0,
+                "realizer": 0,
+                "validator": 0,
+            }
+        )
+        system["failure_code_counts"].update(
+            {
+                "frontend.schema_invalid": 0,
+                "realizer.unauthorized_symbol": 0,
+                "validator.semantic_rejection": 0,
+            }
+        )
+
+    metrics = BenchmarkMetricsV1.model_validate(payload)
+
+    actual = next(iter(metrics.systems.values()))
+    assert actual.failure_stage_counts.get("frontend", 0) == 0
+    assert sum(actual.failure_code_counts.values()) == 0
+
+
+def test_benchmark_metrics_schema_rejects_aggregate_record_count_mismatch():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    payload["record_count"] += 1
+
+    with pytest.raises(
+        ValidationError,
+        match="benchmark record count must equal the sum of system record counts",
+    ):
+        BenchmarkMetricsV1.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     ("metric_name", "replacement_name", "expected_method"),
     [
@@ -462,6 +575,23 @@ def test_accepted_validator_observation_allows_warning_diagnostics(warning_code)
     assert prediction.validator.diagnostic_codes == (warning_code,)
 
 
+@pytest.mark.parametrize(
+    "diagnostic_codes",
+    ((), ("AMBIGUOUS_PRONOUN",), ("PASSIVE_VOICE",)),
+)
+def test_rejected_validator_observation_requires_a_rejecting_diagnostic(
+    diagnostic_codes,
+):
+    rejected = json.loads(PREDICTIONS.read_text().splitlines()[3])
+    rejected["validator"]["diagnostic_codes"] = list(diagnostic_codes)
+
+    with pytest.raises(
+        ValidationError,
+        match="rejected validator observation requires a rejecting diagnostic",
+    ):
+        PredictionRecordV1.model_validate(rejected)
+
+
 def test_false_accept_cannot_be_mislabeled_as_semantic_rejection():
     accepted = json.loads(PREDICTIONS.read_text().splitlines()[0])
     accepted["validator"]["gold_should_accept"] = False
@@ -510,7 +640,7 @@ def test_warning_only_structural_diagnostics_cannot_claim_rejection(warning_code
 
     with pytest.raises(
         ValidationError,
-        match="structural-rejection code requires a structural diagnostic",
+        match="rejected validator observation requires a rejecting diagnostic",
     ):
         PredictionRecordV1.model_validate(rejected)
 
