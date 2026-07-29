@@ -94,4 +94,6 @@ See the [end-to-end demo](docs/end-to-end-demo.md),
 [reproducible training guide](docs/training.md),
 [V1 implementation plan](docs/v1-implementation-plan.md),
 [architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the ADRs for assumptions
-and limitations.
+and limitations. Project policies are in [CONTRIBUTING.md](CONTRIBUTING.md),
+[SECURITY.md](SECURITY.md), the [code of conduct](CODE_OF_CONDUCT.md), and the
+[release policy](docs/release-policy.md).

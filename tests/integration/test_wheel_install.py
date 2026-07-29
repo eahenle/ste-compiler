@@ -43,6 +43,8 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
         capture_output=True,
         text=True,
     )
+    assert (installed / "ste_compiler/py.typed").is_file()
+    assert next(installed.glob("ste_compiler-*.dist-info/licenses/LICENSE")).is_file()
 
     clean_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     clean_env["PYTHONPATH"] = str(installed)

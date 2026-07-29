@@ -9,7 +9,29 @@ description = "An auditable semantic-to-STE-inspired controlled-English prototyp
 readme = "README.md"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
+authors = [{name = "Adrian Henle"}]
+keywords = ["controlled language", "NLP", "semantic IR", "reproducible ML"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Text Processing :: Linguistic",
+  "Typing :: Typed",
+]
 dependencies = ["pydantic>=2.9,<3", "PyYAML>=6.0,<7", "typer>=0.12,<1"]
+
+[project.urls]
+Homepage = "https://github.com/eahenle/ste-compiler"
+Documentation = "https://github.com/eahenle/ste-compiler/tree/main/docs"
+Repository = "https://github.com/eahenle/ste-compiler.git"
+Issues = "https://github.com/eahenle/ste-compiler/issues"
+Changelog = "https://github.com/eahenle/ste-compiler/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

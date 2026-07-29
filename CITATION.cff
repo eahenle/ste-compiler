@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it using this metadata.
+title: ste-compiler
+type: software
+version: 0.1.0
+authors:
+  - family-names: Henle
+    given-names: Adrian
+repository-code: https://github.com/eahenle/ste-compiler
+url: https://github.com/eahenle/ste-compiler
+license: MIT
+abstract: >-
+  An auditable semantic-to-STE-inspired controlled-English compiler prototype with typed
+  intermediate representation, constrained realization, deterministic validation, and reproducible
+  demonstration artifacts.
+keywords:
+  - controlled language
+  - natural language processing
+  - semantic intermediate representation
+  - reproducible machine learning
