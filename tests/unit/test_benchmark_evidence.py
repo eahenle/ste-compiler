@@ -16,6 +16,7 @@ from ste_compiler.evaluation import (
     PredictionRecordV1,
     ReportManifestV1,
     generate_evidence_report,
+    recompute_metrics,
 )
 from ste_compiler.evaluation import evidence as evidence_module
 
@@ -54,6 +55,47 @@ def _replace_metric_counts(system, name: str, numerator: int, denominator: int) 
     )
 
 
+def _fixture_spec_and_records():
+    spec = BenchmarkSpecV1.model_validate_json(SPECIFICATION.read_bytes())
+    records = tuple(
+        PredictionRecordV1.model_validate_json(line)
+        for line in PREDICTIONS.read_text().splitlines()
+    )
+    return spec, records
+
+
+def _two_system_payloads():
+    specification = json.loads(SPECIFICATION.read_text())
+    second_system = dict(specification["systems"][0])
+    second_system["system_id"] = "second-fixture-system-v1"
+    specification["systems"].append(second_system)
+    predictions = []
+    for original in (json.loads(line) for line in PREDICTIONS.read_text().splitlines()):
+        predictions.append(original)
+        duplicate = json.loads(json.dumps(original))
+        duplicate["system_id"] = second_system["system_id"]
+        predictions.append(duplicate)
+    return specification, predictions
+
+
+def _two_system_spec_and_records():
+    specification, predictions = _two_system_payloads()
+    return (
+        BenchmarkSpecV1.model_validate(specification),
+        tuple(PredictionRecordV1.model_validate(record) for record in predictions),
+    )
+
+
+def _recompute(spec, records):
+    return recompute_metrics(
+        spec,
+        records,
+        spec_sha256="0" * 64,
+        prediction_manifest_sha256="1" * 64,
+        predictions_sha256="2" * 64,
+    )
+
+
 def _resign_predictions(tmp_path: Path, mutate) -> tuple[Path, Path]:
     predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
     mutate(predictions)
@@ -81,10 +123,7 @@ def _resign_two_system_benchmark(
     *,
     inconsistent_gold_field: str | None,
 ) -> tuple[Path, Path, Path]:
-    specification = json.loads(SPECIFICATION.read_text())
-    second_system = dict(specification["systems"][0])
-    second_system["system_id"] = "second-fixture-system-v1"
-    specification["systems"].append(second_system)
+    specification, predictions = _two_system_payloads()
     specification_bytes = json.dumps(
         specification,
         ensure_ascii=False,
@@ -94,12 +133,9 @@ def _resign_two_system_benchmark(
     specification_path = tmp_path / "benchmark-spec.json"
     specification_path.write_bytes(specification_bytes)
 
-    original_predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
-    predictions = []
-    for original in original_predictions:
-        predictions.append(original)
-        duplicate = json.loads(json.dumps(original))
-        duplicate["system_id"] = second_system["system_id"]
+    for duplicate in predictions:
+        if duplicate["system_id"] == specification["systems"][0]["system_id"]:
+            continue
         if inconsistent_gold_field is not None:
             if inconsistent_gold_field.startswith("frontend."):
                 if duplicate["case_id"] == "adversarial_ambiguity":
@@ -112,7 +148,6 @@ def _resign_two_system_benchmark(
                 duplicate["validator"]["gold_should_accept"] = False
                 duplicate["failure_stage"] = "validator"
                 duplicate["failure_code"] = "validator.false_accept"
-        predictions.append(duplicate)
     prediction_bytes = b"".join(
         (
             json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
@@ -1466,6 +1501,122 @@ def test_report_renders_untrusted_notes_as_indented_code(tmp_path):
     assert "\n    ## Fabricated external result" in report
 
 
+def test_recompute_metrics_requires_validated_spec_and_prediction_models():
+    spec, records = _fixture_spec_and_records()
+
+    with pytest.raises(TypeError, match="spec must be a BenchmarkSpecV1"):
+        _recompute(spec.model_dump(mode="json"), records)
+    with pytest.raises(
+        TypeError,
+        match="records must be a tuple of PredictionRecordV1 values",
+    ):
+        _recompute(spec, list(records))
+
+
+def test_recompute_metrics_rejects_incomplete_case_system_coverage():
+    spec, records = _fixture_spec_and_records()
+
+    with pytest.raises(
+        ValueError,
+        match="predictions must cover every frozen case/system pair exactly once",
+    ):
+        _recompute(spec, records[:-1])
+
+
+def test_recompute_metrics_rejects_duplicate_case_system_key():
+    spec, records = _fixture_spec_and_records()
+    duplicate = records + (records[-1],)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "predictions contain a duplicate case/system key: "
+            "adversarial_tab_casing/failure-taxonomy-fixture-v1"
+        ),
+    ):
+        _recompute(spec, duplicate)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("case_id", "unknown_case", "prediction uses an unknown benchmark case: unknown_case"),
+        (
+            "system_id",
+            "unknown_system",
+            "prediction uses an unknown benchmark system: unknown_system",
+        ),
+    ),
+)
+def test_recompute_metrics_rejects_unknown_case_or_system(field, value, message):
+    spec, records = _fixture_spec_and_records()
+    payload = records[0].model_dump(mode="json")
+    payload[field] = value
+    mutated = (PredictionRecordV1.model_validate(payload), *records[1:])
+
+    with pytest.raises(ValueError, match=message):
+        _recompute(spec, mutated)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        (
+            lambda payload: payload.update({"benchmark_id": "other_benchmark"}),
+            "prediction benchmark ID does not match the specification",
+        ),
+        (
+            lambda payload: payload["dataset"].update(
+                {
+                    "dataset_version": "other_dataset",
+                }
+            ),
+            "prediction dataset does not match the specification",
+        ),
+        (
+            lambda payload: payload.update({"source_sha256": "0" * 64}),
+            "prediction source SHA-256 does not match its case",
+        ),
+        (
+            lambda payload: payload.update({"evidence_kind": "external_measured"}),
+            "prediction evidence kind does not match its system",
+        ),
+    ),
+)
+def test_recompute_metrics_rejects_prediction_cross_binding_mismatch(mutation, message):
+    spec, records = _fixture_spec_and_records()
+    payload = records[0].model_dump(mode="json")
+    mutation(payload)
+    mutated = (PredictionRecordV1.model_validate(payload), *records[1:])
+
+    with pytest.raises(ValueError, match=message):
+        _recompute(spec, mutated)
+
+
+def test_recompute_metrics_rejects_noncanonical_case_system_order():
+    spec, records = _fixture_spec_and_records()
+    reordered = (records[1], records[0], *records[2:])
+
+    with pytest.raises(
+        ValueError,
+        match="predictions do not match the frozen case/system order",
+    ):
+        _recompute(spec, reordered)
+
+
+def test_recompute_metrics_accepts_complete_multi_system_contract():
+    spec, records = _two_system_spec_and_records()
+
+    metrics = _recompute(spec, records)
+
+    assert metrics.record_count == 8
+    assert tuple(metrics.systems) == (
+        "failure-taxonomy-fixture-v1",
+        "second-fixture-system-v1",
+    )
+    assert {system.record_count for system in metrics.systems.values()} == {4}
+
+
 def test_report_renders_specification_notice_as_indented_code():
     specification = json.loads(SPECIFICATION.read_text())
     specification["non_certification_notice"] = (
@@ -1478,17 +1629,8 @@ def test_report_renders_specification_notice_as_indented_code():
         "```"
     )
     spec = BenchmarkSpecV1.model_validate(specification)
-    records = tuple(
-        PredictionRecordV1.model_validate_json(line)
-        for line in PREDICTIONS.read_text().splitlines()
-    )
-    metrics = evidence_module.recompute_metrics(
-        spec,
-        records,
-        spec_sha256="0" * 64,
-        prediction_manifest_sha256="1" * 64,
-        predictions_sha256="2" * 64,
-    )
+    _, records = _fixture_spec_and_records()
+    metrics = _recompute(spec, records)
 
     report = evidence_module._markdown(spec, metrics, records).decode()
 
@@ -1517,9 +1659,12 @@ def test_failure_examples_identify_each_system_for_the_same_case():
         "system_id": "second-failure-fixture-v1",
     }
     specification["systems"].append(second_system)
-    spec = BenchmarkSpecV1.model_validate(specification)
 
     first_failure = json.loads(PREDICTIONS.read_text().splitlines()[1])
+    specification["cases"] = [
+        case for case in specification["cases"] if case["case_id"] == first_failure["case_id"]
+    ]
+    spec = BenchmarkSpecV1.model_validate(specification)
     second_failure = {
         **first_failure,
         "system_id": second_system["system_id"],
@@ -1527,13 +1672,7 @@ def test_failure_examples_identify_each_system_for_the_same_case():
     records = tuple(
         PredictionRecordV1.model_validate(record) for record in (first_failure, second_failure)
     )
-    metrics = evidence_module.recompute_metrics(
-        spec,
-        records,
-        spec_sha256="0" * 64,
-        prediction_manifest_sha256="1" * 64,
-        predictions_sha256="2" * 64,
-    )
+    metrics = _recompute(spec, records)
 
     report = evidence_module._markdown(spec, metrics, records).decode()
 
@@ -1562,27 +1701,32 @@ def test_failure_code_tables_are_sorted_and_attributed_to_each_system():
     )
     spec = BenchmarkSpecV1.model_validate(specification)
     predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
-    first_system_records = (
-        predictions[2],
-        predictions[1],
+    first_system_records = tuple(
+        PredictionRecordV1.model_validate(predictions[index]) for index in (2, 1)
     )
     second_system_records = tuple(
-        {
-            **predictions[index],
-            "system_id": second_system_id,
-        }
+        PredictionRecordV1.model_validate(
+            {
+                **predictions[index],
+                "system_id": second_system_id,
+            }
+        )
         for index in (3, 1)
     )
-    records = tuple(
-        PredictionRecordV1.model_validate(record)
-        for record in (*first_system_records, *second_system_records)
-    )
-    metrics = evidence_module.recompute_metrics(
-        spec,
-        records,
-        spec_sha256="0" * 64,
+    records = (*first_system_records, *second_system_records)
+    metrics = BenchmarkMetricsV1(
+        schema_version=evidence_module.METRICS_SCHEMA_VERSION,
+        benchmark_id=spec.benchmark_id,
+        evidence_label=spec.evidence_label,
+        claim_scope=spec.claim_scope,
+        benchmark_spec_sha256="0" * 64,
         prediction_manifest_sha256="1" * 64,
         predictions_sha256="2" * 64,
+        record_count=len(records),
+        systems={
+            first_system_id: evidence_module._system_metrics(first_system_records),
+            second_system_id: evidence_module._system_metrics(second_system_records),
+        },
     )
 
     report = evidence_module._markdown(spec, metrics, records).decode()
@@ -1613,16 +1757,11 @@ def test_failure_code_tables_are_sorted_and_attributed_to_each_system():
 
 def test_failure_code_table_explicitly_reports_an_empty_system():
     specification = json.loads(SPECIFICATION.read_text())
+    specification["cases"] = specification["cases"][:1]
     spec = BenchmarkSpecV1.model_validate(specification)
     success = PredictionRecordV1.model_validate_json(PREDICTIONS.read_text().splitlines()[0])
     records = (success,)
-    metrics = evidence_module.recompute_metrics(
-        spec,
-        records,
-        spec_sha256="0" * 64,
-        prediction_manifest_sha256="1" * 64,
-        predictions_sha256="2" * 64,
-    )
+    metrics = _recompute(spec, records)
 
     report = evidence_module._markdown(spec, metrics, records).decode()
 

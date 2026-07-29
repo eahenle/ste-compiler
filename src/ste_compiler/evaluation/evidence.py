@@ -1079,7 +1079,58 @@ def _system_metrics(records: tuple[PredictionRecordV1, ...]) -> SystemMetricsV1:
     )
 
 
-def recompute_metrics(
+def _validate_prediction_contract(
+    spec: BenchmarkSpecV1,
+    records: tuple[PredictionRecordV1, ...],
+) -> None:
+    if not isinstance(spec, BenchmarkSpecV1):
+        raise TypeError("spec must be a BenchmarkSpecV1")
+    if not isinstance(records, tuple) or any(
+        not isinstance(record, PredictionRecordV1) for record in records
+    ):
+        raise TypeError("records must be a tuple of PredictionRecordV1 values")
+    case_by_id = {case.case_id: case for case in spec.cases}
+    system_by_id = {system.system_id: system for system in spec.systems}
+    for record in records:
+        if record.case_id not in case_by_id:
+            raise ValueError(f"prediction uses an unknown benchmark case: {record.case_id}")
+        if record.system_id not in system_by_id:
+            raise ValueError(f"prediction uses an unknown benchmark system: {record.system_id}")
+
+    expected_keys = tuple(
+        (case.case_id, system.system_id) for case in spec.cases for system in spec.systems
+    )
+    actual_keys = tuple((record.case_id, record.system_id) for record in records)
+    seen_keys: set[tuple[str, str]] = set()
+    for actual_key in actual_keys:
+        if actual_key in seen_keys:
+            raise ValueError(
+                f"predictions contain a duplicate case/system key: {actual_key[0]}/{actual_key[1]}"
+            )
+        seen_keys.add(actual_key)
+    if set(actual_keys) != set(expected_keys):
+        raise ValueError("predictions must cover every frozen case/system pair exactly once")
+    if actual_keys != expected_keys:
+        raise ValueError("predictions do not match the frozen case/system order")
+
+    for record in records:
+        case = case_by_id[record.case_id]
+        system = system_by_id[record.system_id]
+        record_key = f"{record.case_id}/{record.system_id}"
+        if record.benchmark_id != spec.benchmark_id:
+            raise ValueError(
+                f"prediction benchmark ID does not match the specification: {record_key}"
+            )
+        if record.dataset != spec.dataset:
+            raise ValueError(f"prediction dataset does not match the specification: {record_key}")
+        if record.source_sha256 != case.source_sha256:
+            raise ValueError(f"prediction source SHA-256 does not match its case: {record_key}")
+        if record.evidence_kind != system.evidence_kind:
+            raise ValueError(f"prediction evidence kind does not match its system: {record_key}")
+    _validate_case_gold_contract(records)
+
+
+def _recompute_validated_metrics(
     spec: BenchmarkSpecV1,
     records: tuple[PredictionRecordV1, ...],
     *,
@@ -1087,8 +1138,6 @@ def recompute_metrics(
     prediction_manifest_sha256: str,
     predictions_sha256: str,
 ) -> BenchmarkMetricsV1:
-    """Recompute every reported value independently for each frozen system."""
-
     systems = {
         system.system_id: _system_metrics(
             tuple(record for record in records if record.system_id == system.system_id)
@@ -1105,6 +1154,26 @@ def recompute_metrics(
         predictions_sha256=predictions_sha256,
         record_count=len(records),
         systems=systems,
+    )
+
+
+def recompute_metrics(
+    spec: BenchmarkSpecV1,
+    records: tuple[PredictionRecordV1, ...],
+    *,
+    spec_sha256: str,
+    prediction_manifest_sha256: str,
+    predictions_sha256: str,
+) -> BenchmarkMetricsV1:
+    """Validate the complete benchmark contract and recompute every reported metric."""
+
+    _validate_prediction_contract(spec, records)
+    return _recompute_validated_metrics(
+        spec,
+        records,
+        spec_sha256=spec_sha256,
+        prediction_manifest_sha256=prediction_manifest_sha256,
+        predictions_sha256=predictions_sha256,
     )
 
 
@@ -1525,33 +1594,14 @@ def generate_evidence_report(
     if prediction_manifest_model.record_count != len(records):
         raise ValueError("prediction count does not match the prediction manifest")
 
+    _validate_prediction_contract(spec_model, records)
     taxonomy_codes = {item.code for item in taxonomy_model.codes}
-    case_by_id = {case.case_id: case for case in spec_model.cases}
-    system_by_id = {system.system_id: system for system in spec_model.systems}
-    expected_keys = [
-        (case.case_id, system.system_id)
-        for case in spec_model.cases
-        for system in spec_model.systems
-    ]
-    actual_keys = [(record.case_id, record.system_id) for record in records]
-    if actual_keys != expected_keys:
-        raise ValueError("predictions do not match the frozen case/system order")
     for record in records:
-        case = case_by_id[record.case_id]
-        system = system_by_id[record.system_id]
-        if (
-            record.benchmark_id != spec_model.benchmark_id
-            or record.dataset != spec_model.dataset
-            or record.source_sha256 != case.source_sha256
-            or record.evidence_kind != system.evidence_kind
-        ):
-            raise ValueError(f"prediction cross-binding is invalid: {record.case_id}")
         if record.failure_code is not None and record.failure_code not in taxonomy_codes:
             raise ValueError(f"prediction uses an unknown failure code: {record.failure_code}")
-    _validate_case_gold_contract(records)
     _validate_release_cases(spec_model, dataset_release)
 
-    metrics = recompute_metrics(
+    metrics = _recompute_validated_metrics(
         spec_model,
         records,
         spec_sha256=spec_sha256,
