@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import importlib
 import importlib.metadata
@@ -14,6 +16,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -472,6 +475,63 @@ def _write_bytes(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 
 
+@contextmanager
+def _isolated_deterministic_runtime(torch: Any, seed: int) -> Iterator[None]:
+    python_random_state = random.getstate()
+    torch_random_state = torch.get_rng_state()
+    deterministic_enabled = torch.are_deterministic_algorithms_enabled()
+    deterministic_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    torch_threads = int(torch.get_num_threads())
+    try:
+        random.seed(seed)
+        torch.manual_seed(seed)
+        torch.use_deterministic_algorithms(True)
+        torch.set_num_threads(1)
+        yield
+    finally:
+        random.setstate(python_random_state)
+        torch.set_rng_state(torch_random_state)
+        torch.use_deterministic_algorithms(
+            deterministic_enabled,
+            warn_only=deterministic_warn_only,
+        )
+        torch.set_num_threads(torch_threads)
+
+
+def _rename_no_replace(source: Path, destination: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "darwin":
+        rename = libc.renamex_np
+        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+        rename.restype = ctypes.c_int
+        result = rename(source_bytes, destination_bytes, 0x00000004)
+    elif sys.platform.startswith("linux"):
+        rename = libc.renameat2
+        rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        rename.restype = ctypes.c_int
+        result = rename(-100, source_bytes, -100, destination_bytes, 1)
+    else:
+        raise DecoderLoRATrainingError(
+            f"atomic no-replace publication is unsupported on {sys.platform}"
+        )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise DecoderLoRATrainingError(f"output path already exists: {destination}")
+    raise DecoderLoRATrainingError(
+        f"cannot atomically publish output {destination}: {os.strerror(error_number)}"
+    )
+
+
 def _fsync_tree(root: Path) -> None:
     for path in sorted(root.rglob("*")):
         if path.is_file():
@@ -502,7 +562,7 @@ def _atomic_output_directory(
     try:
         result = builder(stage)
         _fsync_tree(stage)
-        os.replace(stage, output)
+        _rename_no_replace(stage, output)
         parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             os.fsync(parent_fd)
@@ -547,9 +607,6 @@ def prepare_decoder_smoke_fixture(
     tokenizers_processors = importlib.import_module("tokenizers.processors")
 
     def build(stage: Path) -> LocalModelSnapshotManifestV1:
-        random.seed(config.seed)
-        torch.manual_seed(config.seed)
-        torch.use_deterministic_algorithms(True)
         tokenizer = tokenizers.Tokenizer(tokenizers_models.BPE(unk_token="<unk>"))
         tokenizer.pre_tokenizer = tokenizers_pre.ByteLevel(
             add_prefix_space=False,
@@ -618,7 +675,8 @@ def prepare_decoder_smoke_fixture(
         )
         return manifest
 
-    manifest = cast(LocalModelSnapshotManifestV1, _atomic_output_directory(output, build))
+    with _isolated_deterministic_runtime(torch, config.seed):
+        manifest = cast(LocalModelSnapshotManifestV1, _atomic_output_directory(output, build))
     manifest_sha256 = model_snapshot_manifest_sha256(output)
     read_verified_model_snapshot(output, config, manifest_sha256)
     return manifest
@@ -1026,11 +1084,8 @@ def evaluate_decoder_lora_adapter(
     modules = _runtime_modules()
     adapter_files = _validate_saved_adapter(adapter_directory, config, modules)
     torch = modules.torch
-    random.seed(config.seed)
-    torch.manual_seed(config.seed)
-    torch.use_deterministic_algorithms(True)
-    torch.set_num_threads(1)
     with (
+        _isolated_deterministic_runtime(torch, config.seed),
         _materialized_snapshot(verified_snapshot) as snapshot_path,
         _materialized_adapter(adapter_files) as adapter_path,
     ):
@@ -1082,10 +1137,6 @@ def run_decoder_lora_training(
     started = time.perf_counter()
 
     def build(stage: Path) -> DecoderLoRARunManifestV1:
-        random.seed(config.seed)
-        torch.manual_seed(config.seed)
-        torch.use_deterministic_algorithms(True)
-        torch.set_num_threads(1)
         with _materialized_snapshot(verified_snapshot) as snapshot_path:
             tokenizer, base_model = _load_tokenizer_and_base(modules, snapshot_path)
             _preflight_release(release, tokenizer, config)
@@ -1237,4 +1288,5 @@ def run_decoder_lora_training(
         _write_checksums(stage)
         return manifest
 
-    return cast(DecoderLoRARunManifestV1, _atomic_output_directory(output, build))
+    with _isolated_deterministic_runtime(torch, config.seed):
+        return cast(DecoderLoRARunManifestV1, _atomic_output_directory(output, build))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import socket
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("torch")
+torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
 pytest.importorskip("peft")
 pytest.importorskip("safetensors")
@@ -54,6 +55,23 @@ def _training_inputs():
     return config, read_training_release(RELEASE, config.corpus)
 
 
+def _call_without_runtime_state_leak(operation):
+    python_random_state = random.getstate()
+    torch_random_state = torch.get_rng_state().clone()
+    deterministic_enabled = torch.are_deterministic_algorithms_enabled()
+    deterministic_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    torch_threads = torch.get_num_threads()
+
+    result = operation()
+
+    assert random.getstate() == python_random_state
+    assert torch.equal(torch.get_rng_state(), torch_random_state)
+    assert torch.are_deterministic_algorithms_enabled() is deterministic_enabled
+    assert torch.is_deterministic_algorithms_warn_only_enabled() is deterministic_warn_only
+    assert torch.get_num_threads() == torch_threads
+    return result
+
+
 def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadable(
     tmp_path,
     monkeypatch,
@@ -64,25 +82,31 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
     first_output = tmp_path / "first"
     second_output = tmp_path / "second"
 
-    snapshot_manifest = prepare_decoder_smoke_fixture(config, release, model_snapshot)
-    snapshot_digest = model_snapshot_manifest_sha256(model_snapshot)
-    first = run_decoder_lora_training(
-        config,
-        release,
-        model_snapshot,
-        snapshot_digest,
-        first_output,
-        source_checkout=ROOT,
-        evaluation_command="ste-compiler evaluate-decoder-lora ...",
+    snapshot_manifest = _call_without_runtime_state_leak(
+        lambda: prepare_decoder_smoke_fixture(config, release, model_snapshot)
     )
-    second = run_decoder_lora_training(
-        config,
-        release,
-        model_snapshot,
-        snapshot_digest,
-        second_output,
-        source_checkout=ROOT,
-        evaluation_command="ste-compiler evaluate-decoder-lora ...",
+    snapshot_digest = model_snapshot_manifest_sha256(model_snapshot)
+    first = _call_without_runtime_state_leak(
+        lambda: run_decoder_lora_training(
+            config,
+            release,
+            model_snapshot,
+            snapshot_digest,
+            first_output,
+            source_checkout=ROOT,
+            evaluation_command="ste-compiler evaluate-decoder-lora ...",
+        )
+    )
+    second = _call_without_runtime_state_leak(
+        lambda: run_decoder_lora_training(
+            config,
+            release,
+            model_snapshot,
+            snapshot_digest,
+            second_output,
+            source_checkout=ROOT,
+            evaluation_command="ste-compiler evaluate-decoder-lora ...",
+        )
     )
 
     assert snapshot_manifest.fixture_profile == "tiny-byte-bpe-gpt2-v1"
@@ -138,12 +162,14 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         & UNSAFE_SUFFIXES
     )
     assert (
-        evaluate_decoder_lora_adapter(
-            config,
-            release,
-            model_snapshot,
-            snapshot_digest,
-            first_output / "adapter",
+        _call_without_runtime_state_leak(
+            lambda: evaluate_decoder_lora_adapter(
+                config,
+                release,
+                model_snapshot,
+                snapshot_digest,
+                first_output / "adapter",
+            )
         )
         == first.validation_loss
     )

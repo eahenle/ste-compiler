@@ -20,7 +20,7 @@ from ste_compiler.training import (
     ReleasedTrainingRecordV1,
     build_decoder_training_example,
 )
-from ste_compiler.training.decoder_lora import _collate
+from ste_compiler.training.decoder_lora import _atomic_output_directory, _collate
 
 
 class CharacterTrainingTokenizer:
@@ -234,3 +234,19 @@ def test_source_provenance_requires_clean_checkout_bound_to_runtime_package(
         file.write("\n# changed checkout\n")
     with pytest.raises(DecoderLoRATrainingError, match="does not match the code executing"):
         decoder_training._source_provenance(checkout)
+
+
+def test_atomic_output_refuses_destination_created_during_staging(tmp_path):
+    output = tmp_path / "output"
+
+    def build(stage):
+        (stage / "artifact.txt").write_text("complete")
+        output.mkdir()
+        return "built"
+
+    with pytest.raises(DecoderLoRATrainingError, match="output path already exists"):
+        _atomic_output_directory(output, build)
+
+    assert output.is_dir()
+    assert not list(output.iterdir())
+    assert not list(tmp_path.glob(".output.stage-*"))
