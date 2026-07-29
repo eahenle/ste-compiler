@@ -12,11 +12,24 @@ from pathlib import Path
 
 import pytest
 
+from ste_compiler.artifacts import (
+    ARTIFACT_MANIFEST_NAME,
+    ArtifactFileV1,
+    artifact_manifest_sha256,
+    build_artifact_manifest,
+    canonical_artifact_manifest_json,
+    parse_canonical_artifact_manifest,
+)
 from ste_compiler.training import (
     EncoderDecoderTrainingConfigV1,
+    FileIdentityV1,
+    canonical_run_manifest_json,
+    encoder_decoder_artifact_manifest_sha256,
     evaluate_encoder_decoder_checkpoint,
     load_training_config,
+    preflight_encoder_decoder_artifact_bundle,
     run_encoder_decoder_training,
+    run_encoder_decoder_training_bundle,
     verify_safe_encoder_decoder_checkpoint,
 )
 from ste_compiler.training import encoder_decoder as training_module
@@ -104,6 +117,37 @@ def _weight_hash(checkpoint: Path) -> str:
 
 def _run_manifest_hash(checkpoint: Path) -> str:
     return hashlib.sha256((checkpoint / "run-manifest.json").read_bytes()).hexdigest()
+
+
+def _file_identities(checkpoint: Path) -> tuple[FileIdentityV1, ...]:
+    return tuple(
+        FileIdentityV1(
+            path=path.relative_to(checkpoint).as_posix(),
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            bytes=path.stat().st_size,
+        )
+        for path in sorted(checkpoint.rglob("*"))
+        if path.is_file() and path.name != ARTIFACT_MANIFEST_NAME
+    )
+
+
+def _rewrite_artifact_manifest(checkpoint: Path) -> str:
+    identities = _file_identities(checkpoint)
+    manifest = build_artifact_manifest(
+        architecture="encoder-decoder",
+        artifact_type="encoder-decoder-checkpoint",
+        entrypoint=".",
+        files=tuple(
+            ArtifactFileV1(
+                path=identity.path,
+                sha256=identity.sha256,
+                bytes=identity.bytes,
+            )
+            for identity in identities
+        ),
+    )
+    (checkpoint / ARTIFACT_MANIFEST_NAME).write_bytes(canonical_artifact_manifest_json(manifest))
+    return artifact_manifest_sha256(manifest)
 
 
 def _call_without_runtime_state_leak(operation):
@@ -240,6 +284,62 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
         for path in first.rglob("*")
     )
     assert verify_safe_encoder_decoder_checkpoint(first)
+    artifact_digest = encoder_decoder_artifact_manifest_sha256(first)
+    artifact_manifest = parse_canonical_artifact_manifest(
+        (first / ARTIFACT_MANIFEST_NAME).read_bytes()
+    )
+    preflight = preflight_encoder_decoder_artifact_bundle(first, artifact_digest)
+
+    assert artifact_digest == artifact_manifest_sha256(artifact_manifest)
+    assert preflight.artifact_manifest_sha256 == artifact_digest
+    assert preflight.run_manifest == first_manifest
+    assert artifact_manifest.architecture == "encoder-decoder"
+    assert artifact_manifest.artifact_type == "encoder-decoder-checkpoint"
+    assert artifact_manifest.entrypoint == "."
+    assert artifact_manifest.run_manifest_sha256 == _run_manifest_hash(first)
+    assert ARTIFACT_MANIFEST_NAME not in {identity.path for identity in artifact_manifest.files}
+    assert {identity.path for identity in artifact_manifest.files} == {
+        path.relative_to(first).as_posix()
+        for path in first.rglob("*")
+        if path.is_file() and path.name != ARTIFACT_MANIFEST_NAME
+    }
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="manifest SHA-256 does not match",
+    ):
+        preflight_encoder_decoder_artifact_bundle(first, "0" * 64)
+
+    inventory_mismatch = shutil.copytree(first, tmp_path / "inventory-mismatch")
+    mismatched_run = first_manifest.model_copy(
+        update={"output_artifacts": first_manifest.output_artifacts[:-1]}
+    )
+    (inventory_mismatch / "run-manifest.json").write_bytes(
+        canonical_run_manifest_json(mismatched_run)
+    )
+    mismatch_digest = _rewrite_artifact_manifest(inventory_mismatch)
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="does not match its run manifest",
+    ):
+        preflight_encoder_decoder_artifact_bundle(inventory_mismatch, mismatch_digest)
+
+    unsafe_weights = shutil.copytree(first, tmp_path / "unsafe-weights")
+    (unsafe_weights / ARTIFACT_MANIFEST_NAME).unlink()
+    weight = next(unsafe_weights.glob("*.safetensors"))
+    weight.rename(weight.with_suffix(".safeweights"))
+    unsafe_output_artifacts = tuple(
+        identity
+        for identity in _file_identities(unsafe_weights)
+        if identity.path != "run-manifest.json"
+    )
+    unsafe_run = first_manifest.model_copy(update={"output_artifacts": unsafe_output_artifacts})
+    (unsafe_weights / "run-manifest.json").write_bytes(canonical_run_manifest_json(unsafe_run))
+    unsafe_digest = _rewrite_artifact_manifest(unsafe_weights)
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="does not contain safetensors weights",
+    ):
+        preflight_encoder_decoder_artifact_bundle(unsafe_weights, unsafe_digest)
 
     with pytest.raises(EncoderDecoderTrainingError, match="manifest digest does not match"):
         evaluate_encoder_decoder_checkpoint(config, RELEASE, first, "0" * 64)
@@ -372,6 +472,47 @@ def test_failed_checkpoint_save_leaves_no_partial_output(tmp_path, tiny_snapshot
     assert not list(tmp_path.glob(".failed.stage-*"))
 
 
+def test_bundle_result_retains_verified_staged_digest_after_publication(
+    tmp_path,
+    tiny_snapshot,
+    monkeypatch,
+):
+    _, config = _config(tmp_path)
+    output = tmp_path / "bundle-result"
+    staged_digests = []
+    real_preflight = training_module.preflight_encoder_decoder_artifact_bundle
+    real_rename = training_module._rename_no_replace
+
+    def capture_staged_digest(root, expected_manifest_sha256):
+        result = real_preflight(root, expected_manifest_sha256)
+        staged_digests.append(result.artifact_manifest_sha256)
+        return result
+
+    def publish_then_corrupt_manifest(source, destination):
+        real_rename(source, destination)
+        (destination / ARTIFACT_MANIFEST_NAME).write_bytes(b"changed after publication\n")
+
+    monkeypatch.setattr(
+        training_module,
+        "preflight_encoder_decoder_artifact_bundle",
+        capture_staged_digest,
+    )
+    monkeypatch.setattr(training_module, "_rename_no_replace", publish_then_corrupt_manifest)
+
+    result = run_encoder_decoder_training_bundle(
+        config,
+        RELEASE,
+        output,
+        source_root=ROOT,
+        dependency_lock=ROOT / "uv.lock",
+    )
+    published_digest = hashlib.sha256((output / ARTIFACT_MANIFEST_NAME).read_bytes()).hexdigest()
+
+    assert staged_digests == [result.artifact_manifest_sha256]
+    assert result.artifact_manifest_sha256 != published_digest
+    assert result.run_manifest.optimizer_steps == config.max_steps
+
+
 def test_installed_wheel_runs_offline_encoder_training(tmp_path, tiny_snapshot):
     snapshot, _ = tiny_snapshot
     config_path, _ = _config(tmp_path)
@@ -449,6 +590,22 @@ assert trained.exit_code == 0, trained.output
 manifest = json.loads(trained.stdout)
 assert manifest["optimizer_steps"] == 2
 manifest_sha256 = manifest["run_manifest_sha256"]
+artifact_manifest_sha256 = manifest["artifact_manifest_sha256"]
+preflight = runner.invoke(
+    app,
+    [
+        "preflight-artifact",
+        str(output),
+        "--manifest-sha256",
+        artifact_manifest_sha256,
+        "--json",
+    ],
+)
+assert preflight.exit_code == 0, preflight.output
+preflight_payload = json.loads(preflight.stdout)
+assert preflight_payload["architecture"] == "encoder-decoder"
+assert preflight_payload["validation_profile"] == "encoder-checkpoint-load-v1"
+assert preflight_payload["network_access"] == "none"
 evaluated = runner.invoke(
     app,
     [

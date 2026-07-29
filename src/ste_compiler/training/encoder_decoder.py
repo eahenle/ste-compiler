@@ -26,6 +26,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Final, cast
 
+from ste_compiler.artifacts import (
+    ARTIFACT_MANIFEST_NAME,
+    MAX_ARTIFACT_MANIFEST_BYTES,
+    ArtifactBundleManifestV1,
+    ArtifactFileV1,
+    ArtifactVerificationError,
+    VerifiedArtifactBundle,
+    artifact_manifest_sha256,
+    build_artifact_manifest,
+    canonical_artifact_manifest_json,
+    open_verified_artifact_bundle,
+    parse_canonical_artifact_manifest,
+)
+
 from .config import (
     ArtifactIdentityV1,
     EncoderDecoderTrainingConfigV1,
@@ -44,7 +58,6 @@ from .manifest import (
     ValidationMetricsV1,
     canonical_run_manifest_json,
     canonical_validation_metrics_json,
-    load_run_manifest,
 )
 from .release_reader import (
     ReleasedTrainingRecordV1,
@@ -90,6 +103,14 @@ _MAX_TREE_FILE_BYTES = 8 * 1024 * 1024 * 1024
 _MAX_TREE_BYTES = 32 * 1024 * 1024 * 1024
 _COPY_CHUNK_BYTES = 1024 * 1024
 _PACKAGE_SUFFIXES = frozenset({".py"})
+_MAX_RUN_MANIFEST_BYTES: Final = 2 * 1024 * 1024
+_MAX_TRAINING_CONFIG_BYTES: Final = 256 * 1024
+_MAX_VALIDATION_METRICS_BYTES: Final = 64 * 1024
+_METADATA_SIZE_LIMITS: Final = {
+    "run-manifest.json": _MAX_RUN_MANIFEST_BYTES,
+    "training-config.json": _MAX_TRAINING_CONFIG_BYTES,
+    "validation-metrics.json": _MAX_VALIDATION_METRICS_BYTES,
+}
 
 
 class EncoderDecoderTrainingError(ValueError):
@@ -108,6 +129,22 @@ class PreparedTrainingRecord:
 class CapturedTree:
     path: Path
     artifacts: tuple[FileIdentityV1, ...]
+
+
+@dataclass(frozen=True)
+class EncoderDecoderArtifactPreflight:
+    """Validated metadata for one content-bound encoder-decoder artifact bundle."""
+
+    run_manifest: EncoderDecoderRunManifestV1
+    artifact_manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class EncoderDecoderTrainingBundleResult:
+    """The run manifest and exact staged bundle identity published by one training run."""
+
+    run_manifest: EncoderDecoderRunManifestV1
+    artifact_manifest_sha256: str
 
 
 def _safe_snapshot_artifact(relative_path: str) -> bool:
@@ -760,6 +797,240 @@ def verify_safe_encoder_decoder_checkpoint(directory: Path) -> tuple[FileIdentit
         return _validate_checkpoint_artifacts(captured.artifacts)
 
 
+def _artifact_file(identity: FileIdentityV1) -> ArtifactFileV1:
+    return ArtifactFileV1(
+        path=identity.path,
+        sha256=identity.sha256,
+        bytes=identity.bytes,
+    )
+
+
+def _run_file(identity: ArtifactFileV1) -> FileIdentityV1:
+    return FileIdentityV1(
+        path=identity.path,
+        sha256=identity.sha256,
+        bytes=identity.bytes,
+    )
+
+
+def _read_bounded_regular_bytes(
+    root: Path,
+    name: str,
+    *,
+    max_bytes: int,
+) -> bytes:
+    directory_fd = -1
+    file_fd = -1
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+        file_flags |= os.O_NOFOLLOW
+    try:
+        directory_fd = os.open(root, directory_flags)
+        entry_before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        file_fd = os.open(name, file_flags, dir_fd=directory_fd)
+        before = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(entry_before.st_mode)
+            or not stat.S_ISREG(before.st_mode)
+            or entry_before.st_nlink != 1
+            or before.st_nlink != 1
+            or (entry_before.st_dev, entry_before.st_ino, entry_before.st_size)
+            != (before.st_dev, before.st_ino, before.st_size)
+        ):
+            raise EncoderDecoderTrainingError(
+                f"metadata must be a single-link regular file: {name}"
+            )
+        if before.st_size > max_bytes:
+            raise EncoderDecoderTrainingError(f"metadata exceeds size limit: {name}")
+        chunks: list[bytes] = []
+        byte_count = 0
+        while True:
+            chunk = os.read(file_fd, min(_COPY_CHUNK_BYTES, max_bytes + 1 - byte_count))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            byte_count += len(chunk)
+            if byte_count > max_bytes:
+                raise EncoderDecoderTrainingError(f"metadata exceeds size limit: {name}")
+        after = os.fstat(file_fd)
+        entry_after = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except EncoderDecoderTrainingError:
+        raise
+    except FileNotFoundError as error:
+        raise EncoderDecoderTrainingError(f"missing {name}") from error
+    except OSError as error:
+        raise EncoderDecoderTrainingError(f"cannot safely read metadata: {name}") from error
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
+    stable_fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if (
+        byte_count != before.st_size
+        or any(getattr(before, field) != getattr(after, field) for field in stable_fields)
+        or any(getattr(before, field) != getattr(entry_after, field) for field in stable_fields)
+    ):
+        raise EncoderDecoderTrainingError(f"metadata changed while read: {name}")
+    return b"".join(chunks)
+
+
+def _validate_metadata_inventory(manifest: ArtifactBundleManifestV1) -> None:
+    identities = {identity.path: identity for identity in manifest.files}
+    for name, max_bytes in _METADATA_SIZE_LIMITS.items():
+        identity = identities.get(name)
+        if identity is None:
+            raise EncoderDecoderTrainingError(f"encoder-decoder artifact bundle is missing {name}")
+        if identity.bytes > max_bytes:
+            raise EncoderDecoderTrainingError(f"metadata exceeds size limit: {name}")
+
+
+def _preflight_source_metadata_inventory(
+    root: Path,
+    expected_manifest_sha256: str,
+) -> None:
+    if len(expected_manifest_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in expected_manifest_sha256
+    ):
+        raise ArtifactVerificationError(
+            "artifact manifest SHA-256 must be 64 lowercase hexadecimal characters"
+        )
+    manifest_bytes = _read_bounded_regular_bytes(
+        root,
+        ARTIFACT_MANIFEST_NAME,
+        max_bytes=MAX_ARTIFACT_MANIFEST_BYTES,
+    )
+    if hashlib.sha256(manifest_bytes).hexdigest() != expected_manifest_sha256:
+        raise ArtifactVerificationError("artifact manifest SHA-256 does not match")
+    manifest = parse_canonical_artifact_manifest(manifest_bytes)
+    if (
+        manifest.architecture != "encoder-decoder"
+        or manifest.artifact_type != "encoder-decoder-checkpoint"
+        or manifest.entrypoint != "."
+    ):
+        raise EncoderDecoderTrainingError("artifact bundle is not an encoder-decoder checkpoint")
+    _validate_metadata_inventory(manifest)
+
+
+def _parse_run_manifest_bytes(data: bytes) -> EncoderDecoderRunManifestV1:
+    try:
+        manifest = EncoderDecoderRunManifestV1.model_validate_json(data)
+    except ValueError as error:
+        raise EncoderDecoderTrainingError(
+            f"encoder-decoder run manifest is invalid: {error}"
+        ) from error
+    if data != canonical_run_manifest_json(manifest):
+        raise EncoderDecoderTrainingError("encoder-decoder run manifest is not canonical JSON")
+    return manifest
+
+
+def _preflight_verified_encoder_decoder_artifact_bundle(
+    verified: VerifiedArtifactBundle,
+) -> EncoderDecoderArtifactPreflight:
+    bundle_manifest = verified.manifest
+    if (
+        bundle_manifest.architecture != "encoder-decoder"
+        or bundle_manifest.artifact_type != "encoder-decoder-checkpoint"
+        or bundle_manifest.entrypoint != "."
+    ):
+        raise EncoderDecoderTrainingError("artifact bundle is not an encoder-decoder checkpoint")
+    _validate_metadata_inventory(bundle_manifest)
+    materialized = verified.path
+    run_manifest_bytes = _read_bounded_regular_bytes(
+        materialized,
+        "run-manifest.json",
+        max_bytes=_MAX_RUN_MANIFEST_BYTES,
+    )
+    training_config_bytes = _read_bounded_regular_bytes(
+        materialized,
+        "training-config.json",
+        max_bytes=_MAX_TRAINING_CONFIG_BYTES,
+    )
+    validation_bytes = _read_bounded_regular_bytes(
+        materialized,
+        "validation-metrics.json",
+        max_bytes=_MAX_VALIDATION_METRICS_BYTES,
+    )
+    run_manifest = _parse_run_manifest_bytes(run_manifest_bytes)
+
+    bundle_files = tuple(_run_file(identity) for identity in bundle_manifest.files)
+    output_artifacts = tuple(
+        identity for identity in bundle_files if identity.path != "run-manifest.json"
+    )
+    _validate_checkpoint_artifacts(bundle_files)
+    output_paths = {identity.path for identity in output_artifacts}
+    if "config.json" not in output_paths:
+        raise EncoderDecoderTrainingError("encoder-decoder artifact bundle is missing config.json")
+    if (
+        run_manifest.output_artifacts != output_artifacts
+        or training_config_bytes != canonical_training_config_json(run_manifest.training_config)
+        or run_manifest.training_config_sha256
+        != training_config_sha256(run_manifest.training_config)
+        or validation_bytes != canonical_validation_metrics_json(run_manifest.validation)
+        or run_manifest.base_model != run_manifest.training_config.base_model
+        or run_manifest.tokenizer != run_manifest.training_config.tokenizer
+        or run_manifest.base_model_artifacts != run_manifest.tokenizer_artifacts
+        or not any(identity.path == "config.json" for identity in run_manifest.base_model_artifacts)
+    ):
+        raise EncoderDecoderTrainingError(
+            "encoder-decoder artifact bundle does not match its run manifest"
+        )
+    _validate_checkpoint_artifacts(run_manifest.base_model_artifacts)
+    with tempfile.TemporaryDirectory(prefix="ste-encoder-artifact-load-") as private:
+        _, model, _ = _reload_components(
+            _load_neural_runtime()[1],
+            materialized,
+            Path(private),
+        )
+        del model
+    return EncoderDecoderArtifactPreflight(
+        run_manifest=run_manifest,
+        artifact_manifest_sha256=verified.manifest_sha256,
+    )
+
+
+def preflight_encoder_decoder_artifact_bundle(
+    root: Path,
+    expected_manifest_sha256: str,
+) -> EncoderDecoderArtifactPreflight:
+    """Verify and preflight a content-pinned encoder-decoder artifact bundle."""
+
+    try:
+        _preflight_source_metadata_inventory(root, expected_manifest_sha256)
+        with open_verified_artifact_bundle(
+            root,
+            expected_manifest_sha256,
+        ) as verified:
+            return _preflight_verified_encoder_decoder_artifact_bundle(verified)
+    except ArtifactVerificationError as error:
+        raise EncoderDecoderTrainingError(
+            f"encoder-decoder artifact bundle verification failed: {error}"
+        ) from error
+
+
+def encoder_decoder_artifact_manifest_sha256(root: Path) -> str:
+    """Discover and validate the canonical manifest digest for a local bundle."""
+
+    try:
+        manifest_bytes = _read_bounded_regular_bytes(
+            root,
+            ARTIFACT_MANIFEST_NAME,
+            max_bytes=MAX_ARTIFACT_MANIFEST_BYTES,
+        )
+        manifest = parse_canonical_artifact_manifest(manifest_bytes)
+    except ArtifactVerificationError as error:
+        raise EncoderDecoderTrainingError(
+            f"encoder-decoder artifact manifest is invalid: {error}"
+        ) from error
+    if manifest.architecture != "encoder-decoder":
+        raise EncoderDecoderTrainingError("artifact bundle is not an encoder-decoder checkpoint")
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
+    preflight_encoder_decoder_artifact_bundle(root, digest)
+    return digest
+
+
 def _reload_components(
     transformers: Any,
     checkpoint: Path,
@@ -1058,7 +1329,7 @@ def _run_encoder_decoder_training(
     dependency_lock: Path,
     cache_dir: Path | None = None,
     runtime_modules: tuple[Any, Any, Any],
-) -> EncoderDecoderRunManifestV1:
+) -> EncoderDecoderTrainingBundleResult:
     started = time.perf_counter()
     release = read_training_release(release_path, config.corpus)
     package = _git_package_provenance(source_root, dependency_lock)
@@ -1150,7 +1421,24 @@ def _run_encoder_decoder_training(
             evaluation_command=_EVALUATION_COMMAND,
         )
         _write_bytes(stage / "run-manifest.json", canonical_run_manifest_json(manifest))
-        verify_safe_encoder_decoder_checkpoint(stage)
+        bundle_files = verify_safe_encoder_decoder_checkpoint(stage)
+        artifact_manifest = build_artifact_manifest(
+            architecture="encoder-decoder",
+            artifact_type="encoder-decoder-checkpoint",
+            entrypoint=".",
+            files=tuple(_artifact_file(identity) for identity in bundle_files),
+        )
+        artifact_digest = artifact_manifest_sha256(artifact_manifest)
+        _write_bytes(
+            stage / ARTIFACT_MANIFEST_NAME,
+            canonical_artifact_manifest_json(artifact_manifest),
+        )
+        preflight = preflight_encoder_decoder_artifact_bundle(
+            stage,
+            artifact_digest,
+        )
+        if preflight.run_manifest != manifest:
+            raise EncoderDecoderTrainingError("staged artifact bundle changed before publication")
         _fsync_tree(stage)
         _rename_no_replace(stage, output)
         installed = True
@@ -1159,14 +1447,17 @@ def _run_encoder_decoder_training(
             os.fsync(parent_fd)
         finally:
             os.close(parent_fd)
-        return manifest
+        return EncoderDecoderTrainingBundleResult(
+            run_manifest=manifest,
+            artifact_manifest_sha256=preflight.artifact_manifest_sha256,
+        )
     finally:
         if not installed:
             shutil.rmtree(stage, ignore_errors=True)
         shutil.rmtree(runtime, ignore_errors=True)
 
 
-def run_encoder_decoder_training(
+def run_encoder_decoder_training_bundle(
     config: EncoderDecoderTrainingConfigV1,
     release_path: Path,
     output: Path,
@@ -1174,8 +1465,8 @@ def run_encoder_decoder_training(
     source_root: Path,
     dependency_lock: Path,
     cache_dir: Path | None = None,
-) -> EncoderDecoderRunManifestV1:
-    """Run one offline CPU training job and atomically publish a safe checkpoint."""
+) -> EncoderDecoderTrainingBundleResult:
+    """Train and return the run manifest with the exact verified staged bundle digest."""
 
     output = output.absolute()
     if output.exists() or output.is_symlink():
@@ -1194,6 +1485,27 @@ def run_encoder_decoder_training(
         )
 
 
+def run_encoder_decoder_training(
+    config: EncoderDecoderTrainingConfigV1,
+    release_path: Path,
+    output: Path,
+    *,
+    source_root: Path,
+    dependency_lock: Path,
+    cache_dir: Path | None = None,
+) -> EncoderDecoderRunManifestV1:
+    """Compatibility wrapper returning the encoder-decoder run manifest."""
+
+    return run_encoder_decoder_training_bundle(
+        config,
+        release_path,
+        output,
+        source_root=source_root,
+        dependency_lock=dependency_lock,
+        cache_dir=cache_dir,
+    ).run_manifest
+
+
 def _evaluate_encoder_decoder_checkpoint(
     config: EncoderDecoderTrainingConfigV1,
     checkpoint: Path,
@@ -1203,6 +1515,8 @@ def _evaluate_encoder_decoder_checkpoint(
     runtime_modules: tuple[Any, Any, Any],
 ) -> ValidationMetricsV1:
     torch, transformers, _ = runtime_modules
+    for name, max_bytes in _METADATA_SIZE_LIMITS.items():
+        _read_bounded_regular_bytes(checkpoint, name, max_bytes=max_bytes)
     with tempfile.TemporaryDirectory(prefix="ste-checkpoint-evaluate-") as private:
         tokenizer, model, checkpoint_artifacts = _reload_components(
             transformers,
@@ -1216,16 +1530,28 @@ def _evaluate_encoder_decoder_checkpoint(
             raise EncoderDecoderTrainingError("checkpoint is missing run-manifest.json")
         if manifest_identity.sha256 != run_manifest_sha256:
             raise EncoderDecoderTrainingError("checkpoint run manifest digest does not match")
-        try:
-            config_bytes = (materialized / "training-config.json").read_bytes()
-            validation_bytes = (materialized / "validation-metrics.json").read_bytes()
-            manifest = load_run_manifest(materialized / "run-manifest.json")
-        except OSError as error:
-            raise EncoderDecoderTrainingError("checkpoint is missing required metadata") from error
+        config_bytes = _read_bounded_regular_bytes(
+            materialized,
+            "training-config.json",
+            max_bytes=_MAX_TRAINING_CONFIG_BYTES,
+        )
+        validation_bytes = _read_bounded_regular_bytes(
+            materialized,
+            "validation-metrics.json",
+            max_bytes=_MAX_VALIDATION_METRICS_BYTES,
+        )
+        manifest_bytes = _read_bounded_regular_bytes(
+            materialized,
+            "run-manifest.json",
+            max_bytes=_MAX_RUN_MANIFEST_BYTES,
+        )
+        manifest = _parse_run_manifest_bytes(manifest_bytes)
         if config_bytes != canonical_training_config_json(config):
             raise EncoderDecoderTrainingError("checkpoint training configuration does not match")
         actual_output_artifacts = tuple(
-            identity for identity in checkpoint_artifacts if identity.path != "run-manifest.json"
+            identity
+            for identity in checkpoint_artifacts
+            if identity.path not in {"run-manifest.json", ARTIFACT_MANIFEST_NAME}
         )
         _validate_model_tokenizer_compatibility(tokenizer, model, config)
         prepared = preflight_encoder_decoder_tokenizer(tokenizer, release, config)

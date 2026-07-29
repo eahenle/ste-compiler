@@ -2,12 +2,19 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
+from ste_compiler import cli as cli_module
+from ste_compiler.artifacts import (
+    ArtifactFileV1,
+    ArtifactPreflightResultV1,
+    build_artifact_manifest,
+)
 from ste_compiler.cli import app, resources
 from ste_compiler.ir.models import Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document
@@ -90,6 +97,200 @@ def test_cli_validates_and_prints_strict_realizer_config_schema():
         "deterministic",
         "encoder-decoder",
     }
+
+
+@pytest.mark.parametrize(
+    ("architecture", "artifact_type", "entrypoint", "validation_profile"),
+    [
+        (
+            "encoder-decoder",
+            "encoder-decoder-checkpoint",
+            ".",
+            "encoder-checkpoint-load-v1",
+        ),
+        (
+            "decoder-only-lora",
+            "decoder-only-lora-run",
+            "adapter",
+            "decoder-adapter-structure-v1",
+        ),
+    ],
+)
+def test_cli_preflights_content_bound_artifact_bundle(
+    monkeypatch,
+    tmp_path,
+    architecture,
+    artifact_type,
+    entrypoint,
+    validation_profile,
+):
+    run_digest = "1" * 64
+    artifact_digest = "2" * 64
+    manifest = build_artifact_manifest(
+        architecture=architecture,
+        artifact_type=artifact_type,
+        entrypoint=entrypoint,
+        files=(
+            ArtifactFileV1(
+                path="run-manifest.json",
+                sha256=run_digest,
+                bytes=2,
+            ),
+            *(
+                (
+                    ArtifactFileV1(
+                        path="adapter/adapter_config.json",
+                        sha256="3" * 64,
+                        bytes=2,
+                    ),
+                )
+                if architecture == "decoder-only-lora"
+                else ()
+            ),
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        cli_module,
+        "verify_artifact_bundle",
+        lambda root, digest: manifest,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "preflight_encoder_decoder_artifact_bundle",
+        lambda root, digest: calls.append(("encoder-decoder", root, digest)),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "preflight_decoder_lora_artifact_bundle",
+        lambda root, digest: calls.append(("decoder-only-lora", root, digest)),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight-artifact",
+            str(tmp_path),
+            "--manifest-sha256",
+            artifact_digest,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    ArtifactPreflightResultV1.model_validate(payload)
+    assert payload["architecture"] == architecture
+    assert payload["artifact_type"] == artifact_type
+    assert payload["artifact_manifest_sha256"] == artifact_digest
+    assert payload["run_manifest_sha256"] == run_digest
+    assert payload["validation_profile"] == validation_profile
+    assert payload["network_access"] == "none"
+    assert calls == [(architecture, tmp_path, artifact_digest)]
+
+
+def test_cli_prints_artifact_schemas():
+    manifest_result = runner.invoke(app, ["schema", "artifact-manifest"])
+    preflight_result = runner.invoke(app, ["schema", "artifact-preflight"])
+
+    assert manifest_result.exit_code == 0, manifest_result.output
+    assert preflight_result.exit_code == 0, preflight_result.output
+    manifest_schema = json.loads(manifest_result.stdout)
+    preflight_schema = json.loads(preflight_result.stdout)
+    assert manifest_schema["properties"]["schema_version"]["const"] == "ste-artifact-bundle-v1"
+    assert preflight_schema["properties"]["schema_version"]["const"] == "ste-artifact-preflight-v1"
+    assert preflight_schema["properties"]["network_access"]["const"] == "none"
+
+
+def test_decoder_training_cli_reports_retained_staged_bundle_digest(monkeypatch, tmp_path):
+    retained_digest = "a" * 64
+    run_manifest = SimpleNamespace(
+        schema_version="ste-decoder-lora-run-v1",
+        status="completed",
+        optimizer_steps=2,
+        training_losses=(1.0, 0.5),
+        validation_loss=0.25,
+        trainable_parameters=10,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_decoder_training_inputs",
+        lambda config, release: (object(), object()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "run_decoder_lora_training_bundle",
+        lambda *args, **kwargs: SimpleNamespace(
+            run_manifest=run_manifest,
+            artifact_manifest_sha256=retained_digest,
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "train-decoder-lora",
+            str(tmp_path / "config.json"),
+            str(tmp_path / "release"),
+            str(tmp_path / "snapshot"),
+            "b" * 64,
+            str(tmp_path / "output"),
+            "--source-checkout",
+            str(tmp_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["artifact_manifest_sha256"] == retained_digest
+
+
+def test_encoder_training_cli_reports_only_retained_staged_identities(monkeypatch, tmp_path):
+    config = cli_module.load_training_config(
+        ROOT / "data/training/encoder-decoder-schema-example.yaml"
+    )
+    retained_digest = "c" * 64
+
+    class FakeRunManifest:
+        schema_version = "encoder-decoder-run-manifest-v1"
+        optimizer_steps = 2
+        training_config_sha256 = "d" * 64
+
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return {
+                "schema_version": self.schema_version,
+                "optimizer_steps": self.optimizer_steps,
+            }
+
+    run_manifest = FakeRunManifest()
+    monkeypatch.setattr(cli_module, "load_training_config", lambda path: config)
+    monkeypatch.setattr(
+        cli_module,
+        "run_encoder_decoder_training_bundle",
+        lambda *args, **kwargs: SimpleNamespace(
+            run_manifest=run_manifest,
+            artifact_manifest_sha256=retained_digest,
+        ),
+    )
+    monkeypatch.setattr(cli_module, "canonical_run_manifest_json", lambda manifest: b"run\n")
+
+    result = runner.invoke(
+        app,
+        [
+            "train-encoder-decoder",
+            str(tmp_path / "config.json"),
+            str(tmp_path / "release"),
+            "--output",
+            str(tmp_path / "output"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["artifact_manifest_sha256"] == retained_digest
+    assert payload["run_manifest_sha256"] == hashlib.sha256(b"run\n").hexdigest()
 
 
 def test_cli_compiles_raw_source_with_verified_replay_fixture():

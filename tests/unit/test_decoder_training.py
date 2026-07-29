@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -8,6 +9,14 @@ from types import SimpleNamespace
 import pytest
 
 import ste_compiler.training.decoder_lora as decoder_training
+from ste_compiler.artifacts import (
+    ARTIFACT_MANIFEST_NAME,
+    ArtifactFileV1,
+    artifact_manifest_sha256,
+    build_artifact_manifest,
+    canonical_artifact_manifest_json,
+    parse_canonical_artifact_manifest,
+)
 from ste_compiler.realizer import DecoderOnlyLoRASymbolGenerator
 from ste_compiler.realizer.decoder_protocol import (
     DECODER_PROMPT_PROFILE,
@@ -250,3 +259,103 @@ def test_atomic_output_refuses_destination_created_during_staging(tmp_path):
     assert output.is_dir()
     assert not list(output.iterdir())
     assert not list(tmp_path.glob(".output.stage-*"))
+
+
+def test_decoder_bundle_manifest_is_last_and_content_binds_the_complete_run(tmp_path):
+    root = tmp_path / "run"
+    for relative_path in decoder_training.DECODER_CHECKSUM_FILES:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"{relative_path}\n".encode())
+    decoder_training._write_checksums(root)
+
+    digest = decoder_training._write_decoder_artifact_manifest(root)
+
+    assert len(digest) == 64
+    assert decoder_training.decoder_lora_artifact_manifest_sha256(root) == digest
+    manifest_bytes = (root / ARTIFACT_MANIFEST_NAME).read_bytes()
+    manifest = parse_canonical_artifact_manifest(manifest_bytes)
+    assert manifest.architecture == "decoder-only-lora"
+    assert manifest.artifact_type == "decoder-only-lora-run"
+    assert manifest.entrypoint == "adapter"
+    assert {identity.path for identity in manifest.files} == decoder_training.DECODER_BUNDLE_FILES
+    checksum_paths = {
+        line.split("  ", 1)[1] for line in (root / "checksums.sha256").read_text().splitlines()
+    }
+    assert checksum_paths == decoder_training.DECODER_CHECKSUM_FILES
+    assert ARTIFACT_MANIFEST_NAME not in checksum_paths
+
+    payload = json.loads(manifest_bytes)
+    payload["entrypoint"] = "."
+    (root / ARTIFACT_MANIFEST_NAME).write_text(json.dumps(payload))
+    with pytest.raises(DecoderLoRATrainingError, match="artifact manifest"):
+        decoder_training.decoder_lora_artifact_manifest_sha256(root)
+
+
+def test_decoder_checksum_construction_streams_covered_members(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    for relative_path in decoder_training.DECODER_CHECKSUM_FILES:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"{relative_path}\n".encode())
+
+    def reject_read_bytes(self):
+        raise AssertionError(f"checksum construction read all of {self}")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
+
+    checksum_bytes = decoder_training._checksum_bytes(root)
+
+    assert checksum_bytes.count(b"\n") == len(decoder_training.DECODER_CHECKSUM_FILES)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "size_limit"),
+    [
+        ("run-manifest.json", decoder_training.MAX_DECODER_RUN_MANIFEST_BYTES),
+        ("training-config.json", decoder_training.MAX_DECODER_TRAINING_CONFIG_BYTES),
+        ("checksums.sha256", decoder_training.MAX_DECODER_CHECKSUM_BYTES),
+    ],
+)
+def test_decoder_preflight_rejects_oversized_sparse_metadata_before_capture(
+    tmp_path,
+    monkeypatch,
+    relative_path,
+    size_limit,
+):
+    root = tmp_path / "run"
+    identities = []
+    for path_name in sorted(decoder_training.DECODER_BUNDLE_FILES):
+        path = root / path_name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        byte_count = size_limit + 1 if path_name == relative_path else 0
+        with path.open("wb") as file:
+            file.truncate(byte_count)
+        identities.append(
+            ArtifactFileV1(
+                path=path_name,
+                sha256="0" * 64,
+                bytes=byte_count,
+            )
+        )
+    manifest = build_artifact_manifest(
+        architecture="decoder-only-lora",
+        artifact_type="decoder-only-lora-run",
+        entrypoint="adapter",
+        files=tuple(identities),
+    )
+    (root / ARTIFACT_MANIFEST_NAME).write_bytes(canonical_artifact_manifest_json(manifest))
+    monkeypatch.setattr(
+        decoder_training,
+        "_runtime_modules",
+        lambda: pytest.fail("oversized metadata must fail before neural runtime loading"),
+    )
+
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match=rf"oversized file: {relative_path}",
+    ):
+        decoder_training.preflight_decoder_lora_artifact_bundle(
+            root,
+            artifact_manifest_sha256(manifest),
+        )

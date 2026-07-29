@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+import ste_compiler.training.decoder_lora as decoder_training
+
 torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
 pytest.importorskip("peft")
@@ -23,10 +25,12 @@ from ste_compiler.training import (
     evaluate_decoder_lora_adapter,
     load_training_config,
     model_snapshot_manifest_sha256,
+    preflight_decoder_lora_artifact_bundle,
     prepare_decoder_smoke_fixture,
     read_training_release,
     read_verified_model_snapshot,
     run_decoder_lora_training,
+    run_decoder_lora_training_bundle,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -86,8 +90,15 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         lambda: prepare_decoder_smoke_fixture(config, release, model_snapshot)
     )
     snapshot_digest = model_snapshot_manifest_sha256(model_snapshot)
-    first = _call_without_runtime_state_leak(
-        lambda: run_decoder_lora_training(
+    monkeypatch.setattr(
+        decoder_training,
+        "decoder_lora_artifact_manifest_sha256",
+        lambda output: pytest.fail(
+            f"bundle result rediscovered its digest after publication: {output}"
+        ),
+    )
+    first_bundle = _call_without_runtime_state_leak(
+        lambda: run_decoder_lora_training_bundle(
             config,
             release,
             model_snapshot,
@@ -97,6 +108,7 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
             evaluation_command="ste-compiler evaluate-decoder-lora ...",
         )
     )
+    first = first_bundle.run_manifest
     second = _call_without_runtime_state_leak(
         lambda: run_decoder_lora_training(
             config,
@@ -157,6 +169,7 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         "adapter/README.md",
         "adapter/adapter_config.json",
         "adapter/adapter_model.safetensors",
+        "artifact-manifest.json",
         "checksums.sha256",
         "run-manifest.json",
         "training-config.json",
@@ -165,6 +178,13 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         not {path.suffix.casefold() for path in first_output.rglob("*") if path.is_file()}
         & UNSAFE_SUFFIXES
     )
+    first_artifact_digest = first_bundle.artifact_manifest_sha256
+    first_preflight = preflight_decoder_lora_artifact_bundle(
+        first_output,
+        first_artifact_digest,
+    )
+    assert first_preflight.run_manifest == first
+    assert first_preflight.artifact_manifest_sha256 == first_artifact_digest
     assert (
         _call_without_runtime_state_leak(
             lambda: evaluate_decoder_lora_adapter(
@@ -188,6 +208,18 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
         digest, relative = line.split("  ", 1)
         assert digest == _sha256(first_output / relative)
 
+    original_checksums = (first_output / "checksums.sha256").read_bytes()
+    checksum_lines[0] = f"{'0' * 64}  {checksum_lines[0].split('  ', 1)[1]}"
+    (first_output / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n")
+    checksum_mismatch_digest = decoder_training._write_decoder_artifact_manifest(first_output)
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match="checksums are not canonical or complete",
+    ):
+        preflight_decoder_lora_artifact_bundle(first_output, checksum_mismatch_digest)
+    (first_output / "checksums.sha256").write_bytes(original_checksums)
+    assert decoder_training._write_decoder_artifact_manifest(first_output) == first_artifact_digest
+
     linked_adapter = tmp_path / "linked-adapter"
     linked_adapter.symlink_to(first_output / "adapter", target_is_directory=True)
     with pytest.raises(DecoderLoRATrainingError, match="must be a real directory"):
@@ -203,6 +235,11 @@ def test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadabl
     tampered_config = json.loads(adapter_config.read_text())
     tampered_config["r"] = config.lora.rank + 1
     adapter_config.write_text(json.dumps(tampered_config))
+    with pytest.raises(
+        DecoderLoRATrainingError,
+        match="artifact bundle verification failed",
+    ):
+        preflight_decoder_lora_artifact_bundle(first_output, first_artifact_digest)
     with pytest.raises(
         DecoderLoRATrainingError,
         match="does not match training LoRA fields: r",
@@ -345,6 +382,22 @@ def test_installed_wheel_runs_decoder_training_and_evaluation_offline(tmp_path):
         capture_output=True,
         text=True,
     )
+    trained_payload = json.loads(trained.stdout)
+    preflight = subprocess.run(
+        [
+            *command,
+            "preflight-artifact",
+            str(run),
+            "--manifest-sha256",
+            trained_payload["artifact_manifest_sha256"],
+            "--json",
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     evaluated = subprocess.run(
         [
             *command,
@@ -365,8 +418,11 @@ def test_installed_wheel_runs_decoder_training_and_evaluation_offline(tmp_path):
 
     assert json.loads(prepared.stdout)["fixture_profile"] == "tiny-byte-bpe-gpt2-v1"
     assert len(json.loads(prepared.stdout)["manifest_sha256"]) == 64
-    trained_payload = json.loads(trained.stdout)
+    preflight_payload = json.loads(preflight.stdout)
     evaluated_payload = json.loads(evaluated.stdout)
     assert trained_payload["optimizer_steps"] == 2
+    assert preflight_payload["architecture"] == "decoder-only-lora"
+    assert preflight_payload["validation_profile"] == "decoder-adapter-structure-v1"
+    assert preflight_payload["network_access"] == "none"
     assert evaluated_payload["validation_loss"] == trained_payload["validation_loss"]
     assert (run / "adapter/adapter_model.safetensors").is_file()

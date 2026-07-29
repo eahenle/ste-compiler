@@ -6,12 +6,22 @@ from types import SimpleNamespace
 
 import pytest
 
+from ste_compiler.artifacts import (
+    ARTIFACT_MANIFEST_NAME,
+    ArtifactFileV1,
+    artifact_manifest_sha256,
+    build_artifact_manifest,
+    canonical_artifact_manifest_json,
+)
 from ste_compiler.training import (
     EncoderDecoderTrainingConfigV1,
+    encoder_decoder_artifact_manifest_sha256,
     load_training_config,
+    preflight_encoder_decoder_artifact_bundle,
     preflight_encoder_decoder_tokenizer,
     read_training_release,
     run_encoder_decoder_training,
+    run_encoder_decoder_training_bundle,
     verify_safe_encoder_decoder_checkpoint,
 )
 from ste_compiler.training import encoder_decoder as training_module
@@ -156,6 +166,149 @@ def test_safe_checkpoint_rejects_symlink_even_when_target_is_regular(tmp_path):
         verify_safe_encoder_decoder_checkpoint(checkpoint)
 
 
+def test_artifact_digest_discovery_requires_a_manifest(tmp_path):
+    (tmp_path / "config.json").write_text("{}")
+    (tmp_path / "model.safetensors").write_bytes(b"safe weights")
+
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match=f"missing {ARTIFACT_MANIFEST_NAME}",
+    ):
+        encoder_decoder_artifact_manifest_sha256(tmp_path)
+
+
+def test_encoder_artifact_preflight_rejects_other_architecture(tmp_path):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    files = {
+        "adapter/adapter_model.safetensors": b"adapter",
+        "run-manifest.json": b"{}\n",
+    }
+    identities = []
+    for relative_path, data in files.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        identities.append(
+            ArtifactFileV1(
+                path=relative_path,
+                sha256=hashlib.sha256(data).hexdigest(),
+                bytes=len(data),
+            )
+        )
+    manifest = build_artifact_manifest(
+        architecture="decoder-only-lora",
+        artifact_type="decoder-only-lora-run",
+        entrypoint="adapter",
+        files=identities,
+    )
+    (tmp_path / ARTIFACT_MANIFEST_NAME).write_bytes(canonical_artifact_manifest_json(manifest))
+
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="not an encoder-decoder checkpoint",
+    ):
+        preflight_encoder_decoder_artifact_bundle(
+            tmp_path,
+            artifact_manifest_sha256(manifest),
+        )
+
+
+@pytest.mark.parametrize(
+    ("metadata_name", "max_bytes"),
+    [
+        ("run-manifest.json", training_module._MAX_RUN_MANIFEST_BYTES),
+        ("training-config.json", training_module._MAX_TRAINING_CONFIG_BYTES),
+        ("validation-metrics.json", training_module._MAX_VALIDATION_METRICS_BYTES),
+    ],
+)
+def test_encoder_preflight_rejects_oversized_sparse_metadata_before_loading(
+    tmp_path,
+    monkeypatch,
+    metadata_name,
+    max_bytes,
+):
+    files = {
+        "config.json": b"{}\n",
+        "model.safetensors": b"weights",
+        "run-manifest.json": b"{}\n",
+        "training-config.json": b"{}\n",
+        "validation-metrics.json": b"{}\n",
+    }
+    identities = []
+    for relative_path, data in files.items():
+        path = tmp_path / relative_path
+        if relative_path == metadata_name:
+            with path.open("xb") as handle:
+                handle.truncate(max_bytes + 1)
+            sha256 = "0" * 64
+            byte_count = max_bytes + 1
+        else:
+            path.write_bytes(data)
+            sha256 = hashlib.sha256(data).hexdigest()
+            byte_count = len(data)
+        identities.append(
+            ArtifactFileV1(
+                path=relative_path,
+                sha256=sha256,
+                bytes=byte_count,
+            )
+        )
+    manifest = build_artifact_manifest(
+        architecture="encoder-decoder",
+        artifact_type="encoder-decoder-checkpoint",
+        entrypoint=".",
+        files=identities,
+    )
+    (tmp_path / ARTIFACT_MANIFEST_NAME).write_bytes(canonical_artifact_manifest_json(manifest))
+    monkeypatch.setattr(
+        training_module,
+        "_load_neural_runtime",
+        lambda: pytest.fail("oversized metadata must fail before deep loading"),
+    )
+
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match=f"metadata exceeds size limit: {metadata_name}",
+    ):
+        preflight_encoder_decoder_artifact_bundle(
+            tmp_path,
+            artifact_manifest_sha256(manifest),
+        )
+
+
+def test_reload_rejects_nonempty_loading_diagnostics(tmp_path):
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text("{}")
+    (checkpoint / "model.safetensors").write_bytes(b"safe weights")
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return object()
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return object(), {"missing_keys": ["decoder.weight"]}
+
+    transformers = SimpleNamespace(
+        AutoTokenizer=AutoTokenizer,
+        AutoModelForSeq2SeqLM=AutoModel,
+    )
+
+    with pytest.raises(
+        EncoderDecoderTrainingError,
+        match="does not exactly match the model architecture",
+    ):
+        training_module._reload_components(
+            transformers,
+            checkpoint,
+            tmp_path / "private",
+        )
+
+
 def test_snapshot_capture_supports_real_cache_symlinks_and_binds_content(tmp_path):
     blob = tmp_path / "cache" / "blobs" / ("a" * 64)
     blob.parent.mkdir(parents=True)
@@ -285,6 +438,20 @@ def test_trainer_rejects_existing_output_before_loading_optional_runtime(tmp_pat
 
     assert sentinel.read_bytes() == b"unchanged"
     assert set(output.iterdir()) == {sentinel}
+
+
+def test_bundle_trainer_rejects_existing_output_before_loading_optional_runtime(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+
+    with pytest.raises(EncoderDecoderTrainingError, match="must not already exist"):
+        run_encoder_decoder_training_bundle(
+            _config(),
+            RELEASE,
+            output,
+            source_root=ROOT,
+            dependency_lock=ROOT / "uv.lock",
+        )
 
 
 def test_trainer_rejects_unsupported_publication_before_loading_runtime(

@@ -133,8 +133,9 @@ settings. A race-resistant release reader pins the manifest and train/validation
 the complete release, and rebuilds every deterministic training target before exposing immutable
 split records. Both tracks now include deterministic offline two-step CPU mechanics trainers,
 full-corpus tokenizer and overflow preflight, atomic safetensors-only output, runtime-derived run
-manifests, reload evaluation, CLI, CI, and installed-wheel coverage. Safe resume state, public
-model selection, measured reference runs, and published prediction hashes remain.
+manifests, canonical content-bound bundle manifests, hardened standalone preflight, reload
+evaluation, CLI, CI, and installed-wheel coverage. Safe resume state, public model selection,
+measured reference runs, and published prediction hashes remain.
 
 ### Shared deliverables
 
@@ -194,9 +195,9 @@ Every run records:
 Status: in progress. Strict `ste-realizer-config-v1` files now select deterministic,
 encoder-decoder, and decoder-only LoRA realization for `compile` and the offline replay
 `compile-source` workflow. Neural CLI inference is cache-only and retains immutable Hub commit
-identities in provenance. Explicit fetch, standalone artifact preflight, direct
-content-addressed loading of unpublished trainer outputs, and published reference configurations
-remain.
+identities in provenance. Standalone artifact preflight now verifies complete local trainer
+outputs against externally retained digests. Explicit fetch, direct content-addressed runtime
+loading of those outputs, and published reference configurations remain.
 
 ### Deliverables
 

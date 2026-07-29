@@ -58,8 +58,7 @@ The existing neural loaders continue to:
 - retain the exact model and adapter identities in realization metadata.
 
 An operator must prepare the approved immutable revisions in the Hugging Face cache before running
-these commands. Explicit artifact fetching and project-managed artifact verification are follow-up
-work; there is intentionally no implicit download mode hidden inside `compile`.
+these commands. There is intentionally no implicit download mode hidden inside `compile`.
 
 Install the optional runtime dependencies, then pass the reviewed configuration to an IR compile:
 
@@ -97,10 +96,15 @@ never bypasses validation.
 
 ## Relationship to training artifacts
 
-The two smoke trainers prove offline mechanics, safe serialization, run-manifest provenance, and
-reload evaluation. Their generated local checkpoints are test artifacts, not automatically
-authorized runtime inputs. This slice deliberately continues to reject arbitrary local model
-paths.
+The two smoke trainers prove offline mechanics, safe serialization, run-manifest provenance,
+content-bound bundle preflight, and reload evaluation. Their generated local checkpoints are test
+artifacts, not automatically authorized runtime inputs. Runtime selection deliberately continues
+to reject arbitrary local model paths.
+
+`ste-compiler preflight-artifact` verifies a trainer output against an externally retained
+`artifact-manifest.json` SHA-256. It performs an exact private capture and architecture-specific
+loadability checks without network access. This standalone preflight does not make the bundle a
+runtime input and does not establish license authorization or model quality.
 
 Promoting a training result to a runtime artifact requires a separate publication step that assigns
 an immutable repository revision, records checksums and licensing, and produces a reviewed realizer
@@ -112,12 +116,12 @@ configuration. Direct content-addressed loading of local trainer outputs is not 
 This slice does not provide:
 
 - a network-enabled fetch command;
-- a content-digest artifact registry or standalone preflight command;
+- a content-digest artifact registry;
 - direct inference from an unpublished local training-output directory;
 - selected or published reference checkpoints;
 - benchmark predictions, constrained/unconstrained comparisons, figures, or quality claims; or
 - a live semantic frontend.
 
-The next artifact slice can add explicit fetch, verification, and preflight around the stable
-realizer-configuration identity. Reference model selection, artifact publication, and benchmark
-reproduction remain later release gates.
+The next artifact slice can connect verified local bundles to a distinct content-addressed runtime
+configuration without weakening the existing Hub-only identities. Explicit fetch, reference model
+selection, artifact publication, and benchmark reproduction remain later release gates.

@@ -90,6 +90,9 @@ writes a safetensors-only atomic checkpoint plus a runtime-derived run manifest,
 checkpoint for validation-loss evaluation. The checked-in training configuration is a schema
 example, not a selected public model or a runnable quality result. See the
 [reproducible training guide](docs/training.md) for the command and artifact contract.
+Both trainers also emit a canonical `artifact-manifest.json` that binds the complete output tree.
+Retain the SHA-256 reported by training and use `ste-compiler preflight-artifact` to verify and
+privately re-capture the exact bundle before publication or consumption.
 
 ## Offline realizer selection
 
@@ -117,6 +120,20 @@ Omit `--realizer-config` to retain deterministic behavior. See the
 [typed offline neural runtime guide](docs/neural-runtime.md) for the configuration and trust
 boundary. Explicit artifact fetching, direct use of unpublished local trainer outputs, published
 checkpoints, and benchmark results are later slices.
+
+Local training outputs can be checked independently of runtime selection:
+
+```bash
+ste-compiler preflight-artifact path/to/training-output \
+  --manifest-sha256 <sha256-reported-by-training> \
+  --json
+```
+
+Preflight is offline and fail-closed. It requires an externally retained digest because trusting a
+manifest found only beside the files would be self-attestation. Encoder checkpoints must reload
+exactly through local-only, safetensors-only Transformers diagnostics; decoder runs must contain a
+canonical, compatible, nonempty PEFT adapter. Preflight proves identity and loadability, not model
+quality, license authorization, or suitability for deployment.
 
 ## Extension points
 

@@ -36,5 +36,12 @@ dataset releases, and model artifacts as untrusted. Expected protections include
 exact source provenance, allowlisted symbolic output, independent validation, immutable artifact
 identities, offline model loading, and safetensors-only neural outputs.
 
+Local training outputs use a canonical bundle manifest, but the colocated manifest is not a trust
+root. Verification requires its SHA-256 from an external release record or other reviewed channel.
+The verifier rejects links, special files, unexpected entries, content substitution, and mutation
+during descriptor-relative capture before framework parsers see a private copy. A successful
+preflight proves integrity relative to that digest; it does not prove who authorized the digest,
+artifact licensing, or semantic quality.
+
 This prototype is not certified for safety-critical use and does not claim ASD-STE100 compliance.
 Passing its validators is not a substitute for technical review.
