@@ -148,6 +148,7 @@ def test_cli_rejects_ambiguous_realizer_selectors_without_traceback():
             "--realizer-config",
             str(ROOT / "data/realizers/deterministic.yaml"),
         ],
+        color=False,
     )
 
     assert result.exit_code == 2
