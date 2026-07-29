@@ -88,6 +88,35 @@ print(len(release.train), len(release.validation))
 allowed symbol inventory. Trainers may seed and shuffle their own training view; they must not
 mutate or reinterpret the released ordering.
 
+## Content-bound artifact bundles
+
+Both trainers publish `artifact-manifest.json` as the final file in the staged output and verify it
+before the atomic rename. The canonical `ste-artifact-bundle-v1` manifest records the architecture,
+artifact type, intended use, entrypoint, run-manifest digest, and the sorted SHA-256 and byte size
+of every other file. It does not contain its own digest. Training reports that digest separately;
+retain it with the run record.
+
+Verify a relocated or copied output with the external digest:
+
+```bash
+ste-compiler preflight-artifact path/to/training-output \
+  --manifest-sha256 <sha256-reported-by-training> \
+  --json
+```
+
+The verifier opens the root and descendants through POSIX directory descriptors, refuses links and
+non-regular entries, bounds all reads, detects changes during capture, requires the exact declared
+tree, and hashes into a private temporary materialization. Architecture-specific parsing happens
+only against that private copy. Encoder preflight performs an exact local-only Transformers reload
+with safetensors and loading diagnostics. Decoder preflight validates the complete
+run/config/checksum relationship plus PEFT configuration and nonempty adapter safetensors; it does
+not claim that the separately authorized base model is present.
+
+Successful JSON conforms to `ste-compiler schema artifact-preflight`; the bundle format conforms to
+`ste-compiler schema artifact-manifest`. Preflight never downloads artifacts. It proves content
+identity and mechanics loadability, not authenticity of the external digest, licensing, semantic
+quality, or benchmark performance.
+
 ## Decoder-only LoRA smoke run
 
 Install the optional neural dependencies. The versioned demonstration corpus is already checked in
@@ -135,11 +164,13 @@ validation, test, and adversarial example. Any example that exceeds the configur
 fails instead of truncating.
 
 The output directory must not already exist. Publication uses a private sibling staging directory,
-file and directory synchronization, and one atomic rename. The final artifact set is:
+file and directory synchronization, bundle preflight, and one atomic rename. The final artifact
+set is:
 
 - `adapter/adapter_model.safetensors`, `adapter_config.json`, and a smoke-only model card;
-- canonical `training-config.json` and `run-manifest.json`; and
-- `checksums.sha256` covering every other output file.
+- canonical `training-config.json` and `run-manifest.json`;
+- `checksums.sha256` covering every other pre-manifest output file; and
+- canonical `artifact-manifest.json` binding the complete preceding tree.
 
 The run manifest derives the package commit and dirty state from `--source-checkout`, hashes its
 `uv.lock`, records the complete installed-distribution inventory, corpus and model-snapshot
@@ -199,9 +230,10 @@ reload boundary with fewer moving parts than an adapter. It is a pipeline check,
 model quality.
 
 The output directory is staged beside its final destination, synchronized, and renamed only after
-training, saving, reload, and validation-loss evaluation succeed. An existing destination is never
-overwritten. Only safetensors model weights are allowed; pickle-capable suffixes, symlinks,
-non-regular files, and multiply linked files fail closed. `run-manifest.json` records canonical
+training, saving, reload, validation-loss evaluation, and artifact-bundle preflight succeed. An
+existing destination is never overwritten. Only safetensors model weights are allowed;
+pickle-capable suffixes, symlinks, non-regular files, and multiply linked files fail closed.
+`run-manifest.json` records canonical
 configuration and corpus identities, the complete base/tokenizer snapshot inventory,
 runtime-derived package provenance, the complete installed-distribution inventory, lock-file hash,
 optimizer and loss history,
@@ -220,7 +252,8 @@ ste-compiler evaluate-encoder-decoder-checkpoint \
   --json
 ```
 
-Retain the externally reported run-manifest digest with the checkpoint publication record.
+Retain both externally reported run-manifest and artifact-manifest digests with the checkpoint
+publication record.
 Evaluation requires that digest, stable-reads the complete checkpoint through no-follow directory
 handles into a private materialization, rechecks all internal configuration, corpus, training,
 snapshot, package, metric, and output identities, then loads only the private safetensors capture.

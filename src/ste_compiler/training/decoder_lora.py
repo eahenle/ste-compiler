@@ -13,7 +13,6 @@ import os
 import platform
 import random
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -28,6 +27,22 @@ from typing import Any, Final, Literal, Protocol, SupportsIndex, cast
 
 from pydantic import Field, FiniteFloat
 
+from ste_compiler.artifacts import (
+    ARTIFACT_MANIFEST_NAME,
+    MAX_ARTIFACT_FILES,
+    MAX_ARTIFACT_MANIFEST_BYTES,
+    MAX_ARTIFACT_PATH_DEPTH,
+    ArtifactBundleManifestV1,
+    ArtifactFileV1,
+    ArtifactVerificationError,
+    VerifiedArtifactBundle,
+    artifact_manifest_sha256,
+    build_artifact_manifest,
+    canonical_artifact_manifest_json,
+    open_verified_artifact_bundle,
+    parse_canonical_artifact_manifest,
+    verify_artifact_bundle,
+)
 from ste_compiler.realizer.decoder_protocol import (
     DECODER_PROMPT_PROFILE,
     DecoderProtocolError,
@@ -57,6 +72,9 @@ MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024
 MAX_ADAPTER_METADATA_BYTES = 1024 * 1024
 MAX_ADAPTER_WEIGHTS_BYTES = 64 * 1024 * 1024
 MAX_ADAPTER_BYTES = 66 * 1024 * 1024
+MAX_DECODER_RUN_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_DECODER_TRAINING_CONFIG_BYTES = 256 * 1024
+MAX_DECODER_CHECKSUM_BYTES = 64 * 1024
 SAFE_MODEL_SUFFIXES = frozenset(
     {
         ".codes",
@@ -87,6 +105,29 @@ UNSAFE_ARTIFACT_SUFFIXES = frozenset(
 )
 _COMMIT = re.compile(r"[0-9a-f]{40}", re.ASCII)
 _SHA256 = re.compile(r"[0-9a-f]{64}", re.ASCII)
+_LORA_WEIGHT_KEY = re.compile(
+    r"^(?P<module>.+)\.lora_(?P<side>[AB])\.weight$",
+    re.ASCII,
+)
+DECODER_BUNDLE_FILES: Final = frozenset(
+    {
+        "adapter/README.md",
+        "adapter/adapter_config.json",
+        "adapter/adapter_model.safetensors",
+        "checksums.sha256",
+        "run-manifest.json",
+        "training-config.json",
+    }
+)
+DECODER_CHECKSUM_FILES: Final = DECODER_BUNDLE_FILES - {"checksums.sha256"}
+DECODER_BUNDLE_FILE_LIMITS: Final = {
+    "adapter/README.md": MAX_ADAPTER_METADATA_BYTES,
+    "adapter/adapter_config.json": MAX_ADAPTER_METADATA_BYTES,
+    "adapter/adapter_model.safetensors": MAX_ADAPTER_WEIGHTS_BYTES,
+    "checksums.sha256": MAX_DECODER_CHECKSUM_BYTES,
+    "run-manifest.json": MAX_DECODER_RUN_MANIFEST_BYTES,
+    "training-config.json": MAX_DECODER_TRAINING_CONFIG_BYTES,
+}
 
 
 class DecoderLoRATrainingError(RuntimeError):
@@ -195,6 +236,22 @@ class RuntimeModules:
     safetensors: Any
 
 
+@dataclass(frozen=True)
+class DecoderLoRAArtifactPreflight:
+    """Verified decoder bundle identity and its architecture-specific run manifest."""
+
+    run_manifest: DecoderLoRARunManifestV1
+    artifact_manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class DecoderLoRATrainingBundleResult:
+    """A completed run and the exact bundle identity verified before publication."""
+
+    run_manifest: DecoderLoRARunManifestV1
+    artifact_manifest_sha256: str
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -210,6 +267,14 @@ def _canonical_json(value: object, *, indent: int | None = None) -> bytes:
         )
         + "\n"
     ).encode()
+
+
+def canonical_decoder_lora_run_manifest_json(
+    manifest: DecoderLoRARunManifestV1,
+) -> bytes:
+    """Return the stable on-disk representation of one decoder training run."""
+
+    return _canonical_json(manifest.model_dump(mode="json"), indent=2)
 
 
 def _artifact(path: str, data: bytes) -> ArtifactDigestV1:
@@ -549,9 +614,135 @@ def _fsync_tree(root: Path) -> None:
             os.close(descriptor)
 
 
+@dataclass(frozen=True)
+class _PinnedOutputDirectory:
+    descriptor: int
+    device: int
+    inode: int
+
+
+def _open_pinned_output_directory(directory: Path) -> _PinnedOutputDirectory:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        metadata = os.fstat(descriptor)
+    except OSError as error:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise DecoderLoRATrainingError(f"cannot pin staged training output: {directory}") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        os.close(descriptor)
+        raise DecoderLoRATrainingError(
+            f"staged training output must be a real directory: {directory}"
+        )
+    return _PinnedOutputDirectory(
+        descriptor=descriptor,
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+    )
+
+
+def _assert_pinned_output_directory(
+    directory: Path,
+    pinned: _PinnedOutputDirectory,
+    *,
+    operation: str,
+) -> None:
+    try:
+        descriptor_metadata = os.fstat(pinned.descriptor)
+        path_metadata = os.stat(directory, follow_symlinks=False)
+    except OSError as error:
+        raise DecoderLoRATrainingError(
+            f"training output changed during {operation}: {directory}"
+        ) from error
+    expected_identity = (pinned.device, pinned.inode)
+    if (
+        not stat.S_ISDIR(descriptor_metadata.st_mode)
+        or not stat.S_ISDIR(path_metadata.st_mode)
+        or (descriptor_metadata.st_dev, descriptor_metadata.st_ino) != expected_identity
+        or (path_metadata.st_dev, path_metadata.st_ino) != expected_identity
+    ):
+        raise DecoderLoRATrainingError(f"training output changed during {operation}: {directory}")
+
+
+def _remove_invalid_pinned_output(
+    output: Path,
+    pinned: _PinnedOutputDirectory,
+) -> None:
+    """Remove a failed publication only while its directory identity remains pinned."""
+
+    _assert_pinned_output_directory(
+        output,
+        pinned,
+        operation="invalid artifact cleanup",
+    )
+    remaining_entries = (MAX_ARTIFACT_FILES + 1) * (MAX_ARTIFACT_PATH_DEPTH + 1)
+    _clear_pinned_directory(pinned.descriptor, [remaining_entries])
+    parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        path_metadata = os.stat(output.name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(path_metadata.st_mode) or (
+            path_metadata.st_dev,
+            path_metadata.st_ino,
+        ) != (pinned.device, pinned.inode):
+            raise DecoderLoRATrainingError(
+                f"training output changed during invalid artifact cleanup: {output}"
+            )
+        os.rmdir(output.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _clear_pinned_directory(directory_fd: int, remaining_entries: list[int]) -> None:
+    """Delete entries relative to an already pinned directory, never through a path."""
+
+    while True:
+        try:
+            with os.scandir(directory_fd) as entries:
+                entry = next(entries, None)
+        except OSError as error:
+            raise DecoderLoRATrainingError(
+                "cannot enumerate invalid pinned artifact output"
+            ) from error
+        if entry is None:
+            return
+        if remaining_entries[0] <= 0:
+            raise DecoderLoRATrainingError(
+                "invalid pinned artifact output exceeds the cleanup entry limit"
+            )
+        remaining_entries[0] -= 1
+        name = entry.name
+        try:
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if stat.S_ISDIR(metadata.st_mode):
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    _clear_pinned_directory(child_fd, remaining_entries)
+                finally:
+                    os.close(child_fd)
+                os.rmdir(name, dir_fd=directory_fd)
+            else:
+                os.unlink(name, dir_fd=directory_fd)
+        except OSError as error:
+            raise DecoderLoRATrainingError(
+                "cannot remove invalid pinned artifact output"
+            ) from error
+
+
 def _atomic_output_directory(
     output: Path,
     builder: Callable[[Path], Any],
+    *,
+    verify_staged: Callable[[Path, Any], None] | None = None,
+    verify_published: Callable[[Path, Any], None] | None = None,
 ) -> Any:
     if output.exists() or output.is_symlink():
         raise DecoderLoRATrainingError(f"output path already exists: {output}")
@@ -559,20 +750,51 @@ def _atomic_output_directory(
     if not parent.is_dir() or parent.is_symlink():
         raise DecoderLoRATrainingError(f"output parent must be a real directory: {parent}")
     stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.stage-", dir=parent))
+    pinned_stage: _PinnedOutputDirectory | None = None
+    published = False
     try:
+        pinned_stage = _open_pinned_output_directory(stage)
         result = builder(stage)
+        _assert_pinned_output_directory(
+            stage,
+            pinned_stage,
+            operation="staged artifact verification",
+        )
         _fsync_tree(stage)
+        if verify_staged is not None:
+            verify_staged(stage, result)
+        _assert_pinned_output_directory(
+            stage,
+            pinned_stage,
+            operation="staged artifact publication",
+        )
         _rename_no_replace(stage, output)
+        published = True
+        _assert_pinned_output_directory(
+            output,
+            pinned_stage,
+            operation="atomic artifact publication",
+        )
         parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             os.fsync(parent_fd)
         finally:
             os.close(parent_fd)
+        if verify_published is not None:
+            verify_published(output, result)
+            _assert_pinned_output_directory(
+                output,
+                pinned_stage,
+                operation="published artifact verification",
+            )
         return result
     except BaseException:
-        if stage.exists():
-            shutil.rmtree(stage)
+        if pinned_stage is not None:
+            _remove_invalid_pinned_output(output if published else stage, pinned_stage)
         raise
+    finally:
+        if pinned_stage is not None:
+            os.close(pinned_stage.descriptor)
 
 
 def _snapshot_artifacts(directory: Path) -> tuple[ArtifactDigestV1, ...]:
@@ -921,13 +1143,103 @@ def _validate_saved_adapter(
                 device="cpu",
             ) as weights,
         ):
-            if not list(weights.keys()):
-                raise DecoderLoRATrainingError("saved adapter safetensors contain no tensors")
+            _validate_lora_safetensors_state_dict(weights, config)
     except DecoderLoRATrainingError:
         raise
     except Exception as error:
         raise DecoderLoRATrainingError("saved adapter safetensors are invalid") from error
     return files
+
+
+def _validate_lora_safetensors_state_dict(
+    weights: Any,
+    config: DecoderOnlyLoRATrainingConfigV1,
+) -> None:
+    """Require exact, paired LoRA matrices for every configured target-module family."""
+
+    keys = tuple(sorted(cast(Sequence[str], weights.keys())))
+    if not keys:
+        raise DecoderLoRATrainingError("saved adapter safetensors contain no tensors")
+
+    pairs: dict[str, dict[str, tuple[int, ...]]] = {}
+    invalid_keys: list[str] = []
+    invalid_shapes: list[str] = []
+    for key in keys:
+        match = _LORA_WEIGHT_KEY.fullmatch(key)
+        if match is None:
+            invalid_keys.append(key)
+            continue
+        module_name = match.group("module")
+        side = match.group("side")
+        raw_shape = weights.get_slice(key).get_shape()
+        try:
+            shape = tuple(index(cast(SupportsIndex, dimension)) for dimension in raw_shape)
+        except TypeError:
+            invalid_shapes.append(key)
+            continue
+        if len(shape) != 2 or any(dimension <= 0 for dimension in shape):
+            invalid_shapes.append(key)
+            continue
+        pairs.setdefault(module_name, {})[side] = shape
+
+    if invalid_keys:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors contain invalid LoRA state-dict keys: "
+            + ", ".join(invalid_keys)
+        )
+    if invalid_shapes:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors contain invalid LoRA matrix shapes: "
+            + ", ".join(invalid_shapes)
+        )
+
+    incomplete = [
+        f"{module_name} (missing {''.join(sorted({'A', 'B'} - set(sides)))})"
+        for module_name, sides in sorted(pairs.items())
+        if set(sides) != {"A", "B"}
+    ]
+    if incomplete:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors must contain complete LoRA A/B pairs: "
+            + ", ".join(incomplete)
+        )
+
+    rank = config.lora.rank
+    rank_mismatches = [
+        module_name
+        for module_name, sides in sorted(pairs.items())
+        if sides["A"][0] != rank or sides["B"][1] != rank
+    ]
+    if rank_mismatches:
+        raise DecoderLoRATrainingError(
+            f"saved adapter LoRA A/B matrix shapes do not match configured rank {rank}: "
+            + ", ".join(rank_mismatches)
+        )
+
+    target_modules = config.lora.target_modules
+    matched_targets: set[str] = set()
+    unexpected_modules: list[str] = []
+    for module_name in sorted(pairs):
+        matches = {
+            target
+            for target in target_modules
+            if module_name == target or module_name.endswith(f".{target}")
+        }
+        if not matches:
+            unexpected_modules.append(module_name)
+        matched_targets.update(matches)
+    if unexpected_modules:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors contain LoRA weights outside configured target_modules: "
+            + ", ".join(unexpected_modules)
+        )
+
+    missing_targets = sorted(set(target_modules) - matched_targets)
+    if missing_targets:
+        raise DecoderLoRATrainingError(
+            "saved adapter safetensors do not represent configured target_modules: "
+            + ", ".join(missing_targets)
+        )
 
 
 def _package_tree_sha256(package_root: Path) -> str:
@@ -1067,16 +1379,261 @@ def _model_card(
     ).encode()
 
 
+def _stat_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _stream_bundle_file(
+    root: Path,
+    relative_path: str,
+    *,
+    capture: bool,
+) -> tuple[str, int, bytes | None]:
+    path = root / relative_path
+    max_bytes = DECODER_BUNDLE_FILE_LIMITS[relative_path]
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+    try:
+        file_fd = os.open(path, flags)
+    except OSError as error:
+        raise DecoderLoRATrainingError(
+            f"cannot safely open decoder bundle file: {relative_path}"
+        ) from error
+    digest = hashlib.sha256()
+    chunks: list[bytes] | None = [] if capture else None
+    byte_count = 0
+    try:
+        before = os.fstat(file_fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise DecoderLoRATrainingError(
+                f"decoder bundle file must be a single-link regular file: {relative_path}"
+            )
+        if before.st_size > max_bytes:
+            raise DecoderLoRATrainingError(
+                f"decoder bundle file exceeds its size limit: {relative_path}"
+            )
+        while True:
+            chunk = os.read(file_fd, min(1024 * 1024, max_bytes + 1 - byte_count))
+            if not chunk:
+                break
+            byte_count += len(chunk)
+            if byte_count > max_bytes:
+                raise DecoderLoRATrainingError(
+                    f"decoder bundle file exceeds its size limit: {relative_path}"
+                )
+            digest.update(chunk)
+            if chunks is not None:
+                chunks.append(chunk)
+        after = os.fstat(file_fd)
+    except OSError as error:
+        raise DecoderLoRATrainingError(
+            f"cannot safely read decoder bundle file: {relative_path}"
+        ) from error
+    finally:
+        os.close(file_fd)
+    if byte_count != before.st_size or _stat_identity(before) != _stat_identity(after):
+        raise DecoderLoRATrainingError(f"decoder bundle file changed while read: {relative_path}")
+    return (
+        digest.hexdigest(),
+        byte_count,
+        b"".join(chunks) if chunks is not None else None,
+    )
+
+
+def _bounded_bundle_bytes(root: Path, relative_path: str) -> bytes:
+    _, _, data = _stream_bundle_file(root, relative_path, capture=True)
+    if data is None:  # pragma: no cover - capture=True is an internal invariant.
+        raise AssertionError("captured decoder bundle bytes are unavailable")
+    return data
+
+
+def _checksum_bytes(root: Path) -> bytes:
+    lines = []
+    for relative_path in sorted(DECODER_CHECKSUM_FILES):
+        digest, _, _ = _stream_bundle_file(root, relative_path, capture=False)
+        lines.append(f"{digest}  {relative_path}\n")
+    return "".join(lines).encode("utf-8")
+
+
 def _write_checksums(root: Path) -> None:
-    files = [
-        path
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and path.name != "checksums.sha256"
-    ]
-    lines = [
-        f"{_sha256(path.read_bytes())}  {path.relative_to(root).as_posix()}\n" for path in files
-    ]
-    _write_bytes(root / "checksums.sha256", "".join(lines).encode("utf-8"))
+    _write_bytes(root / "checksums.sha256", _checksum_bytes(root))
+
+
+def _decoder_bundle_file_identities(root: Path) -> tuple[ArtifactFileV1, ...]:
+    identities: list[ArtifactFileV1] = []
+    for relative_path in sorted(DECODER_BUNDLE_FILES):
+        digest, byte_count, _ = _stream_bundle_file(root, relative_path, capture=False)
+        identities.append(
+            ArtifactFileV1(
+                path=relative_path,
+                sha256=digest,
+                bytes=byte_count,
+            )
+        )
+    return tuple(identities)
+
+
+def _write_decoder_artifact_manifest(root: Path) -> str:
+    manifest = build_artifact_manifest(
+        architecture="decoder-only-lora",
+        artifact_type="decoder-only-lora-run",
+        entrypoint="adapter",
+        files=_decoder_bundle_file_identities(root),
+    )
+    manifest_bytes = canonical_artifact_manifest_json(manifest)
+    _write_bytes(root / ARTIFACT_MANIFEST_NAME, manifest_bytes)
+    return artifact_manifest_sha256(manifest)
+
+
+def _read_decoder_artifact_manifest(
+    root: Path,
+    expected_manifest_sha256: str | None = None,
+) -> tuple[ArtifactBundleManifestV1, str]:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        directory_fd = os.open(root, flags)
+    except OSError as error:
+        raise DecoderLoRATrainingError(
+            f"decoder artifact root must be a real directory: {root}"
+        ) from error
+    try:
+        manifest_bytes = _read_regular_file(
+            directory_fd,
+            ARTIFACT_MANIFEST_NAME,
+            max_bytes=MAX_ARTIFACT_MANIFEST_BYTES,
+        )
+    finally:
+        os.close(directory_fd)
+    try:
+        manifest = parse_canonical_artifact_manifest(manifest_bytes)
+    except ArtifactVerificationError as error:
+        raise DecoderLoRATrainingError(str(error)) from error
+    observed_digest = _sha256(manifest_bytes)
+    if expected_manifest_sha256 is not None:
+        if _SHA256.fullmatch(expected_manifest_sha256) is None:
+            raise DecoderLoRATrainingError(
+                "artifact manifest SHA-256 must be 64 lowercase hexadecimal characters"
+            )
+        if observed_digest != expected_manifest_sha256:
+            raise DecoderLoRATrainingError("artifact manifest SHA-256 does not match")
+    if (
+        manifest.architecture != "decoder-only-lora"
+        or manifest.artifact_type != "decoder-only-lora-run"
+        or manifest.entrypoint != "adapter"
+    ):
+        raise DecoderLoRATrainingError("artifact manifest is not a decoder-only LoRA run")
+    if {identity.path for identity in manifest.files} != DECODER_BUNDLE_FILES:
+        raise DecoderLoRATrainingError(
+            "decoder artifact bundle does not contain the exact required file inventory"
+        )
+    oversized = sorted(
+        identity.path
+        for identity in manifest.files
+        if identity.bytes > DECODER_BUNDLE_FILE_LIMITS[identity.path]
+    )
+    if oversized:
+        raise DecoderLoRATrainingError(
+            "decoder artifact manifest declares an oversized file: " + ", ".join(oversized)
+        )
+    return manifest, observed_digest
+
+
+def decoder_lora_artifact_manifest_sha256(root: Path) -> str:
+    """Rediscover the canonical decoder bundle identity from a published output."""
+
+    _, digest = _read_decoder_artifact_manifest(root)
+    return digest
+
+
+def _parse_decoder_run_manifest(path: Path) -> DecoderLoRARunManifestV1:
+    root = path.parent
+    try:
+        data = _bounded_bundle_bytes(root, path.name)
+        manifest = DecoderLoRARunManifestV1.model_validate_json(data)
+    except ValueError as error:
+        raise DecoderLoRATrainingError(f"decoder run manifest is invalid: {error}") from error
+    if data != canonical_decoder_lora_run_manifest_json(manifest):
+        raise DecoderLoRATrainingError("decoder run manifest is not canonical JSON")
+    return manifest
+
+
+def _preflight_verified_decoder_bundle(
+    verified: VerifiedArtifactBundle,
+    modules: RuntimeModules,
+) -> DecoderLoRAArtifactPreflight:
+    bundle_manifest = verified.manifest
+    if (
+        bundle_manifest.architecture != "decoder-only-lora"
+        or bundle_manifest.artifact_type != "decoder-only-lora-run"
+        or bundle_manifest.entrypoint != "adapter"
+    ):
+        raise DecoderLoRATrainingError("artifact bundle is not a decoder-only LoRA run")
+    if {identity.path for identity in bundle_manifest.files} != DECODER_BUNDLE_FILES:
+        raise DecoderLoRATrainingError(
+            "decoder artifact bundle does not contain the exact required file inventory"
+        )
+    if any(
+        identity.bytes > DECODER_BUNDLE_FILE_LIMITS[identity.path]
+        for identity in bundle_manifest.files
+    ):
+        raise DecoderLoRATrainingError(
+            "decoder artifact bundle contains metadata or weights beyond its size limits"
+        )
+
+    run_manifest = _parse_decoder_run_manifest(verified.path / "run-manifest.json")
+    config = run_manifest.training_config
+    training_config_bytes = _bounded_bundle_bytes(verified.path, "training-config.json")
+    if training_config_bytes != canonical_training_config_json(
+        config
+    ) or run_manifest.training_config_sha256 != training_config_sha256(config):
+        raise DecoderLoRATrainingError(
+            "decoder artifact training configuration identity does not match"
+        )
+    if (
+        run_manifest.prompt_profile != config.prompt_profile
+        or run_manifest.optimizer_steps != config.max_steps
+        or len(run_manifest.training_losses) != config.max_steps
+    ):
+        raise DecoderLoRATrainingError(
+            "decoder run manifest is inconsistent with its configuration"
+        )
+
+    adapter_files = _validate_saved_adapter(verified.path / "adapter", config, modules)
+    expected_outputs = tuple(_artifact(f"adapter/{name}", data) for name, data in adapter_files) + (
+        _artifact("training-config.json", training_config_bytes),
+    )
+    if run_manifest.output_artifacts != expected_outputs:
+        raise DecoderLoRATrainingError(
+            "decoder run manifest output inventory does not match the artifact bundle"
+        )
+    if _bounded_bundle_bytes(verified.path, "checksums.sha256") != _checksum_bytes(verified.path):
+        raise DecoderLoRATrainingError("decoder artifact checksums are not canonical or complete")
+    return DecoderLoRAArtifactPreflight(
+        run_manifest=run_manifest,
+        artifact_manifest_sha256=verified.manifest_sha256,
+    )
+
+
+def preflight_decoder_lora_artifact_bundle(
+    root: Path,
+    expected_manifest_sha256: str,
+) -> DecoderLoRAArtifactPreflight:
+    """Verify and preflight one complete content-addressed decoder training output."""
+
+    try:
+        _read_decoder_artifact_manifest(root, expected_manifest_sha256)
+        with open_verified_artifact_bundle(root, expected_manifest_sha256) as verified:
+            return _preflight_verified_decoder_bundle(verified, _runtime_modules())
+    except ArtifactVerificationError as error:
+        raise DecoderLoRATrainingError(
+            f"decoder artifact bundle verification failed: {error}"
+        ) from error
 
 
 def evaluate_decoder_lora_adapter(
@@ -1121,7 +1678,7 @@ def evaluate_decoder_lora_adapter(
         )
 
 
-def run_decoder_lora_training(
+def run_decoder_lora_training_bundle(
     config: DecoderOnlyLoRATrainingConfigV1,
     release: TrainingReleaseSnapshot,
     model_snapshot: Path,
@@ -1130,8 +1687,8 @@ def run_decoder_lora_training(
     *,
     source_checkout: Path,
     evaluation_command: str,
-) -> DecoderLoRARunManifestV1:
-    """Run deterministic manual LoRA training and atomically publish a safe adapter."""
+) -> DecoderLoRATrainingBundleResult:
+    """Train and return the exact bundle identity verified before atomic publication."""
 
     if config.prompt_profile != DECODER_PROMPT_PROFILE:
         raise DecoderLoRATrainingError(
@@ -1149,7 +1706,7 @@ def run_decoder_lora_training(
     dependencies = _dependency_versions()
     started = time.perf_counter()
 
-    def build(stage: Path) -> DecoderLoRARunManifestV1:
+    def build(stage: Path) -> DecoderLoRATrainingBundleResult:
         with _materialized_snapshot(verified_snapshot) as snapshot_path:
             tokenizer, base_model = _load_tokenizer_and_base(modules, snapshot_path)
             _preflight_release(release, tokenizer, config)
@@ -1254,7 +1811,8 @@ def run_decoder_lora_training(
                 torch=torch,
             )
 
-        _write_bytes(stage / "training-config.json", canonical_training_config_json(config))
+        training_config_bytes = canonical_training_config_json(config)
+        _write_bytes(stage / "training-config.json", training_config_bytes)
         output_artifacts = tuple(
             _artifact(
                 f"adapter/{name}",
@@ -1264,7 +1822,7 @@ def run_decoder_lora_training(
         ) + (
             _artifact(
                 "training-config.json",
-                (stage / "training-config.json").read_bytes(),
+                training_config_bytes,
             ),
         )
         duration_seconds = round(time.perf_counter() - started, 6)
@@ -1296,10 +1854,81 @@ def run_decoder_lora_training(
         )
         _write_bytes(
             stage / "run-manifest.json",
-            _canonical_json(manifest.model_dump(mode="json"), indent=2),
+            canonical_decoder_lora_run_manifest_json(manifest),
         )
         _write_checksums(stage)
-        return manifest
+        artifact_digest = _write_decoder_artifact_manifest(stage)
+        return DecoderLoRATrainingBundleResult(
+            run_manifest=manifest,
+            artifact_manifest_sha256=artifact_digest,
+        )
+
+    def verify_staged(
+        staged: Path,
+        result: DecoderLoRATrainingBundleResult,
+    ) -> None:
+        try:
+            with open_verified_artifact_bundle(
+                staged,
+                result.artifact_manifest_sha256,
+            ) as verified:
+                _preflight_verified_decoder_bundle(verified, modules)
+        except ArtifactVerificationError as error:
+            raise DecoderLoRATrainingError(
+                f"decoder artifact bundle verification failed: {error}"
+            ) from error
+
+    def verify_published(
+        published: Path,
+        result: DecoderLoRATrainingBundleResult,
+    ) -> None:
+        try:
+            published_manifest = verify_artifact_bundle(
+                published,
+                result.artifact_manifest_sha256,
+            )
+        except ArtifactVerificationError as error:
+            raise DecoderLoRATrainingError(
+                f"published artifact bundle does not match the verified stage: {error}"
+            ) from error
+        expected_run_manifest_sha256 = hashlib.sha256(
+            canonical_decoder_lora_run_manifest_json(result.run_manifest)
+        ).hexdigest()
+        if published_manifest.run_manifest_sha256 != expected_run_manifest_sha256:
+            raise DecoderLoRATrainingError(
+                "published artifact run manifest does not match the completed training run"
+            )
 
     with _isolated_deterministic_runtime(torch, config.seed):
-        return cast(DecoderLoRARunManifestV1, _atomic_output_directory(output, build))
+        return cast(
+            DecoderLoRATrainingBundleResult,
+            _atomic_output_directory(
+                output,
+                build,
+                verify_staged=verify_staged,
+                verify_published=verify_published,
+            ),
+        )
+
+
+def run_decoder_lora_training(
+    config: DecoderOnlyLoRATrainingConfigV1,
+    release: TrainingReleaseSnapshot,
+    model_snapshot: Path,
+    model_snapshot_manifest_sha256: str,
+    output: Path,
+    *,
+    source_checkout: Path,
+    evaluation_command: str,
+) -> DecoderLoRARunManifestV1:
+    """Compatibility wrapper returning only the decoder run manifest."""
+
+    return run_decoder_lora_training_bundle(
+        config,
+        release,
+        model_snapshot,
+        model_snapshot_manifest_sha256,
+        output,
+        source_checkout=source_checkout,
+        evaluation_command=evaluation_command,
+    ).run_manifest

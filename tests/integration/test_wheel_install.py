@@ -105,6 +105,35 @@ assert result.exit_code == 0, result.output
     )
     assert not public_import.stderr
 
+    artifact_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from ste_compiler.artifacts import "
+                "ArtifactBundleManifestV1, ArtifactFileV1, ArtifactPreflightResultV1, "
+                "open_verified_artifact_bundle, verify_artifact_bundle; "
+                "from ste_compiler.training import "
+                "decoder_lora_artifact_manifest_sha256, "
+                "encoder_decoder_artifact_manifest_sha256, "
+                "preflight_decoder_lora_artifact_bundle, "
+                "preflight_encoder_decoder_artifact_bundle; "
+                "assert ArtifactBundleManifestV1 and ArtifactFileV1 "
+                "and ArtifactPreflightResultV1 and open_verified_artifact_bundle "
+                "and verify_artifact_bundle and decoder_lora_artifact_manifest_sha256 "
+                "and encoder_decoder_artifact_manifest_sha256 "
+                "and preflight_decoder_lora_artifact_bundle "
+                "and preflight_encoder_decoder_artifact_bundle"
+            ),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert not artifact_import.stderr
+
     demo = subprocess.run(
         [*command, "demo", "--json"],
         cwd=tmp_path,
@@ -247,6 +276,30 @@ assert result.exit_code == 0, result.output
         text=True,
     )
     assert json.loads(realizer_schema.stdout)["discriminator"]["propertyName"] == "architecture"
+    artifact_manifest_schema = subprocess.run(
+        [*command, "schema", "artifact-manifest"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    artifact_preflight_schema = subprocess.run(
+        [*command, "schema", "artifact-preflight"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert (
+        json.loads(artifact_manifest_schema.stdout)["properties"]["schema_version"]["const"]
+        == "ste-artifact-bundle-v1"
+    )
+    assert (
+        json.loads(artifact_preflight_schema.stdout)["properties"]["schema_version"]["const"]
+        == "ste-artifact-preflight-v1"
+    )
     packaged_example = installed / "ste_compiler/data/examples/negative.yaml"
     configured_compile = subprocess.run(
         [

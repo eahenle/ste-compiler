@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -6,6 +7,12 @@ from typing import Annotated
 import typer
 from pydantic import ValidationError
 
+from ste_compiler.artifacts import (
+    ArtifactBundleManifestV1,
+    ArtifactPreflightResultV1,
+    ArtifactValidationProfile,
+    read_artifact_manifest_for_routing,
+)
 from ste_compiler.diagnostics import ValidationReport
 from ste_compiler.evaluation import evaluate as run_evaluation
 from ste_compiler.evaluation import write_reports
@@ -33,18 +40,20 @@ from ste_compiler.training import (
     TrainingReleaseSnapshot,
     build_demonstration_corpus,
     build_training_record,
+    canonical_run_manifest_json,
     evaluate_decoder_lora_adapter,
     evaluate_encoder_decoder_checkpoint,
     export_symbolic_corpus,
     load_training_config,
     model_snapshot_manifest_sha256,
+    preflight_decoder_lora_artifact_bundle,
+    preflight_encoder_decoder_artifact_bundle,
     prepare_decoder_smoke_fixture,
     read_training_release,
-    run_decoder_lora_training,
-    run_encoder_decoder_training,
+    run_decoder_lora_training_bundle,
+    run_encoder_decoder_training_bundle,
     training_config_sha256,
     verify_demonstration_corpus,
-    verify_safe_encoder_decoder_checkpoint,
 )
 from ste_compiler.validators import LexicalValidator, ValidationPipeline, align_controlled_text
 
@@ -485,7 +494,7 @@ def train_decoder_lora(
     )
     try:
         config, snapshot = _decoder_training_inputs(config_path, release)
-        manifest = run_decoder_lora_training(
+        bundle = run_decoder_lora_training_bundle(
             config,
             snapshot,
             model_snapshot,
@@ -494,6 +503,8 @@ def train_decoder_lora(
             source_checkout=source_checkout,
             evaluation_command=evaluation_command,
         )
+        manifest = bundle.run_manifest
+        artifact_manifest_digest = bundle.artifact_manifest_sha256
     except TRAINING_INPUT_ERRORS as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
@@ -504,12 +515,16 @@ def train_decoder_lora(
         "training_losses": manifest.training_losses,
         "validation_loss": manifest.validation_loss,
         "trainable_parameters": manifest.trainable_parameters,
+        "artifact_manifest_sha256": artifact_manifest_digest,
         "output": str(output),
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        typer.echo(f"Completed {manifest.optimizer_steps} decoder LoRA optimizer steps at {output}")
+        typer.echo(
+            f"Completed {manifest.optimizer_steps} decoder LoRA optimizer steps at {output} "
+            f"(artifact manifest sha256: {artifact_manifest_digest})"
+        )
 
 
 @app.command("evaluate-decoder-lora")
@@ -577,7 +592,7 @@ def train_encoder_decoder(
                 "training config architecture must be encoder-decoder",
                 param_hint="config_path",
             )
-        manifest = run_encoder_decoder_training(
+        bundle = run_encoder_decoder_training_bundle(
             config,
             release,
             output,
@@ -585,23 +600,70 @@ def train_encoder_decoder(
             dependency_lock=dependency_lock,
             cache_dir=cache_dir,
         )
-        run_manifest_sha256 = next(
-            identity.sha256
-            for identity in verify_safe_encoder_decoder_checkpoint(output)
-            if identity.path == "run-manifest.json"
-        )
+        manifest = bundle.run_manifest
+        run_manifest_sha256 = hashlib.sha256(canonical_run_manifest_json(manifest)).hexdigest()
+        artifact_manifest_digest = bundle.artifact_manifest_sha256
     except SOURCE_INPUT_ERRORS as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     if json_output:
         payload = manifest.model_dump(mode="json")
         payload["run_manifest_sha256"] = run_manifest_sha256
+        payload["artifact_manifest_sha256"] = artifact_manifest_digest
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         typer.echo(
             f"Wrote {manifest.optimizer_steps}-step encoder-decoder checkpoint to {output} "
             f"(config sha256: {manifest.training_config_sha256}; "
-            f"run manifest sha256: {run_manifest_sha256})"
+            f"run manifest sha256: {run_manifest_sha256}; "
+            f"artifact manifest sha256: {artifact_manifest_digest})"
+        )
+
+
+@app.command("preflight-artifact")
+def preflight_artifact(
+    root: Path,
+    manifest_sha256: Annotated[
+        str,
+        typer.Option(
+            help="Externally retained SHA-256 of artifact-manifest.json.",
+        ),
+    ],
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Verify one exact local training-output bundle without network access."""
+
+    try:
+        manifest = read_artifact_manifest_for_routing(root, manifest_sha256)
+        validation_profile: ArtifactValidationProfile
+        if manifest.architecture == "encoder-decoder":
+            preflight_encoder_decoder_artifact_bundle(root, manifest_sha256)
+            validation_profile = "encoder-checkpoint-load-v1"
+        else:
+            preflight_decoder_lora_artifact_bundle(root, manifest_sha256)
+            validation_profile = "decoder-adapter-structure-v1"
+    except TRAINING_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    result = ArtifactPreflightResultV1(
+        schema_version="ste-artifact-preflight-v1",
+        status="verified",
+        architecture=manifest.architecture,
+        artifact_type=manifest.artifact_type,
+        intended_use=manifest.intended_use,
+        artifact_manifest_sha256=manifest_sha256,
+        run_manifest_sha256=manifest.run_manifest_sha256,
+        file_count=manifest.file_count,
+        total_bytes=manifest.total_bytes,
+        validation_profile=validation_profile,
+        network_access="none",
+    )
+    if json_output:
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        typer.echo(
+            f"Verified {result.artifact_type} bundle "
+            f"(artifact manifest sha256: {result.artifact_manifest_sha256})"
         )
 
 
@@ -773,6 +835,20 @@ def realizer_config_schema() -> None:
     """Print the JSON Schema for strict versioned realizer configuration."""
 
     typer.echo(json.dumps(REALIZER_CONFIG_ADAPTER.json_schema(), indent=2))
+
+
+@schema_app.command("artifact-manifest")
+def artifact_manifest_schema() -> None:
+    """Print the JSON Schema for content-bound local artifact bundles."""
+
+    typer.echo(json.dumps(ArtifactBundleManifestV1.model_json_schema(), indent=2))
+
+
+@schema_app.command("artifact-preflight")
+def artifact_preflight_schema() -> None:
+    """Print the JSON Schema for `preflight-artifact --json`."""
+
+    typer.echo(json.dumps(ArtifactPreflightResultV1.model_json_schema(), indent=2))
 
 
 @app.command()

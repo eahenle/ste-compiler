@@ -14,7 +14,8 @@ to released bytes produces a new artifact version instead of replacing the old i
 - Core package: the Python versions listed in `pyproject.toml` and exercised by CI.
 - Neural features: the explicitly locked dependency and hardware profile documented by the
   corresponding release.
-- Hardened training-release directory reads: POSIX filesystems.
+- Hardened training-release and model-artifact bundle reads: POSIX filesystems with directory
+  descriptors and no-follow support.
 
 Optional providers and live network integrations are outside the credential-free core support
 contract.
@@ -32,7 +33,9 @@ A public release requires:
 
 Package-index publication should use trusted publishing and attach build provenance. GitHub release
 assets must include checksums. Model and dataset artifacts too large for the package must be linked
-by immutable repository revision and digest.
+by immutable repository revision and digest. A model bundle publication must carry the externally
+retained `artifact-manifest.json` SHA-256 in signed or otherwise reviewed release metadata; the
+colocated manifest alone is not sufficient.
 
 ## Deprecation
 
