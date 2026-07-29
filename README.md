@@ -207,6 +207,7 @@ exercise mechanics and evidence plumbing.
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 
 See the [end-to-end demo](docs/end-to-end-demo.md),
+[executable example catalog](docs/executable-examples.md),
 [reproducible training guide](docs/training.md),
 [benchmark evidence guide](docs/benchmark-evidence.md),
 [typed offline neural runtime guide](docs/neural-runtime.md),

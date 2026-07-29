@@ -5,13 +5,13 @@ import json
 import os
 import random
 import shutil
-import socket
 import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ste_compiler.artifacts import (
     ARTIFACT_MANIFEST_NAME,
@@ -44,6 +44,7 @@ from ste_compiler.training import (
 )
 from ste_compiler.training import encoder_decoder as training_module
 from ste_compiler.training.encoder_decoder import EncoderDecoderTrainingError
+from tests.executable_example_helpers import example_fixture, forbid_network
 from tests.neural_helpers import (
     FIXTURE_REPO_ID,
     FIXTURE_REVISION,
@@ -53,46 +54,45 @@ from tests.neural_helpers import (
 pytestmark = pytest.mark.neural
 
 ROOT = Path(__file__).parents[2]
-RELEASE = ROOT / "datasets/demonstration-corpus-1"
+CONFIG = example_fixture(6, 0)
+RELEASE = example_fixture(6, 1)
 
 
 def _config(tmp_path: Path) -> tuple[Path, EncoderDecoderTrainingConfigV1]:
-    payload = json.loads(
-        json.dumps(
-            {
-                "schema_version": "ste-training-config-v1",
-                "architecture": "encoder-decoder",
-                "corpus": {
-                    "dataset_version": "demonstration-corpus-1",
-                    "manifest_sha256": (
-                        "f6ae4582669c4d7d06e33018088b900ffa0f8aa8b6e0d9f1beeccca2023faa7b"
-                    ),
-                    "train_sha256": (
-                        "1772fbe01a15c28d174e139f93e5c3b0fd6744c01cf5c81b79fb842c9609ebd0"
-                    ),
-                    "validation_sha256": (
-                        "ea16d6bae1f624c26581e05b02cb693282805d93f945bd6e00e73a48a79d15dd"
-                    ),
-                },
-                "base_model": {
-                    "repo_id": FIXTURE_REPO_ID,
-                    "revision": FIXTURE_REVISION,
-                },
-                "tokenizer": {
-                    "repo_id": FIXTURE_REPO_ID,
-                    "revision": FIXTURE_REVISION,
-                },
-                "seed": 1729,
-                "max_steps": 2,
-                "micro_batch_size": 1,
-                "gradient_accumulation_steps": 1,
-                "optimizer": {"learning_rate": 0.0001, "weight_decay": 0},
-                "strategy": "full",
-                "max_source_tokens": 8192,
-                "max_target_tokens": 2048,
-            }
-        )
-    )
+    declared_payload = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    assert isinstance(declared_payload, dict)
+    payload = json.loads(json.dumps(declared_payload))
+    fixture_identity = {
+        "repo_id": FIXTURE_REPO_ID,
+        "revision": FIXTURE_REVISION,
+    }
+    payload["base_model"] = fixture_identity
+    payload["tokenizer"] = fixture_identity
+    # The byte-level fixture uses roughly one token per source byte. Keep the production schema
+    # bounds intact on disk, but widen only this generated fixture's runtime limits.
+    payload["max_source_tokens"] = 8192
+    payload["max_target_tokens"] = 2048
+    assert {
+        key: value
+        for key, value in payload.items()
+        if key
+        not in {
+            "base_model",
+            "tokenizer",
+            "max_source_tokens",
+            "max_target_tokens",
+        }
+    } == {
+        key: value
+        for key, value in declared_payload.items()
+        if key
+        not in {
+            "base_model",
+            "tokenizer",
+            "max_source_tokens",
+            "max_target_tokens",
+        }
+    }
     config_path = tmp_path / "encoder-training.json"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
     config = load_training_config(config_path)
@@ -112,11 +112,7 @@ def tiny_snapshot(tmp_path, monkeypatch):
         return str(snapshot)
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
-
-    def block_network(self, address):
-        raise AssertionError(f"unexpected network access: {address}")
-
-    monkeypatch.setattr(socket.socket, "connect", block_network)
+    forbid_network(monkeypatch)
     return snapshot, calls
 
 

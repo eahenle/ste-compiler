@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).parents[2]
 
 
@@ -48,6 +50,29 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
 
     clean_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     clean_env["PYTHONPATH"] = str(installed)
+    package_root = installed / "ste_compiler"
+    catalog = yaml.safe_load((package_root / "examples/manifest.yaml").read_text(encoding="utf-8"))
+    assert catalog["distribution"]["portable_execution"] == ["core-ci"]
+    assert [scenario["id"] for scenario in catalog["scenarios"]] == list(range(1, 14))
+    for scenario in catalog["scenarios"]:
+        if scenario["execution"] == "core-ci":
+            for fixture in scenario["fixtures"]:
+                assert (package_root / fixture).exists(), fixture
+
+    custom_resources = subprocess.run(
+        [sys.executable, "-m", "ste_compiler.examples.custom_resources"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    custom_payload = json.loads(custom_resources.stdout)
+    assert custom_payload["text"] == "Install the access hatch."
+    assert custom_payload["validation"]["status"] == "accepted"
+    assert custom_payload["vocabulary_version"] == "example-vocabulary-1"
+    assert custom_payload["terminology_version"] == "example-terminology-1"
+
     subprocess.run(
         [
             sys.executable,

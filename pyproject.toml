@@ -67,6 +67,11 @@ packages = ["src/ste_compiler"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "data" = "ste_compiler/data"
+"examples/manifest.yaml" = "ste_compiler/examples/manifest.yaml"
+"examples/resources" = "ste_compiler/examples/resources"
+
+[tool.hatch.build.targets.sdist.force-include]
+"examples" = "examples"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

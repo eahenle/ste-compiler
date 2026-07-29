@@ -1,0 +1,330 @@
+schema_version: ste-executable-examples-v1
+plan_reference: docs/v1-implementation-plan.md#phase-6-examples-and-documentation
+distribution:
+  wheel_catalog: ste_compiler/examples/manifest.yaml
+  wheel_fixture_base: ste_compiler
+  portable_execution: [core-ci]
+  source_only_execution: [existing-ci, neural-ci]
+scenarios:
+  - id: 1
+    slug: raw-source-deterministic
+    title: Raw source to deterministic controlled text
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - data/end_to_end/hydraulic_warning.txt
+      - data/end_to_end/hydraulic_warning.ir.yaml
+      - data/demo_vocabulary.yaml
+      - data/demo_terminology.yaml
+    commands:
+      - argv: [ste-compiler, demo, --json]
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            schema_version: compile-source-v1
+            validation.status: accepted
+            metadata.frontend: offline-replay
+            metadata.realizer: deterministic
+            text: |-
+              Warning: injury can occur when hydraulic pressure is more than 20 MPa.
+              If hydraulic pressure is more than 20 MPa, stop the hydraulic pressure.
+
+  - id: 2
+    slug: offline-replay-extraction
+    title: Offline replay source extraction
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - data/end_to_end/hydraulic_warning.txt
+      - data/end_to_end/hydraulic_warning.ir.yaml
+      - data/demo_vocabulary.yaml
+      - data/demo_terminology.yaml
+    commands:
+      - argv:
+          - ste-compiler
+          - compile-source
+          - data/end_to_end/hydraulic_warning.txt
+          - --ir-fixture
+          - data/end_to_end/hydraulic_warning.ir.yaml
+          - --json
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            schema_version: compile-source-v1
+            source.id: hydraulic_warning.txt
+            source.sha256: b4c9933386cfff902e7fbd087ff95031993ab4dcbfb870fb92ce722ba8579f37
+            metadata.frontend: offline-replay
+            validation.status: accepted
+
+  - id: 3
+    slug: optional-live-provider
+    title: Optional live-provider extraction
+    status: gated
+    execution: optional
+    network: optional
+    fixtures: []
+    commands: []
+    gate: A live structured provider and its credential contract are not implemented.
+
+  - id: 4
+    slug: custom-resources
+    title: Custom vocabulary and terminology
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - examples/resources/custom_installation.yaml
+      - examples/resources/custom_terminology.yaml
+      - examples/resources/custom_vocabulary.yaml
+    commands:
+      - argv: [python, examples/custom_resources.py]
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            text: Install the access hatch.
+            validation.status: accepted
+            vocabulary_version: example-vocabulary-1
+            terminology_version: example-terminology-1
+
+  - id: 5
+    slug: dataset-construction
+    title: Dataset construction and manifest inspection
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - data/demonstration_corpus/v2/source-construction.json
+      - data/demonstration_corpus/v2/terminology.yaml
+      - data/demo_vocabulary.yaml
+    commands:
+      - argv:
+          - ste-compiler
+          - build-demonstration-corpus
+          - --version
+          - "2"
+          - --output
+          - "{tmp}/demonstration-corpus-2"
+        expected:
+          exit_code: 0
+          stdout_contains: Wrote 24 records
+          file_json_paths:
+            "{tmp}/demonstration-corpus-2/manifest.json":
+              schema_version: demonstration-corpus-release-v1
+              dataset_version: demonstration-corpus-2
+              record_count: 24
+              split_counts.train: 12
+              split_counts.validation: 4
+              split_counts.test: 4
+              split_counts.adversarial: 4
+      - argv:
+          - ste-compiler
+          - verify-demonstration-corpus
+          - "{tmp}/demonstration-corpus-2"
+        expected:
+          exit_code: 0
+          stdout_contains: Verified 24 records
+
+  - id: 6
+    slug: encoder-decoder-smoke-training
+    title: Encoder-decoder smoke training
+    status: tested
+    execution: neural-ci
+    network: forbidden
+    fixtures:
+      - data/training/encoder-decoder-schema-example.yaml
+      - datasets/demonstration-corpus-1
+      - tests/neural_helpers.py
+    commands:
+      - argv:
+          - pytest
+          - -q
+          - tests/integration/test_encoder_training.py::test_offline_two_step_trainer_is_deterministic_safe_and_reloadable
+        expected:
+          exit_code: 0
+    pytest_owner: tests/integration/test_encoder_training.py
+    ci_job: encoder-training-smoke
+    limitation: Loads the declared training schema, replacing the model and tokenizer identities
+      with the checked-in tiny byte-level fixture identity and widening only its runtime source and
+      target token limits because that fixture uses approximately one token per byte. This is a
+      mechanics smoke only; the schema example is not a released model or quality result.
+
+  - id: 7
+    slug: decoder-lora-smoke-training
+    title: Decoder-only LoRA smoke training
+    status: tested
+    execution: neural-ci
+    network: forbidden
+    fixtures:
+      - data/training/decoder-only-lora-schema-example.yaml
+      - datasets/demonstration-corpus-1
+    commands:
+      - argv:
+          - pytest
+          - -q
+          - tests/integration/test_decoder_lora_training_smoke.py::test_decoder_lora_two_step_smoke_is_offline_deterministic_safe_and_reloadable
+        expected:
+          exit_code: 0
+    pytest_owner: tests/integration/test_decoder_lora_training_smoke.py
+    ci_job: decoder-lora-smoke
+    limitation: Mechanics smoke only; no trained reference adapter or quality result is claimed.
+
+  - id: 8
+    slug: released-checkpoint-inference
+    title: Inference with each released checkpoint
+    status: gated
+    execution: release
+    network: forbidden
+    fixtures: []
+    commands: []
+    gate: No reviewed encoder-decoder or decoder-only checkpoint release exists.
+
+  - id: 9
+    slug: constrained-unconstrained-comparison
+    title: Constrained versus unconstrained comparison
+    status: gated
+    execution: benchmark
+    network: forbidden
+    fixtures: []
+    commands: []
+    gate: Requires released checkpoints, frozen predictions, and an approved comparison protocol.
+
+  - id: 10
+    slug: provenance-alignment
+    title: Provenance and alignment inspection
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - data/examples/negative.yaml
+      - data/realizers/deterministic.yaml
+      - data/demo_vocabulary.yaml
+      - data/demo_terminology.yaml
+    commands:
+      - argv:
+          - ste-compiler
+          - compile
+          - data/examples/negative.yaml
+          - --realizer-config
+          - data/realizers/deterministic.yaml
+          - --json
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            text: Do not open the shutoff valve.
+            validation.status: accepted
+            metadata.realizer: deterministic
+            metadata.artifact_mode: offline-cache-only
+            mappings.0.sentence: 1
+            mappings.0.ir_node_ids.0: inst_002
+            mappings.0.features.negated: true
+
+  - id: 11
+    slug: expected-validation-rejection
+    title: Expected validation rejection
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - data/examples/invalid_semantic.txt
+      - data/examples/negative.yaml
+      - data/demo_vocabulary.yaml
+      - data/demo_terminology.yaml
+    commands:
+      - argv:
+          - ste-compiler
+          - validate-text
+          - data/examples/invalid_semantic.txt
+          - --ir
+          - data/examples/negative.yaml
+          - --json
+        expected:
+          exit_code: 1
+          stdout_json_paths:
+            status: rejected
+            violations.0.code: UNSUPPORTED_SEMANTIC_CHANGE
+            violations.0.severity: critical
+            violations.1.code: REQUIRED_NODE_OMITTED
+            violations.1.ir_node_id: inst_002
+
+  - id: 12
+    slug: offline-cached-operation
+    title: Offline cached operation
+    status: partial
+    execution: existing-ci
+    network: forbidden
+    fixtures:
+      - data/realizers/encoder-decoder-schema-example.yaml
+      - data/realizers/decoder-only-lora-schema-example.yaml
+      - data/examples/negative.yaml
+      - data/demo_vocabulary.yaml
+      - data/demo_terminology.yaml
+    commands:
+      - argv:
+          - pytest
+          - -q
+          - tests/integration/test_cli.py::test_cli_routes_neural_configs_offline_through_compiler
+        expected:
+          exit_code: 0
+    pytest_owner: tests/integration/test_cli.py
+    ci_job: test
+    limitation: Proves CLI routing to pinned local-files-only configurations with test-double
+      generators; it does not materialize or run a real cached checkpoint.
+
+  - id: 13
+    slug: benchmark-reproduction
+    title: Benchmark reproduction
+    status: tested
+    execution: core-ci
+    network: forbidden
+    fixtures:
+      - data/benchmark/v1/benchmark-spec.json
+      - data/benchmark/v1/failure-taxonomy.json
+      - data/benchmark/v1/prediction-manifest.json
+      - data/benchmark/v1/predictions.jsonl
+      - data/benchmark/v1/expected-report/metrics.json
+      - data/benchmark/v1/expected-report/report-manifest.json
+      - data/benchmark/v1/expected-report/report.md
+      - data/demonstration_corpus/v2/source-construction.json
+      - data/demonstration_corpus/v2/terminology.yaml
+      - data/demo_vocabulary.yaml
+    commands:
+      - argv:
+          - ste-compiler
+          - build-demonstration-corpus
+          - --version
+          - "2"
+          - --output
+          - "{tmp}/demonstration-corpus-2"
+        expected:
+          exit_code: 0
+          stdout_contains: Wrote 24 records
+      - argv:
+          - ste-compiler
+          - benchmark-report
+          - data/benchmark/v1/benchmark-spec.json
+          - data/benchmark/v1/failure-taxonomy.json
+          - data/benchmark/v1/prediction-manifest.json
+          - data/benchmark/v1/predictions.jsonl
+          - "{tmp}/demonstration-corpus-2"
+          - --output
+          - "{tmp}/benchmark-report"
+          - --json
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            schema_version: ste-benchmark-report-manifest-v1
+            benchmark_id: ste-compiler-pipeline-fixture-1
+            evidence_label: deterministic_fixture_only
+          file_json_paths:
+            "{tmp}/benchmark-report/metrics.json":
+              schema_version: ste-benchmark-metrics-v1
+              evidence_label: deterministic_fixture_only
+              record_count: 4
+              systems.failure-taxonomy-fixture-v1.metrics.complete_success_rate.value: 0.25
+          file_matches:
+            "{tmp}/benchmark-report/metrics.json": data/benchmark/v1/expected-report/metrics.json
+            "{tmp}/benchmark-report/report-manifest.json": data/benchmark/v1/expected-report/report-manifest.json
+            "{tmp}/benchmark-report/report.md": data/benchmark/v1/expected-report/report.md
+    limitation: Reproduces the deterministic fixture evidence pipeline, not model-quality results.
