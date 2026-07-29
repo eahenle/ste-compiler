@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +110,14 @@ class CapturedTree:
     artifacts: tuple[FileIdentityV1, ...]
 
 
+def _safe_snapshot_artifact(relative_path: str) -> bool:
+    path = Path(relative_path)
+    return (
+        any(fnmatch.fnmatchcase(path.name, pattern) for pattern in _SAFE_SNAPSHOT_PATTERNS)
+        and path.suffix.casefold() not in _PROHIBITED_MODEL_SUFFIXES
+    )
+
+
 def _load_neural_runtime() -> tuple[Any, Any, Any]:
     try:
         torch = importlib.import_module("torch")
@@ -188,6 +196,7 @@ def _capture_directory(
     prefix: str = "",
     allow_file_symlinks: bool,
     remaining_bytes: list[int],
+    include_file: Callable[[str], bool] | None = None,
 ) -> tuple[FileIdentityV1, ...]:
     try:
         names = sorted(os.listdir(source_fd))
@@ -217,17 +226,22 @@ def _capture_directory(
                     f"cannot safely open artifact directory: {relative_path}"
                 ) from error
             try:
-                identities.extend(
-                    _capture_directory(
-                        child_fd,
-                        destination_path,
-                        prefix=relative_path,
-                        allow_file_symlinks=allow_file_symlinks,
-                        remaining_bytes=remaining_bytes,
-                    )
+                child_identities = _capture_directory(
+                    child_fd,
+                    destination_path,
+                    prefix=relative_path,
+                    allow_file_symlinks=allow_file_symlinks,
+                    remaining_bytes=remaining_bytes,
+                    include_file=include_file,
                 )
             finally:
                 os.close(child_fd)
+            if child_identities:
+                identities.extend(child_identities)
+            else:
+                destination_path.rmdir()
+            continue
+        if include_file is not None and not include_file(relative_path):
             continue
         if not stat.S_ISREG(metadata.st_mode) and not (
             allow_file_symlinks and stat.S_ISLNK(metadata.st_mode)
@@ -261,6 +275,7 @@ def _capture_tree(
     destination: Path,
     *,
     allow_file_symlinks: bool = False,
+    include_file: Callable[[str], bool] | None = None,
 ) -> CapturedTree:
     if destination.exists() or destination.is_symlink():
         raise EncoderDecoderTrainingError(
@@ -282,12 +297,16 @@ def _capture_tree(
             destination,
             allow_file_symlinks=allow_file_symlinks,
             remaining_bytes=[_MAX_TREE_BYTES],
+            include_file=include_file,
         )
     finally:
         os.close(source_fd)
     if not artifacts:
         raise EncoderDecoderTrainingError("artifact tree must contain files")
-    return CapturedTree(path=destination, artifacts=artifacts)
+    return CapturedTree(
+        path=destination,
+        artifacts=tuple(sorted(artifacts, key=lambda artifact: artifact.path)),
+    )
 
 
 def _resolve_snapshot(
@@ -340,20 +359,8 @@ def _load_components(
         base_snapshot,
         private_root / "base-model",
         allow_file_symlinks=True,
+        include_file=_safe_snapshot_artifact,
     )
-    unexpected = tuple(
-        identity.path
-        for identity in captured.artifacts
-        if not any(
-            fnmatch.fnmatchcase(Path(identity.path).name, pattern)
-            for pattern in _SAFE_SNAPSHOT_PATTERNS
-        )
-        or Path(identity.path).suffix.casefold() in _PROHIBITED_MODEL_SUFFIXES
-    )
-    if unexpected:
-        raise EncoderDecoderTrainingError(
-            f"base-model snapshot contains unexpected artifacts: {unexpected}"
-        )
     common = {"local_files_only": True, "trust_remote_code": False}
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         str(captured.path),

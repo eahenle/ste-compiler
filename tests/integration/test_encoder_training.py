@@ -135,7 +135,13 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
     tmp_path,
     tiny_snapshot,
 ):
-    _, calls = tiny_snapshot
+    snapshot, calls = tiny_snapshot
+    (snapshot / "README.md").write_text("cached model card", encoding="utf-8")
+    (snapshot / ".gitattributes").write_text("*.bin filter=lfs", encoding="utf-8")
+    (snapshot / "pytorch_model.bin").write_bytes(b"unsafe legacy weights")
+    nested_tokenizer = snapshot / "tokenizer"
+    nested_tokenizer.mkdir()
+    shutil.copyfile(snapshot / "tokenizer.json", nested_tokenizer / "vocab.json")
     _, config = _config(tmp_path)
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -198,6 +204,10 @@ def test_offline_two_step_trainer_is_deterministic_safe_and_reloadable(
         "model.safetensors",
         "tokenizer.json",
     }
+    artifact_paths = tuple(artifact.path for artifact in first_manifest.base_model_artifacts)
+    assert artifact_paths == tuple(sorted(artifact_paths))
+    assert "tokenizer/vocab.json" in artifact_paths
+    assert {"README.md", ".gitattributes", "pytorch_model.bin"}.isdisjoint(artifact_paths)
     assert first_manifest.package.source_dirty is False
     assert len(first_manifest.package.source_tree_sha256) == 64
     assert first_manifest.validation.record_count == 2
