@@ -76,6 +76,56 @@ def _resign_predictions(tmp_path: Path, mutate) -> tuple[Path, Path]:
     return manifest_path, prediction_path
 
 
+def _resign_two_system_benchmark(
+    tmp_path: Path,
+    *,
+    inconsistent_gold_field: str | None,
+) -> tuple[Path, Path, Path]:
+    specification = json.loads(SPECIFICATION.read_text())
+    second_system = dict(specification["systems"][0])
+    second_system["system_id"] = "second-fixture-system-v1"
+    specification["systems"].append(second_system)
+    specification_bytes = json.dumps(
+        specification,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    specification_path = tmp_path / "benchmark-spec.json"
+    specification_path.write_bytes(specification_bytes)
+
+    original_predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
+    predictions = []
+    for original in original_predictions:
+        predictions.append(original)
+        duplicate = json.loads(json.dumps(original))
+        duplicate["system_id"] = second_system["system_id"]
+        if duplicate["case_id"] == "adversarial_ambiguity" and inconsistent_gold_field is not None:
+            duplicate["frontend"][inconsistent_gold_field] += 1
+        predictions.append(duplicate)
+    prediction_bytes = b"".join(
+        (
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode()
+        for record in predictions
+    )
+    prediction_path = tmp_path / "predictions.jsonl"
+    prediction_path.write_bytes(prediction_bytes)
+
+    manifest = json.loads(PREDICTION_MANIFEST.read_text())
+    manifest["benchmark_spec_sha256"] = hashlib.sha256(specification_bytes).hexdigest()
+    manifest["systems"] = specification["systems"]
+    manifest["predictions"] = {
+        "path": prediction_path.name,
+        "sha256": hashlib.sha256(prediction_bytes).hexdigest(),
+        "bytes": len(prediction_bytes),
+    }
+    manifest["record_count"] = len(predictions)
+    manifest_path = tmp_path / "prediction-manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+    return specification_path, manifest_path, prediction_path
+
+
 @pytest.mark.parametrize(
     ("model", "payload", "path", "coerced_value"),
     [
@@ -1320,6 +1370,60 @@ def test_report_rejects_unknown_failure_code_even_when_predictions_are_resigned(
             dataset_release=RELEASE,
             output=tmp_path / "report",
         )
+
+
+@pytest.mark.parametrize(
+    "gold_field",
+    (
+        "required_fields_gold",
+        "ambiguities_gold",
+        "source_spans_gold",
+    ),
+)
+def test_report_rejects_cross_system_gold_count_disagreement(tmp_path, gold_field):
+    specification, manifest, predictions = _resign_two_system_benchmark(
+        tmp_path,
+        inconsistent_gold_field=gold_field,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "prediction frontend gold counts disagree across systems for case "
+            f"adversarial_ambiguity: {gold_field}"
+        ),
+    ):
+        generate_evidence_report(
+            specification_path=specification,
+            taxonomy_path=TAXONOMY,
+            prediction_manifest_path=manifest,
+            predictions_path=predictions,
+            dataset_release=RELEASE,
+            output=tmp_path / "report",
+        )
+
+
+def test_report_accepts_consistent_gold_counts_across_systems(tmp_path):
+    specification, manifest, predictions = _resign_two_system_benchmark(
+        tmp_path,
+        inconsistent_gold_field=None,
+    )
+
+    report_manifest = generate_evidence_report(
+        specification_path=specification,
+        taxonomy_path=TAXONOMY,
+        prediction_manifest_path=manifest,
+        predictions_path=predictions,
+        dataset_release=RELEASE,
+        output=tmp_path / "report",
+    )
+
+    metrics = json.loads((tmp_path / "report" / "metrics.json").read_text())
+    assert report_manifest.benchmark_id == "ste-compiler-pipeline-fixture-1"
+    assert tuple(metrics["systems"]) == (
+        "failure-taxonomy-fixture-v1",
+        "second-fixture-system-v1",
+    )
 
 
 def test_report_renders_untrusted_notes_as_indented_code(tmp_path):

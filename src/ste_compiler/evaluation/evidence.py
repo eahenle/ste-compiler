@@ -904,6 +904,38 @@ def _prediction_lines(data: bytes) -> tuple[PredictionRecordV1, ...]:
     return tuple(records)
 
 
+def _validate_case_gold_counts(records: tuple[PredictionRecordV1, ...]) -> None:
+    gold_by_case: dict[str, tuple[int, int, int]] = {}
+    field_names = (
+        "required_fields_gold",
+        "ambiguities_gold",
+        "source_spans_gold",
+    )
+    for record in records:
+        counts = (
+            record.frontend.required_fields_gold,
+            record.frontend.ambiguities_gold,
+            record.frontend.source_spans_gold,
+        )
+        expected = gold_by_case.setdefault(record.case_id, counts)
+        if counts == expected:
+            continue
+        mismatched_fields = ", ".join(
+            field_name
+            for field_name, expected_count, actual_count in zip(
+                field_names,
+                expected,
+                counts,
+                strict=True,
+            )
+            if actual_count != expected_count
+        )
+        raise ValueError(
+            "prediction frontend gold counts disagree across systems for case "
+            f"{record.case_id}: {mismatched_fields}"
+        )
+
+
 def _wilson(numerator: int, denominator: int) -> MetricEstimateV1:
     if denominator == 0:
         return MetricEstimateV1(
@@ -1514,6 +1546,7 @@ def generate_evidence_report(
             raise ValueError(f"prediction cross-binding is invalid: {record.case_id}")
         if record.failure_code is not None and record.failure_code not in taxonomy_codes:
             raise ValueError(f"prediction uses an unknown failure code: {record.failure_code}")
+    _validate_case_gold_counts(records)
     _validate_release_cases(spec_model, dataset_release)
 
     metrics = recompute_metrics(
