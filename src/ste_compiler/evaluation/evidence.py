@@ -570,6 +570,115 @@ class SystemMetricsV1(StrictEvidenceModel):
             if estimate.confidence_interval.method != expected_method:
                 raise ValueError(f"{name} must use the {expected_method} confidence method")
 
+        frontend_failures = self.failure_stage_counts.get("frontend", 0)
+        realizer_failures = self.failure_stage_counts.get("realizer", 0)
+        validator_failures = self.failure_stage_counts.get("validator", 0)
+        complete_successes = self.failure_stage_counts.get("none", 0)
+        realizer_population = self.record_count - frontend_failures
+        validator_population = realizer_population - realizer_failures
+
+        self._require_metric_counts(
+            "complete_success_rate",
+            numerator=complete_successes,
+            denominator=self.record_count,
+        )
+        for name in (
+            "frontend.schema_valid_rate",
+            "provenance_coverage_rate",
+            "deterministic_repeatability_rate",
+        ):
+            self._require_metric_denominator(name, self.record_count)
+        for name in (
+            "realizer.exact_symbolic_plan_rate",
+            "realizer.grammar_valid_rate",
+            "realizer.eos_completion_rate",
+            "realizer.constraint_rejection_rate",
+        ):
+            self._require_metric_denominator(name, realizer_population)
+        for name in ("validator.accepted_rate", "validator.rejected_rate"):
+            self._require_metric_denominator(name, validator_population)
+
+        schema_valid = self._metric_counts("frontend.schema_valid_rate")
+        if schema_valid[0] < realizer_population:
+            raise ValueError(
+                "frontend.schema_valid_rate numerator must include every successful frontend"
+            )
+
+        exact_plan = self._metric_counts("realizer.exact_symbolic_plan_rate")
+        grammar_valid = self._metric_counts("realizer.grammar_valid_rate")
+        eos_complete = self._metric_counts("realizer.eos_completion_rate")
+        constraint_rejections = self._metric_counts("realizer.constraint_rejection_rate")
+        for name, numerator in (
+            ("realizer.grammar_valid_rate", grammar_valid[0]),
+            ("realizer.eos_completion_rate", eos_complete[0]),
+        ):
+            if numerator < validator_population:
+                raise ValueError(f"{name} numerator must include every successful realizer")
+        if exact_plan[0] > min(grammar_valid[0], eos_complete[0]):
+            raise ValueError(
+                "realizer.exact_symbolic_plan_rate numerator must not exceed grammar-valid "
+                "or EOS-complete attempts"
+            )
+        if constraint_rejections[0] > realizer_failures:
+            raise ValueError(
+                "realizer.constraint_rejection_rate numerator must not exceed realizer failures"
+            )
+        unauthorized_symbols = self._metric_counts("realizer.unauthorized_symbol_rate")
+        if realizer_failures == 0 and unauthorized_symbols[0] != 0:
+            raise ValueError(
+                "realizer.unauthorized_symbol_rate numerator must be zero without realizer failures"
+            )
+
+        accepted = self._metric_counts("validator.accepted_rate")
+        rejected = self._metric_counts("validator.rejected_rate")
+        if accepted[0] + rejected[0] != validator_population:
+            raise ValueError(
+                "validator accepted and rejected numerators must sum to the validator population"
+            )
+        false_accepts = self._metric_counts("validator.false_accept_rate")
+        if false_accepts[1] > validator_population:
+            raise ValueError(
+                "validator.false_accept_rate denominator must not exceed the validator population"
+            )
+        if false_accepts[0] > min(accepted[0], validator_failures):
+            raise ValueError(
+                "validator.false_accept_rate numerator must not exceed accepted validator failures"
+            )
+
+        precision_counts = self._metric_counts("frontend.required_field_precision")
+        recall_counts = self._metric_counts("frontend.required_field_recall")
+        if precision_counts[0] != recall_counts[0]:
+            raise ValueError("frontend required-field precision and recall must share a numerator")
+        exact_spans = self._metric_counts("frontend.source_span_exact_rate")
+        overlapping_spans = self._metric_counts("frontend.source_span_overlap_rate")
+        if exact_spans[1] != overlapping_spans[1]:
+            raise ValueError("frontend source-span rates must share a denominator")
+        if exact_spans[0] > overlapping_spans[0]:
+            raise ValueError(
+                "frontend exact source-span numerator must not exceed overlapping source spans"
+            )
+
+        if frontend_failures == 0:
+            if not (
+                precision_counts[0] == precision_counts[1] == recall_counts[1] == recall_counts[0]
+            ):
+                raise ValueError(
+                    "frontend required-field counts must be exact without frontend failures"
+                )
+            for name in (
+                "frontend.ambiguity_preservation_rate",
+                "frontend.source_span_exact_rate",
+                "frontend.source_span_overlap_rate",
+            ):
+                numerator, denominator = self._metric_counts(name)
+                if numerator != denominator:
+                    raise ValueError(f"{name} must be exact without frontend failures")
+            if self._metric_counts("frontend.hallucinated_node_rate")[0] != 0:
+                raise ValueError(
+                    "frontend.hallucinated_node_rate numerator must be zero without "
+                    "frontend failures"
+                )
+
         precision = self.metrics["frontend.required_field_precision"].value
         recall = self.metrics["frontend.required_field_recall"].value
         expected_f1 = _f1_value(precision, recall)
@@ -590,6 +699,25 @@ class SystemMetricsV1(StrictEvidenceModel):
             )
         return self
 
+    def _metric_counts(self, name: str) -> tuple[int, int]:
+        estimate = self.metrics[name]
+        if estimate.numerator is None or estimate.denominator is None:
+            raise ValueError(f"{name} must expose Wilson metric counts")
+        return estimate.numerator, estimate.denominator
+
+    def _require_metric_denominator(self, name: str, expected: int) -> None:
+        denominator = self._metric_counts(name)[1]
+        if denominator != expected:
+            raise ValueError(f"{name} denominator must equal its measured population ({expected})")
+
+    def _require_metric_counts(self, name: str, *, numerator: int, denominator: int) -> None:
+        actual = self._metric_counts(name)
+        if actual != (numerator, denominator):
+            raise ValueError(
+                f"{name} counts must equal the measured population result "
+                f"({numerator}/{denominator})"
+            )
+
 
 class ReportManifestV1(StrictEvidenceModel):
     schema_version: Literal["ste-benchmark-report-manifest-v1"]
@@ -600,7 +728,17 @@ class ReportManifestV1(StrictEvidenceModel):
     prediction_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     predictions_sha256: str = Field(pattern=SHA256_PATTERN)
     system_artifact_manifest_sha256s: tuple[str, ...]
-    artifacts: tuple[FileIdentityV1, ...]
+    artifacts: tuple[FileIdentityV1, ...] = Field(min_length=2, max_length=2)
+
+    @model_validator(mode="after")
+    def frozen_artifact_inventory(self) -> ReportManifestV1:
+        artifact_paths = tuple(artifact.path for artifact in self.artifacts)
+        if artifact_paths != ("metrics.json", "report.md"):
+            raise ValueError(
+                "report manifest artifacts must be exactly metrics.json and report.md "
+                "in canonical order"
+            )
+        return self
 
 
 def _canonical_json(value: BaseModel | dict[str, object]) -> bytes:

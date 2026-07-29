@@ -12,6 +12,7 @@ from ste_compiler.evaluation import (
     FailureTaxonomyV1,
     MetricEstimateV1,
     PredictionRecordV1,
+    ReportManifestV1,
     generate_evidence_report,
 )
 from ste_compiler.evaluation import evidence as evidence_module
@@ -42,6 +43,12 @@ def _generate(output: Path):
         predictions_path=PREDICTIONS,
         dataset_release=RELEASE,
         output=output,
+    )
+
+
+def _replace_metric_counts(system, name: str, numerator: int, denominator: int) -> None:
+    system["metrics"][name] = evidence_module._wilson(numerator, denominator).model_dump(
+        mode="json"
     )
 
 
@@ -111,6 +118,67 @@ def test_fixture_report_reconstructs_byte_for_byte(tmp_path):
         "| `realizer.unauthorized_symbol` | 1 |\n"
         "| `validator.semantic_rejection` | 1 |"
     ) in report
+
+
+def test_golden_report_manifest_satisfies_standalone_schema():
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+
+    manifest = ReportManifestV1.model_validate(payload)
+
+    assert tuple(artifact.path for artifact in manifest.artifacts) == (
+        "metrics.json",
+        "report.md",
+    )
+
+
+@pytest.mark.parametrize(
+    "artifact_paths",
+    [
+        (),
+        ("metrics.json",),
+        ("report.md",),
+        ("metrics.json", "metrics.json"),
+        ("report.md", "report.md"),
+        ("metrics.json", "report.md", "extra.json"),
+        ("metrics.json", "arbitrary.md"),
+        ("arbitrary.json", "report.md"),
+        ("report.md", "metrics.json"),
+    ],
+    ids=[
+        "empty",
+        "missing-report",
+        "missing-metrics",
+        "duplicate-metrics",
+        "duplicate-report",
+        "additional-artifact",
+        "arbitrary-second-path",
+        "arbitrary-first-path",
+        "noncanonical-order",
+    ],
+)
+def test_report_manifest_schema_rejects_noncanonical_artifact_inventory(artifact_paths):
+    payload = json.loads((EXPECTED / "report-manifest.json").read_text())
+    identities_by_path = {artifact["path"]: artifact for artifact in payload["artifacts"]}
+    payload["artifacts"] = [
+        identities_by_path.get(
+            path,
+            {
+                "path": path,
+                "sha256": "0" * 64,
+                "bytes": 0,
+            },
+        )
+        for path in artifact_paths
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "report manifest artifacts must be exactly metrics.json and report.md "
+            "in canonical order|Tuple should have at (?:least|most)"
+        ),
+    ):
+        ReportManifestV1.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -291,10 +359,10 @@ def test_benchmark_metrics_schema_rejects_failure_code_stage_mismatch():
 def test_benchmark_metrics_schema_accepts_omitted_or_explicit_zero_failure_stages(
     explicit_zero_counts,
 ):
-    payload = json.loads((EXPECTED / "metrics.json").read_text())
-    system = next(iter(payload["systems"].values()))
-    system["failure_stage_counts"] = {"none": system["record_count"]}
-    system["failure_code_counts"] = {}
+    successful_record = PredictionRecordV1.model_validate_json(
+        PREDICTIONS.read_bytes().splitlines()[0]
+    )
+    system = evidence_module._system_metrics((successful_record,)).model_dump(mode="json")
     if explicit_zero_counts:
         system["failure_stage_counts"].update(
             {
@@ -311,11 +379,216 @@ def test_benchmark_metrics_schema_accepts_omitted_or_explicit_zero_failure_stage
             }
         )
 
-    metrics = BenchmarkMetricsV1.model_validate(payload)
+    metrics = evidence_module.SystemMetricsV1.model_validate(system)
 
-    actual = next(iter(metrics.systems.values()))
-    assert actual.failure_stage_counts.get("frontend", 0) == 0
-    assert sum(actual.failure_code_counts.values()) == 0
+    assert metrics.failure_stage_counts.get("frontend", 0) == 0
+    assert sum(metrics.failure_code_counts.values()) == 0
+    assert metrics.metrics["complete_success_rate"].numerator == 1
+
+
+@pytest.mark.parametrize(
+    ("metric_name", "numerator", "denominator", "message"),
+    [
+        ("complete_success_rate", 2, 4, "counts must equal the measured population result"),
+        ("complete_success_rate", 1, 5, "counts must equal the measured population result"),
+        (
+            "frontend.schema_valid_rate",
+            3,
+            5,
+            "denominator must equal its measured population",
+        ),
+        ("provenance_coverage_rate", 4, 5, "denominator must equal its measured population"),
+        (
+            "deterministic_repeatability_rate",
+            4,
+            5,
+            "denominator must equal its measured population",
+        ),
+        (
+            "realizer.exact_symbolic_plan_rate",
+            1,
+            4,
+            "denominator must equal its measured population",
+        ),
+        (
+            "realizer.grammar_valid_rate",
+            2,
+            4,
+            "denominator must equal its measured population",
+        ),
+        (
+            "realizer.eos_completion_rate",
+            3,
+            4,
+            "denominator must equal its measured population",
+        ),
+        (
+            "realizer.constraint_rejection_rate",
+            1,
+            4,
+            "denominator must equal its measured population",
+        ),
+        (
+            "validator.accepted_rate",
+            1,
+            3,
+            "denominator must equal its measured population",
+        ),
+        (
+            "validator.rejected_rate",
+            1,
+            3,
+            "denominator must equal its measured population",
+        ),
+    ],
+)
+def test_system_metrics_schema_binds_record_and_stage_metric_populations(
+    metric_name,
+    numerator,
+    denominator,
+    message,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, metric_name, numerator, denominator)
+
+    with pytest.raises(ValidationError, match=message):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+@pytest.mark.parametrize(
+    ("metric_name", "numerator", "denominator", "message"),
+    [
+        (
+            "frontend.schema_valid_rate",
+            2,
+            4,
+            "numerator must include every successful frontend",
+        ),
+        (
+            "realizer.grammar_valid_rate",
+            1,
+            3,
+            "numerator must include every successful realizer",
+        ),
+        (
+            "realizer.eos_completion_rate",
+            1,
+            3,
+            "numerator must include every successful realizer",
+        ),
+        (
+            "realizer.constraint_rejection_rate",
+            2,
+            3,
+            "numerator must not exceed realizer failures",
+        ),
+    ],
+)
+def test_system_metrics_schema_binds_stage_failure_numerator_bounds(
+    metric_name,
+    numerator,
+    denominator,
+    message,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, metric_name, numerator, denominator)
+
+    with pytest.raises(ValidationError, match=message):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_reconciles_validator_outcome_population():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, "validator.accepted_rate", 0, 2)
+
+    with pytest.raises(
+        ValidationError,
+        match="accepted and rejected numerators must sum to the validator population",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_bounds_false_accept_population():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, "validator.false_accept_rate", 0, 3)
+
+    with pytest.raises(
+        ValidationError,
+        match="false_accept_rate denominator must not exceed the validator population",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_bounds_false_accepts_by_accepted_failures():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, "validator.accepted_rate", 2, 2)
+    _replace_metric_counts(system, "validator.rejected_rate", 0, 2)
+    _replace_metric_counts(system, "validator.false_accept_rate", 2, 2)
+
+    with pytest.raises(
+        ValidationError,
+        match="false_accept_rate numerator must not exceed accepted validator failures",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_binds_exact_plan_to_success_measurements():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, "realizer.exact_symbolic_plan_rate", 3, 3)
+
+    with pytest.raises(
+        ValidationError,
+        match="exact_symbolic_plan_rate numerator must not exceed grammar-valid",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+def test_system_metrics_schema_binds_required_field_shared_numerator():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(system, "frontend.required_field_precision", 13, 14)
+    precision = evidence_module.MetricEstimateV1.model_validate(
+        system["metrics"]["frontend.required_field_precision"]
+    )
+    recall = evidence_module.MetricEstimateV1.model_validate(
+        system["metrics"]["frontend.required_field_recall"]
+    )
+    system["metrics"]["frontend.required_field_f1"] = evidence_module._derived_f1(
+        precision, recall
+    ).model_dump(mode="json")
+
+    with pytest.raises(
+        ValidationError,
+        match="required-field precision and recall must share a numerator",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+@pytest.mark.parametrize(
+    ("numerator", "denominator", "message"),
+    [
+        (3, 5, "source-span rates must share a denominator"),
+        (2, 4, "exact source-span numerator must not exceed overlapping source spans"),
+    ],
+)
+def test_system_metrics_schema_binds_source_span_counts(numerator, denominator, message):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_metric_counts(
+        system,
+        "frontend.source_span_overlap_rate",
+        numerator,
+        denominator,
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        evidence_module.SystemMetricsV1.model_validate(system)
 
 
 def test_benchmark_metrics_schema_rejects_aggregate_record_count_mismatch():
@@ -377,7 +650,7 @@ def test_system_metrics_schema_rejects_mismatched_derived_f1():
     [
         ((0, 3), (0, 4), 0.0),
         ((0, 0), (0, 4), None),
-        ((2, 4), (3, 4), 0.6),
+        ((3, 6), (3, 4), 0.6),
     ],
 )
 def test_system_metrics_schema_accepts_recomputed_f1_for_zero_and_nonzero_cases(
