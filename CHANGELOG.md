@@ -16,6 +16,7 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A credential-free raw-source-to-validated-text reference workflow.
 - Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
   adapter runs, with portable typed identities and untrusted CLI locators kept separate.
+- A reproducible wheel/sdist inspection and outside-checkout offline execution gate.
 
 ## [0.1.0] - Unreleased
 
