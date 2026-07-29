@@ -71,6 +71,12 @@ raw-source examples remain.
 
 ## Phase 1: Complete the demonstration corpus
 
+Status: in progress. `demonstration-corpus-1` now provides 12 original MIT-licensed records with
+frozen splits, raw source and gold IR, deterministic text and symbolic plans, resource snapshots,
+feature coverage, leakage checks, licensing, manifests, checksums, and byte-for-byte reconstruction
+and verification. Benchmark-scale expansion, exhaustive schema-negative coverage, and publication
+as a versioned downloadable release remain.
+
 ### Deliverables
 
 - Original or otherwise redistributable raw technical source documents.

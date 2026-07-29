@@ -1,0 +1,81 @@
+{
+  "artifacts": [
+    {
+      "bytes": 10941,
+      "path": "adversarial.jsonl",
+      "sha256": "3d56e2a053710ab6c66635ae2534e34ea93506467f56cf61369a05ce8af901bd"
+    },
+    {
+      "bytes": 746,
+      "path": "dataset-card.md",
+      "sha256": "c5a8eec55526fbb1869654bfc158e39ea1dba33ddb8901a36712889c0187cc87"
+    },
+    {
+      "bytes": 5376,
+      "path": "feature-coverage.json",
+      "sha256": "39a8b2bd4213ab974231b5b70116ec6e643f004e2efdc5b16df0b7e565200d61"
+    },
+    {
+      "bytes": 157,
+      "path": "leakage-report.json",
+      "sha256": "8e36ad2c4bfcd5b0d7470c892b035dce3716e40340dab163a3ff6bf15e50f026"
+    },
+    {
+      "bytes": 3101,
+      "path": "license-inventory.json",
+      "sha256": "b3957537cbffd9620324e849758f1301e305d2d372d07f36f29418d9190e10ce"
+    },
+    {
+      "bytes": 15716,
+      "path": "source-construction.json",
+      "sha256": "224651951dd10854ce98667f388697c88c5bb12c08e13c13ea4fed01e92dca7a"
+    },
+    {
+      "bytes": 2076,
+      "path": "terminology.json",
+      "sha256": "75cb44690ac9bbe49bd5f40b66af34a0d2f2cc11cec027760afd8646439948f6"
+    },
+    {
+      "bytes": 13956,
+      "path": "test.jsonl",
+      "sha256": "35cda2193cd5c76ec349d8bfb8e4b5e09c9e6450bc6d8ac26cc5cb84c9838e9a"
+    },
+    {
+      "bytes": 12324,
+      "path": "train.jsonl",
+      "sha256": "d99ded276778404c446768256db35c276fa8cd520778d9dade049fbb660b173b"
+    },
+    {
+      "bytes": 7988,
+      "path": "validation.jsonl",
+      "sha256": "de66ce045c8ce7942bcbbca0600e415b1d283d223a310c53617be5953c13407d"
+    },
+    {
+      "bytes": 31465,
+      "path": "vocabulary.json",
+      "sha256": "bee40f7a3c3e4f487708b520f193cf434cfe660cf814467cecacce6721bfe1b6"
+    }
+  ],
+  "construction_sha256": "224651951dd10854ce98667f388697c88c5bb12c08e13c13ea4fed01e92dca7a",
+  "dataset_version": "demonstration-corpus-1",
+  "profiles": [
+    {
+      "frontend": "deterministic-corpus-construction",
+      "frontend_version": "0.1.0",
+      "realizer": "deterministic",
+      "realizer_version": "0.1.0",
+      "terminology_version": "demonstration-corpus-1",
+      "validator_profile": "strict-demo-1",
+      "vocabulary_version": "demo-2"
+    }
+  ],
+  "record_count": 12,
+  "schema_version": "demonstration-corpus-release-v1",
+  "seed": 1729,
+  "split_counts": {
+    "adversarial": 3,
+    "test": 3,
+    "train": 4,
+    "validation": 2
+  }
+}

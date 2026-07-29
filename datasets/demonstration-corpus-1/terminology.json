@@ -1,0 +1,82 @@
+{
+  "license": "MIT; original demonstration terminology, not ASD-STE100 terminology",
+  "terms": [
+    {
+      "aliases": [
+        "system pressure"
+      ],
+      "allowed_roles": [
+        "technical_noun"
+      ],
+      "canonical_form": "hydraulic pressure",
+      "definition": "Pressure in the synthetic demonstration hydraulic system.",
+      "domain": "demonstration",
+      "id": "hydraulic_pressure",
+      "replacement_term_id": null,
+      "source": {
+        "reference": "demonstration-corpus-1",
+        "type": "glossary"
+      },
+      "status": "approved",
+      "version": 1
+    },
+    {
+      "aliases": [
+        "stop valve"
+      ],
+      "allowed_roles": [
+        "technical_noun"
+      ],
+      "canonical_form": "shutoff valve",
+      "definition": "A synthetic valve that stops fluid flow.",
+      "domain": "demonstration",
+      "id": "shutoff_valve",
+      "replacement_term_id": null,
+      "source": {
+        "reference": "demonstration-corpus-1",
+        "type": "glossary"
+      },
+      "status": "approved",
+      "version": 1
+    },
+    {
+      "aliases": [
+        "service panel"
+      ],
+      "allowed_roles": [
+        "technical_noun"
+      ],
+      "canonical_form": "access panel",
+      "definition": "A synthetic removable equipment panel.",
+      "domain": "demonstration",
+      "id": "access_panel",
+      "replacement_term_id": null,
+      "source": {
+        "reference": "demonstration-corpus-1",
+        "type": "glossary"
+      },
+      "status": "approved",
+      "version": 1
+    },
+    {
+      "aliases": [
+        "cafe area"
+      ],
+      "allowed_roles": [
+        "technical_noun"
+      ],
+      "canonical_form": "café area",
+      "definition": "A synthetic maintenance area used to exercise Unicode terminology.",
+      "domain": "demonstration",
+      "id": "cafe_area",
+      "replacement_term_id": null,
+      "source": {
+        "reference": "demonstration-corpus-1",
+        "type": "glossary"
+      },
+      "status": "approved",
+      "version": 1
+    }
+  ],
+  "version": "demonstration-corpus-1"
+}

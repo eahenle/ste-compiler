@@ -150,6 +150,37 @@ assert result.exit_code == 0, result.output
     assert json.loads((corpus / "current" / "manifest.json").read_text())["record_count"] == 5
     assert len((corpus / "current" / "corpus.jsonl").read_text().splitlines()) == 5
 
+    demonstration_corpus = tmp_path / "demonstration-corpus"
+    subprocess.run(
+        [
+            *command,
+            "build-demonstration-corpus",
+            "--output",
+            str(demonstration_corpus),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    release_manifest = json.loads((demonstration_corpus / "manifest.json").read_text())
+    assert release_manifest["record_count"] == 12
+    assert (demonstration_corpus / "terminology.json").is_file()
+    assert (demonstration_corpus / "vocabulary.json").is_file()
+    subprocess.run(
+        [
+            *command,
+            "verify-demonstration-corpus",
+            str(demonstration_corpus),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
     reports = tmp_path / "reports"
     subprocess.run(
         [*command, "evaluate", "--output", str(reports)],
