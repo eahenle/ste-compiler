@@ -17,7 +17,7 @@ class StrictResultModel(BaseModel):
 
 
 class SourceIdentity(StrictResultModel):
-    id: str = Field(min_length=1)
+    id: str = Field(min_length=1, pattern=r"\S")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 

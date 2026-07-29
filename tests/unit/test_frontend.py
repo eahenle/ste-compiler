@@ -44,6 +44,7 @@ def test_replay_frontend_verifies_source_and_overrides_proposed_identity():
     ("change", "message"),
     [
         ({"source_id": "other.txt"}, "expected 'hydraulic_warning.txt'"),
+        ({"source_id": " "}, "String should match pattern"),
         ({"end": 10_000}, "exceeds source length"),
         ({"quote": "Stop something else."}, "quote does not match"),
     ],

@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 from ste_compiler.cli import app
 from ste_compiler.ir.models import Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document
-from ste_compiler.results import CompileSourceResult
+from ste_compiler.results import CompileSourceResult, SourceIdentity
 from ste_compiler.training import TrainingRecordValidationError, build_training_record
 
 ROOT = Path(__file__).parents[2]
@@ -43,6 +43,7 @@ def test_cli_prints_versioned_compile_source_json_schema():
     assert schema["title"] == "CompileSourceResult"
     assert schema["properties"]["schema_version"]["const"] == "compile-source-v1"
     assert schema["properties"]["source"]["$ref"].endswith("/SourceIdentity")
+    assert schema["$defs"]["SourceIdentity"]["properties"]["id"]["pattern"] == r"\S"
     assert schema["required"] == [
         "schema_version",
         "source",
@@ -57,6 +58,8 @@ def test_cli_prints_versioned_compile_source_json_schema():
     payload.pop("schema_version")
     with pytest.raises(ValidationError):
         CompileSourceResult.model_validate(payload)
+    with pytest.raises(ValidationError):
+        SourceIdentity(id=" \t", sha256="0" * 64)
 
 
 def test_cli_compiles_raw_source_with_verified_replay_fixture():

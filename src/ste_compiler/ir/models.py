@@ -24,7 +24,7 @@ class SectionKind(StrEnum):
 
 
 class SourceSpan(StrictModel):
-    source_id: str
+    source_id: str = Field(min_length=1, pattern=r"\S")
     start: int = Field(ge=0)
     end: int = Field(gt=0)
     quote: str | None = None
