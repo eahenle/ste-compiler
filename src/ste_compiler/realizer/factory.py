@@ -53,6 +53,13 @@ class _ConfiguredRealizer:
         self._config_sha256 = config_sha256
         self._artifact_mode = artifact_mode
 
+    def prepare(self) -> None:
+        """Eagerly establish a delegate's optional artifact trust boundary."""
+
+        prepare = getattr(self._delegate, "prepare", None)
+        if callable(prepare):
+            prepare()
+
     def realize(
         self,
         document: Document,
@@ -87,6 +94,11 @@ class _LazyDecoderOnlyLoRASymbolGenerator:
     def _generator(self) -> DecoderOnlyLoRASymbolGenerator:
         return DecoderOnlyLoRASymbolGenerator(self.config)
 
+    def prepare(self) -> None:
+        """Load the configured runtime without generating a record."""
+
+        _ = self._generator
+
     def generate_symbols(
         self,
         serialized_ir: str,
@@ -114,6 +126,11 @@ class _LazyLocalDecoderOnlyLoRASymbolGenerator:
     @cached_property
     def _generator(self) -> DecoderOnlyLoRASymbolGenerator:
         return load_local_decoder_lora_generator(self.config)
+
+    def prepare(self) -> None:
+        """Verify and load local artifacts without generating a record."""
+
+        _ = self._generator
 
     @property
     def run_manifest_sha256(self) -> str:

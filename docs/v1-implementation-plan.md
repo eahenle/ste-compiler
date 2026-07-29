@@ -136,7 +136,10 @@ split records. Both tracks now include deterministic offline two-step CPU mechan
 full-corpus tokenizer and overflow preflight, atomic safetensors-only output, runtime-derived run
 manifests, canonical content-bound bundle manifests, hardened standalone preflight, reload
 evaluation, CLI, CI, and installed-wheel coverage. Safe resume state, public model selection,
-measured reference runs, and published prediction hashes remain.
+measured quality-bearing reference runs, and publication of model bytes remain. A
+decision-independent dual-architecture mechanics release now verifies both local loaders, records
+canonical prediction or rejection hashes, requires exact license declarations, writes model
+cards, and reproduces byte for byte without embedding weights.
 
 ### Shared deliverables
 
@@ -199,7 +202,9 @@ encoder-decoder, and decoder-only LoRA realization for `compile` and the offline
 identities in provenance. Standalone artifact preflight now verifies complete local trainer
 outputs against externally retained digests. Additive local-bundle configurations now load both
 trainer architectures from exact private captures; the decoder path separately binds its base
-snapshot. Explicit fetch and published reference configurations remain.
+snapshot. The dual-architecture mechanics release now emits immutable local configurations,
+model cards, exact prediction hashes, and reproducible verification commands. Explicit fetch,
+public base selection, artifact hosting, and quality-bearing reference configurations remain.
 
 ### Deliverables
 

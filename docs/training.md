@@ -283,6 +283,13 @@ reviewed, licensed, published immutably, checksummed, benchmarked, and named by 
 configuration. Explicit fetching, reference artifact publication, and benchmark reproduction
 remain follow-up slices. The checked-in identities are not published checkpoints or quality claims.
 
+The decision-independent promotion workflow is now implemented by
+[`build-reference-release`](reference-artifact-release.md). It requires explicit license and
+origin declarations, consumes both trainer outputs through the production local loaders, and emits
+hashed predictions, model cards, runtime configurations, and a content-bound metadata release.
+It does not choose public bases, copy weights, choose hosting, or convert mechanics evidence into a
+quality claim.
+
 ## Remaining training gates
 
 Both tracks still need documented single-GPU reference configurations, published model artifacts,

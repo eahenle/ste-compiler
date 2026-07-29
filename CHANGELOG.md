@@ -17,6 +17,9 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
   adapter runs, with portable typed identities and untrusted CLI locators kept separate.
 - A reproducible wheel/sdist inspection and outside-checkout offline execution gate.
+- A dual-architecture mechanics release workflow with explicit license authorization, immutable
+  local-loader configurations, canonical prediction hashes, model cards, and byte-reproducible
+  verification without embedding model weights.
 
 ## [0.1.0] - Unreleased
 

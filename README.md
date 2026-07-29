@@ -98,6 +98,15 @@ Both trainers also emit a canonical `artifact-manifest.json` that binds the comp
 Retain the SHA-256 reported by training and use `ste-compiler preflight-artifact` to verify and
 privately re-capture the exact bundle before publication or consumption.
 
+`build-reference-release` assembles both trainer architectures into one small content-addressed
+metadata release. It consumes the actual local loaders, records canonical prediction or rejection
+JSONL and prediction hashes, writes exact model cards and license declarations, and leaves model
+weights in separately identified external bundles. `verify-reference-release --regenerate`
+requires the complete release to reproduce byte for byte. See the
+[dual-architecture release guide](docs/reference-artifact-release.md). The checked-in
+authorization example is only for repository-generated synthetic fixtures; no public base model,
+hosting target, or quality claim is selected.
+
 ## Offline realizer selection
 
 Strict `ste-realizer-config-v1` files select the deterministic, encoder-decoder, or decoder-only
@@ -193,6 +202,7 @@ General BPE token masking is insufficient: one word can span tokens, a token can
 See the [end-to-end demo](docs/end-to-end-demo.md),
 [reproducible training guide](docs/training.md),
 [typed offline neural runtime guide](docs/neural-runtime.md),
+[dual-architecture release guide](docs/reference-artifact-release.md),
 [V1 implementation plan](docs/v1-implementation-plan.md),
 [architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the ADRs for assumptions
 and limitations. Project policies are in [CONTRIBUTING.md](CONTRIBUTING.md),

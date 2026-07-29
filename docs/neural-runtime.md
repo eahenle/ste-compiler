@@ -163,3 +163,8 @@ This slice does not provide:
 
 Explicit fetch, reference model selection, artifact publication, benchmark reproduction, and
 production-neutral large-model snapshot packaging remain later release gates.
+
+The [dual-architecture reference release workflow](reference-artifact-release.md) now exercises
+both local loaders together and records immutable configs, model cards, license declarations, and
+prediction hashes. The workflow packages metadata only; public model selection, model-byte
+hosting, and quality-bearing benchmark results remain explicit release decisions.

@@ -131,7 +131,7 @@ jobs:
           cache-suffix: encoder-training
       - name: Offline two-step trainer and installed wheel
         run: >-
-          uv run --locked --python 3.12 --extra dev --extra encoder-training
+          uv run --locked --python 3.12 --extra dev --extra encoder-training --extra neural
           pytest -q -m neural
 
   distribution-smoke:

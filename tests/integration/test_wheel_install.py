@@ -145,6 +145,28 @@ assert result.exit_code == 0, result.output
     )
     assert not artifact_import.stderr
 
+    reference_release_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from ste_compiler.reference_release import "
+                "ReferenceReleaseManifestV1, ReferenceReleaseMetadataV1, "
+                "build_reference_release, read_verified_reference_release, "
+                "verify_reference_release; "
+                "assert ReferenceReleaseManifestV1 and ReferenceReleaseMetadataV1 "
+                "and build_reference_release and read_verified_reference_release "
+                "and verify_reference_release"
+            ),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert not reference_release_import.stderr
+
     demo = subprocess.run(
         [*command, "demo", "--json"],
         cwd=tmp_path,
@@ -263,8 +285,12 @@ assert result.exit_code == 0, result.output
 
     training_config = installed / "ste_compiler/data/training/encoder-decoder-schema-example.yaml"
     decoder_config = installed / "ste_compiler/data/training/decoder-only-lora-schema-example.yaml"
+    reference_metadata = (
+        installed / "ste_compiler/data/reference-release/synthetic-mechanics-metadata.json"
+    )
     assert training_config.is_file()
     assert decoder_config.is_file()
+    assert reference_metadata.is_file()
     validated_training = subprocess.run(
         [*command, "validate-training-config", str(training_config), "--json"],
         cwd=tmp_path,
@@ -346,6 +372,14 @@ assert result.exit_code == 0, result.output
         capture_output=True,
         text=True,
     )
+    reference_release_schema = subprocess.run(
+        [*command, "schema", "reference-release"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     assert (
         json.loads(artifact_manifest_schema.stdout)["properties"]["schema_version"]["const"]
         == "ste-artifact-bundle-v1"
@@ -353,6 +387,10 @@ assert result.exit_code == 0, result.output
     assert (
         json.loads(artifact_preflight_schema.stdout)["properties"]["schema_version"]["const"]
         == "ste-artifact-preflight-v1"
+    )
+    assert (
+        json.loads(reference_release_schema.stdout)["properties"]["schema_version"]["const"]
+        == "ste-reference-artifact-release-v1"
     )
     packaged_example = installed / "ste_compiler/data/examples/negative.yaml"
     configured_compile = subprocess.run(
