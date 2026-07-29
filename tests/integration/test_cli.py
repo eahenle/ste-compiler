@@ -83,8 +83,9 @@ def test_cli_compiles_raw_source_with_verified_replay_fixture():
 def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
     example_root = ROOT / "data/end_to_end"
     changed = tmp_path / "hydraulic_warning.txt"
-    changed.write_text(
-        (example_root / "hydraulic_warning.txt").read_text().replace("injury", "damage")
+    changed.write_bytes(
+        (example_root / "hydraulic_warning.txt").read_bytes()
+        + b"\nDisconnect the pump before maintenance.\n"
     )
 
     result = runner.invoke(
@@ -98,7 +99,7 @@ def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
     )
 
     assert result.exit_code == 1
-    assert "quote does not match the source" in result.stderr
+    assert "source SHA-256 does not match the fixture" in result.stderr
     assert "Traceback" not in result.output
 
 
@@ -147,7 +148,16 @@ def test_cli_preserves_crlf_source_offsets_and_hashes_original_bytes(tmp_path):
         "validator_profile": "forged-validator",
     }
     fixture = tmp_path / "windows-source.ir.yaml"
-    fixture.write_text(yaml.safe_dump(proposal, sort_keys=False))
+    fixture.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "replay-ir-v1",
+                "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+                "ir": proposal,
+            },
+            sort_keys=False,
+        )
+    )
 
     result = runner.invoke(
         app,

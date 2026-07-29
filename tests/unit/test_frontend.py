@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,13 @@ EXAMPLE_ROOT = ROOT / "data/end_to_end"
 def _proposal() -> dict[str, object]:
     raw = yaml.safe_load((EXAMPLE_ROOT / "hydraulic_warning.ir.yaml").read_text())
     assert isinstance(raw, dict)
-    return raw
+    proposal = raw["ir"]
+    assert isinstance(proposal, dict)
+    return proposal
+
+
+def _source_digest(source: str) -> str:
+    return hashlib.sha256(source.encode()).hexdigest()
 
 
 def test_replay_frontend_verifies_source_and_overrides_proposed_identity():
@@ -23,7 +30,7 @@ def test_replay_frontend_verifies_source_and_overrides_proposed_identity():
     metadata["frontend"] = "untrusted-claim"
     metadata["frontend_version"] = "untrusted-version"
 
-    document = LLMFrontend(ReplayIRProvider(proposal)).parse(
+    document = LLMFrontend(ReplayIRProvider(proposal, _source_digest(source))).parse(
         source,
         source_id="hydraulic_warning.txt",
     )
@@ -48,7 +55,7 @@ def test_replay_frontend_rejects_unverifiable_provenance(change, message):
     span.update(change)
 
     with pytest.raises(ValueError, match=message):
-        LLMFrontend(ReplayIRProvider(proposal), retries=0).parse(
+        LLMFrontend(ReplayIRProvider(proposal, _source_digest(source)), retries=0).parse(
             source,
             source_id="hydraulic_warning.txt",
         )
@@ -93,10 +100,27 @@ def test_replay_provider_rejects_unsupported_or_non_object_fixtures(tmp_path):
     with pytest.raises(ValueError, match="string-keyed object"):
         ReplayIRProvider.from_path(sequence)
 
+    missing_envelope = tmp_path / "missing-envelope.yaml"
+    missing_envelope.write_text("ir: {}\n")
+    with pytest.raises(ValueError, match="must contain exactly"):
+        ReplayIRProvider.from_path(missing_envelope)
+
     malformed = tmp_path / "malformed.yaml"
     malformed.write_text("sections: [unterminated")
     with pytest.raises(ValueError, match="invalid replay IR fixture"):
         ReplayIRProvider.from_path(malformed)
+
+
+def test_replay_provider_binds_proposal_to_the_complete_source():
+    source = (EXAMPLE_ROOT / "hydraulic_warning.txt").read_text()
+    provider = ReplayIRProvider(_proposal(), _source_digest(source))
+
+    with pytest.raises(ValueError, match="source SHA-256 does not match"):
+        provider.extract_ir(
+            source + "\nDisconnect the pump.",
+            {},
+            None,
+        )
 
 
 def test_llm_frontend_rejects_blank_provider_identity():

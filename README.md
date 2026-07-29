@@ -43,10 +43,11 @@ pytest
 
 `demo` is the credential-free end-to-end reference workflow. It reads packaged raw source, replays
 a checked-in gold IR proposal through the same schema and provenance boundary used by an LLM
-frontend, verifies every quoted source span against exact character offsets, realizes controlled
-text, and runs the validators. Replay is deliberately identified as `offline-replay`; it
-demonstrates the full compiler boundary without claiming that a model extracted the gold IR.
-`compile-source` exposes the same workflow for an explicit raw-source and IR-fixture pair.
+frontend, verifies the complete source SHA-256 and every quoted source span against exact character
+offsets, realizes controlled text, and runs the validators. Replay is deliberately identified as
+`offline-replay`; it demonstrates the full compiler boundary without claiming that a model
+extracted the gold IR. `compile-source` exposes the same workflow for an explicit raw-source and
+IR-fixture pair.
 
 ## Extension points
 

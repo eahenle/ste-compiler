@@ -63,7 +63,8 @@ raw-source examples remain.
 ### Acceptance gates
 
 - The workflow runs without network access or credentials.
-- A changed source file invalidates the replayed provenance and fails without a traceback.
+- A versioned replay fixture binds to the complete source SHA-256; any byte change invalidates it
+  and fails without a traceback.
 - Frontend identity in output metadata comes from the configured frontend, not from its proposal.
 - The installed wheel can execute the example outside the repository checkout.
 - The deterministic result is stable across supported Python versions.

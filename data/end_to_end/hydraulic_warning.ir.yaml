@@ -1,35 +1,38 @@
-id: hydraulic_warning_source
-title: hydraulic warning from raw source
-sections:
-- id: warning_section
-  kind: warning
-  statements:
-  - kind: instruction
-    id: stop_pressure
-    action:
-      id: stop
-      lemma: stop
-    object:
-      term_id: hydraulic_pressure
-    source_spans:
-    - source_id: hydraulic_warning.txt
-      start: 0
-      end: 79
-      quote: Stop the hydraulic pressure if it is more than 20 MPa because injury can occur.
-    conditions:
-    - id: pressure_above_threshold
-      subject:
+schema_version: replay-ir-v1
+source_sha256: b4c9933386cfff902e7fbd087ff95031993ab4dcbfb870fb92ce722ba8579f37
+ir:
+  id: hydraulic_warning_source
+  title: hydraulic warning from raw source
+  sections:
+  - id: warning_section
+    kind: warning
+    statements:
+    - kind: instruction
+      id: stop_pressure
+      action:
+        id: stop
+        lemma: stop
+      object:
         term_id: hydraulic_pressure
-      predicate: is
-      value:
-        value: 20
-        unit: MPa
-        comparator: more_than
-    hazards:
-    - id: injury_hazard
-      severity: warning
-      consequence: injury
-      threshold:
-        value: 20
-        unit: MPa
-        comparator: more_than
+      source_spans:
+      - source_id: hydraulic_warning.txt
+        start: 0
+        end: 79
+        quote: Stop the hydraulic pressure if it is more than 20 MPa because injury can occur.
+      conditions:
+      - id: pressure_above_threshold
+        subject:
+          term_id: hydraulic_pressure
+        predicate: is
+        value:
+          value: 20
+          unit: MPa
+          comparator: more_than
+      hazards:
+      - id: injury_hazard
+        severity: warning
+        consequence: injury
+        threshold:
+          value: 20
+          unit: MPa
+          comparator: more_than

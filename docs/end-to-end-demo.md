@@ -59,22 +59,23 @@ ste-compiler compile-source \
   --json
 ```
 
-The fixture's `source_spans` must identify `hydraulic_warning.txt`. Every span must be within the
-raw source and its `quote` must exactly equal the source substring at `[start:end]`. Changing the
-source without updating and re-reviewing the gold IR therefore fails closed:
+The versioned replay fixture includes the SHA-256 of the complete source file. Its `source_spans`
+must identify `hydraulic_warning.txt`; every span must be within the raw source and its `quote`
+must exactly equal the source substring at `[start:end]`. Changing any source byte—including text
+outside all represented spans—without updating and re-reviewing the gold IR therefore fails closed:
 
 ```text
-source span 0:79 quote does not match the source
+replay IR source SHA-256 does not match the fixture
 ```
 
 Use `--source-id` when the logical source identity is intentionally different from the filename.
 
 ## Trust boundary
 
-The replay provider returns an untrusted object. `LLMFrontend` applies the `Document` schema,
-requires provenance for each statement, validates ambiguity spans, verifies exact source identity
-and text, and overwrites any frontend identity claimed by the proposal. Only then can realization
-and validation run.
+The replay provider binds its untrusted object to the complete source digest. `LLMFrontend` then
+applies the `Document` schema, requires provenance for each statement, validates ambiguity spans,
+verifies exact source identity and text, and overwrites any frontend identity claimed by the
+proposal. Only then can realization and validation run.
 
 The next frontend milestone adds an optional live structured provider behind the same boundary.
 The offline demo will remain the stable regression and documentation path.
