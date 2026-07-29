@@ -197,11 +197,13 @@ class ReferencePredictionV1(_StrictModel):
     validation_status: Literal["accepted", "rejected"] | None
     diagnostic_codes: tuple[str, ...]
     metadata: dict[str, str]
-    error_type: str | None
+    error_type: str | None = Field(min_length=1, max_length=256)
     error: str | None = Field(default=None, max_length=4096)
 
     @model_validator(mode="after")
     def outcome_fields_match(self) -> ReferencePredictionV1:
+        if (self.error is None) != (self.error_type is None):
+            raise ValueError("error and error_type must either both be present or both be null")
         rejected_by_generation = self.error is not None
         if self.outcome == "accepted":
             if rejected_by_generation or self.validation_status != "accepted" or self.text is None:

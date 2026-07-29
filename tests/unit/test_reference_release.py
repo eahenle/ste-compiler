@@ -17,6 +17,7 @@ from ste_compiler.realizer.decoder_lora import DecoderOnlyLoRAError
 from ste_compiler.realizer.encoder_decoder import EncoderDecoderError
 from ste_compiler.reference_release import (
     REFERENCE_RELEASE_FILES,
+    ReferencePredictionV1,
     ReferenceReleaseError,
     ReferenceReleaseMetadataV1,
     ReferenceTrackAuthorizationV1,
@@ -159,6 +160,78 @@ def _install_architecture_failure(monkeypatch, architecture, error_type, *, fail
 
     monkeypatch.setattr(release_module, "build_realizer", build)
     return failing
+
+
+def _prediction_payload(**updates):
+    payload = {
+        "schema_version": "ste-reference-prediction-v1",
+        "architecture": "encoder-decoder",
+        "record_id": "test-001",
+        "split": "test",
+        "corpus_manifest_sha256": "a" * 64,
+        "realizer_config_sha256": "b" * 64,
+        "outcome": "accepted",
+        "text": "The unit operates.",
+        "validation_status": "accepted",
+        "diagnostic_codes": [],
+        "metadata": {},
+        "error_type": None,
+        "error": None,
+    }
+    payload.update(updates)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _prediction_payload(error_type="EncoderDecoderError"),
+        _prediction_payload(
+            outcome="rejected",
+            validation_status="rejected",
+            error_type="DecoderOnlyLoRAError",
+        ),
+        _prediction_payload(
+            outcome="rejected",
+            text=None,
+            validation_status=None,
+            error="generation failed",
+        ),
+    ),
+)
+def test_prediction_schema_rejects_unpaired_generation_error_fields(payload):
+    with pytest.raises(ValueError, match="both be present or both be null"):
+        ReferencePredictionV1.model_validate_json(payload)
+
+
+def test_prediction_schema_accepts_complete_generation_rejection():
+    prediction = ReferencePredictionV1.model_validate_json(
+        _prediction_payload(
+            outcome="rejected",
+            text=None,
+            validation_status=None,
+            error_type="EncoderDecoderError",
+            error="generation failed",
+        )
+    )
+
+    assert prediction.outcome == "rejected"
+    assert prediction.error_type == "EncoderDecoderError"
+    assert prediction.error == "generation failed"
+
+
+@pytest.mark.parametrize("error_type", ("", "E" * 257))
+def test_prediction_schema_bounds_generation_error_type(error_type):
+    with pytest.raises(ValueError):
+        ReferencePredictionV1.model_validate_json(
+            _prediction_payload(
+                outcome="rejected",
+                text=None,
+                validation_status=None,
+                error_type=error_type,
+                error="generation failed",
+            )
+        )
 
 
 @pytest.mark.parametrize(
