@@ -8,6 +8,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+import ste_compiler.evaluation as evaluation_api
 from ste_compiler.evaluation import (
     BenchmarkMetricsV1,
     BenchmarkSpecV1,
@@ -16,7 +17,6 @@ from ste_compiler.evaluation import (
     PredictionRecordV1,
     ReportManifestV1,
     generate_evidence_report,
-    recompute_metrics,
 )
 from ste_compiler.evaluation import evidence as evidence_module
 
@@ -55,6 +55,109 @@ def _replace_metric_counts(system, name: str, numerator: int, denominator: int) 
     )
 
 
+def _replace_failure_code(system, old_code: str, new_code: str) -> None:
+    count = system["failure_code_counts"].pop(old_code)
+    system["failure_code_counts"][new_code] = count
+
+
+def _make_failure_code_observation_infeasible(system, failure_code: str) -> None:
+    if failure_code.startswith("frontend."):
+        if failure_code != "frontend.schema_invalid":
+            _replace_failure_code(
+                system,
+                "frontend.schema_invalid",
+                failure_code,
+            )
+        if failure_code == "frontend.schema_invalid":
+            _replace_metric_counts(system, "frontend.schema_valid_rate", 4, 4)
+        elif failure_code == "frontend.required_field_omission":
+            precision = evidence_module._wilson(14, 14)
+            recall = evidence_module._wilson(14, 14)
+            system["metrics"]["frontend.required_field_precision"] = precision.model_dump(
+                mode="json"
+            )
+            system["metrics"]["frontend.required_field_recall"] = recall.model_dump(mode="json")
+            system["metrics"]["frontend.required_field_f1"] = evidence_module._derived_f1(
+                precision,
+                recall,
+            ).model_dump(mode="json")
+        elif failure_code == "frontend.source_span_mismatch":
+            _replace_metric_counts(system, "frontend.source_span_exact_rate", 4, 4)
+            _replace_metric_counts(system, "frontend.source_span_overlap_rate", 4, 4)
+        elif failure_code == "frontend.ambiguity_not_preserved":
+            _replace_metric_counts(
+                system,
+                "frontend.ambiguity_preservation_rate",
+                1,
+                1,
+            )
+    else:
+        if failure_code != "realizer.unauthorized_symbol":
+            _replace_failure_code(
+                system,
+                "realizer.unauthorized_symbol",
+                failure_code,
+            )
+        metric_replacements = {
+            "realizer.unauthorized_symbol": (
+                "realizer.unauthorized_symbol_rate",
+                0,
+                31,
+            ),
+            "realizer.incomplete_eos": (
+                "realizer.eos_completion_rate",
+                3,
+                3,
+            ),
+            "realizer.grammar_invalid": (
+                "realizer.grammar_valid_rate",
+                3,
+                3,
+            ),
+            "realizer.constraint_rejection": (
+                "realizer.constraint_rejection_rate",
+                0,
+                3,
+            ),
+        }
+        metric_name, numerator, denominator = metric_replacements[failure_code]
+        _replace_metric_counts(system, metric_name, numerator, denominator)
+
+
+def _make_multi_event_failure_code_feasible(system, failure_code: str) -> None:
+    if failure_code.startswith("frontend."):
+        _replace_failure_code(
+            system,
+            "frontend.schema_invalid",
+            failure_code,
+        )
+    metric_replacements = {
+        "frontend.source_span_mismatch": (
+            "frontend.source_span_exact_rate",
+            2,
+            4,
+        ),
+        "frontend.hallucinated_node": (
+            "frontend.hallucinated_node_rate",
+            2,
+            11,
+        ),
+        "frontend.ambiguity_not_preserved": (
+            "frontend.ambiguity_preservation_rate",
+            1,
+            3,
+        ),
+        "realizer.unauthorized_symbol": (
+            "realizer.unauthorized_symbol_rate",
+            2,
+            31,
+        ),
+    }
+    replacement = metric_replacements.get(failure_code)
+    if replacement is not None:
+        _replace_metric_counts(system, *replacement)
+
+
 def _fixture_spec_and_records():
     spec = BenchmarkSpecV1.model_validate_json(SPECIFICATION.read_bytes())
     records = tuple(
@@ -87,7 +190,7 @@ def _two_system_spec_and_records():
 
 
 def _recompute(spec, records):
-    return recompute_metrics(
+    return evidence_module._recompute_metrics(
         spec,
         records,
         spec_sha256="0" * 64,
@@ -96,15 +199,10 @@ def _recompute(spec, records):
     )
 
 
-def _resign_predictions(tmp_path: Path, mutate) -> tuple[Path, Path]:
-    predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
-    mutate(predictions)
-    prediction_bytes = b"".join(
-        (
-            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
-        ).encode()
-        for record in predictions
-    )
+def _write_prediction_artifacts(
+    tmp_path: Path,
+    prediction_bytes: bytes,
+) -> tuple[Path, Path]:
     prediction_path = tmp_path / "predictions.jsonl"
     prediction_path.write_bytes(prediction_bytes)
     manifest = json.loads(PREDICTION_MANIFEST.read_text())
@@ -116,6 +214,18 @@ def _resign_predictions(tmp_path: Path, mutate) -> tuple[Path, Path]:
     manifest_path = tmp_path / "prediction-manifest.json"
     manifest_path.write_text(json.dumps(manifest))
     return manifest_path, prediction_path
+
+
+def _resign_predictions(tmp_path: Path, mutate) -> tuple[Path, Path]:
+    predictions = [json.loads(line) for line in PREDICTIONS.read_text().splitlines()]
+    mutate(predictions)
+    prediction_bytes = b"".join(
+        (
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode()
+        for record in predictions
+    )
+    return _write_prediction_artifacts(tmp_path, prediction_bytes)
 
 
 def _resign_two_system_benchmark(
@@ -253,6 +363,171 @@ def test_fixture_report_reconstructs_byte_for_byte(tmp_path):
         "| `realizer.unauthorized_symbol` | 1 |\n"
         "| `validator.semantic_rejection` | 1 |"
     ) in report
+
+
+def test_metric_maps_are_deeply_immutable_and_serialize_canonically():
+    expected_bytes = (EXPECTED / "metrics.json").read_bytes()
+    metrics = BenchmarkMetricsV1.model_validate_json(expected_bytes)
+    system_id = "failure-taxonomy-fixture-v1"
+    system = metrics.systems[system_id]
+
+    with pytest.raises(TypeError):
+        metrics.systems["another-system"] = system  # type: ignore[index]
+    with pytest.raises(TypeError):
+        system.metrics["complete_success_rate"] = system.metrics[  # type: ignore[index]
+            "complete_success_rate"
+        ]
+    with pytest.raises(TypeError):
+        system.failure_stage_counts["none"] = 4  # type: ignore[index]
+    with pytest.raises(TypeError):
+        system.failure_code_counts["frontend.schema_invalid"] = 4  # type: ignore[index]
+
+    assert json.loads(metrics.model_dump_json()) == json.loads(expected_bytes)
+    assert evidence_module._canonical_json(metrics) == expected_bytes
+
+
+def test_immutable_metric_maps_remain_json_object_schemas():
+    schema = BenchmarkMetricsV1.model_json_schema()
+    systems = schema["properties"]["systems"]
+    system = schema["$defs"]["SystemMetricsV1"]["properties"]
+
+    assert systems["type"] == "object"
+    assert systems["minProperties"] == 1
+    assert systems["additionalProperties"] == {"$ref": "#/$defs/SystemMetricsV1"}
+    for field in ("metrics", "failure_stage_counts", "failure_code_counts"):
+        assert system[field]["type"] == "object"
+        assert "additionalProperties" in system[field]
+
+
+def test_typed_record_recomputation_is_not_part_of_the_public_api():
+    assert "recompute_metrics" not in evaluation_api.__all__
+    assert not hasattr(evaluation_api, "recompute_metrics")
+
+
+@pytest.mark.parametrize(
+    ("source", "argument_name", "needle", "replacement", "duplicate_key"),
+    (
+        (
+            SPECIFICATION,
+            "specification_path",
+            b'    "dataset_version": "demonstration-corpus-2",',
+            (
+                b'    "dataset_version": "demonstration-corpus-2",\n'
+                b'    "dataset_version": "demonstration-corpus-2",'
+            ),
+            "dataset_version",
+        ),
+        (
+            TAXONOMY,
+            "taxonomy_path",
+            b'      "stage": "frontend",',
+            b'      "stage": "frontend",\n      "stage": "frontend",',
+            "stage",
+        ),
+        (
+            PREDICTION_MANIFEST,
+            "prediction_manifest_path",
+            b'    "path": "predictions.jsonl",',
+            b'    "path": "predictions.jsonl",\n    "path": "predictions.jsonl",',
+            "path",
+        ),
+    ),
+)
+def test_report_rejects_duplicate_json_keys_in_model_artifacts(
+    tmp_path,
+    source,
+    argument_name,
+    needle,
+    replacement,
+    duplicate_key,
+):
+    mutated_bytes = source.read_bytes().replace(needle, replacement, 1)
+    assert mutated_bytes != source.read_bytes()
+    mutated_path = tmp_path / source.name
+    mutated_path.write_bytes(mutated_bytes)
+    arguments = {
+        "specification_path": SPECIFICATION,
+        "taxonomy_path": TAXONOMY,
+        "prediction_manifest_path": PREDICTION_MANIFEST,
+        "predictions_path": PREDICTIONS,
+        "dataset_release": RELEASE,
+        "output": tmp_path / "report",
+    }
+    arguments[argument_name] = mutated_path
+
+    with pytest.raises(
+        ValueError,
+        match=f"duplicate JSON object key: '{duplicate_key}'",
+    ):
+        generate_evidence_report(**arguments)
+
+
+def test_report_rejects_duplicate_json_keys_in_nested_prediction(tmp_path):
+    prediction_bytes = PREDICTIONS.read_bytes().replace(
+        b'"schema_valid":true',
+        b'"schema_valid":true,"schema_valid":true',
+        1,
+    )
+    manifest, predictions = _write_prediction_artifacts(tmp_path, prediction_bytes)
+
+    with pytest.raises(
+        ValueError,
+        match="duplicate JSON object key: 'schema_valid'",
+    ):
+        generate_evidence_report(
+            specification_path=SPECIFICATION,
+            taxonomy_path=TAXONOMY,
+            prediction_manifest_path=manifest,
+            predictions_path=predictions,
+            dataset_release=RELEASE,
+            output=tmp_path / "report",
+        )
+
+
+def test_report_rejects_nonstandard_json_constant_in_model_artifact(tmp_path):
+    specification = tmp_path / "benchmark-spec.json"
+    specification_bytes = SPECIFICATION.read_bytes().replace(
+        b'"seed": 20260729',
+        b'"seed": NaN',
+        1,
+    )
+    assert specification_bytes != SPECIFICATION.read_bytes()
+    specification.write_bytes(specification_bytes)
+
+    with pytest.raises(
+        ValueError,
+        match="nonstandard JSON constant is not permitted: NaN",
+    ):
+        generate_evidence_report(
+            specification_path=specification,
+            taxonomy_path=TAXONOMY,
+            prediction_manifest_path=PREDICTION_MANIFEST,
+            predictions_path=PREDICTIONS,
+            dataset_release=RELEASE,
+            output=tmp_path / "report",
+        )
+
+
+def test_report_rejects_nonstandard_json_constant_in_prediction(tmp_path):
+    prediction_bytes = PREDICTIONS.read_bytes().replace(
+        b'"required_fields_gold":5',
+        b'"required_fields_gold":NaN',
+        1,
+    )
+    manifest, predictions = _write_prediction_artifacts(tmp_path, prediction_bytes)
+
+    with pytest.raises(
+        ValueError,
+        match="nonstandard JSON constant is not permitted: NaN",
+    ):
+        generate_evidence_report(
+            specification_path=SPECIFICATION,
+            taxonomy_path=TAXONOMY,
+            prediction_manifest_path=manifest,
+            predictions_path=predictions,
+            dataset_release=RELEASE,
+            output=tmp_path / "report",
+        )
 
 
 def test_golden_report_manifest_satisfies_standalone_schema():
@@ -642,6 +917,102 @@ def test_benchmark_metrics_schema_rejects_failure_code_stage_mismatch():
         match="frontend failure code counts must equal its failure stage count",
     ):
         BenchmarkMetricsV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        "frontend.schema_invalid",
+        "frontend.required_field_omission",
+        "frontend.source_span_mismatch",
+        "frontend.hallucinated_node",
+        "frontend.ambiguity_not_preserved",
+        "realizer.unauthorized_symbol",
+        "realizer.incomplete_eos",
+        "realizer.grammar_invalid",
+        "realizer.constraint_rejection",
+    ),
+)
+def test_system_metrics_schema_rejects_failure_code_without_observation_events(
+    failure_code,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _make_failure_code_observation_infeasible(system, failure_code)
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"{failure_code} count must not exceed its aggregate observation event count",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        "frontend.required_field_omission",
+        "frontend.source_span_mismatch",
+        "frontend.hallucinated_node",
+        "frontend.ambiguity_not_preserved",
+        "realizer.unauthorized_symbol",
+    ),
+)
+def test_system_metrics_schema_allows_multiple_events_for_one_failure_record(
+    failure_code,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _make_multi_event_failure_code_feasible(system, failure_code)
+
+    metrics = evidence_module.SystemMetricsV1.model_validate(system)
+
+    assert metrics.failure_code_counts[failure_code] == 1
+
+
+def test_system_metrics_schema_binds_false_accept_code_to_metric_numerator():
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    _replace_failure_code(
+        system,
+        "validator.semantic_rejection",
+        "validator.false_accept",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="validator.false_accept count must equal the false-accept metric numerator",
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        "validator.semantic_rejection",
+        "validator.lexical_rejection",
+        "validator.structural_rejection",
+    ),
+)
+def test_system_metrics_schema_binds_validator_rejection_codes_to_rejected_observations(
+    failure_code,
+):
+    payload = json.loads((EXPECTED / "metrics.json").read_text())
+    system = next(iter(payload["systems"].values()))
+    if failure_code != "validator.semantic_rejection":
+        _replace_failure_code(
+            system,
+            "validator.semantic_rejection",
+            failure_code,
+        )
+    _replace_metric_counts(system, "validator.accepted_rate", 2, 2)
+    _replace_metric_counts(system, "validator.rejected_rate", 0, 2)
+    _replace_metric_counts(system, "validator.false_accept_rate", 1, 1)
+
+    with pytest.raises(
+        ValidationError,
+        match=("validator rejection failure-code count must not exceed rejected observations"),
+    ):
+        evidence_module.SystemMetricsV1.model_validate(system)
 
 
 @pytest.mark.parametrize("explicit_zero_counts", (False, True))

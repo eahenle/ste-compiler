@@ -12,7 +12,9 @@ import secrets
 import stat
 import sys
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Annotated, Final, Literal
 
 from pydantic import (
@@ -22,6 +24,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     StrictStr,
+    field_serializer,
     model_validator,
 )
 
@@ -584,20 +587,28 @@ class BenchmarkMetricsV1(StrictEvidenceModel):
     prediction_manifest_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
     predictions_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
     record_count: StrictInt = Field(gt=0)
-    systems: dict[str, SystemMetricsV1] = Field(min_length=1)
+    systems: Mapping[str, SystemMetricsV1] = Field(min_length=1)
 
     @model_validator(mode="after")
     def record_count_matches_systems(self) -> BenchmarkMetricsV1:
         if self.record_count != sum(system.record_count for system in self.systems.values()):
             raise ValueError("benchmark record count must equal the sum of system record counts")
+        object.__setattr__(self, "systems", MappingProxyType(dict(self.systems)))
         return self
+
+    @field_serializer("systems")
+    def serialize_systems(
+        self,
+        value: Mapping[str, SystemMetricsV1],
+    ) -> dict[str, SystemMetricsV1]:
+        return dict(value)
 
 
 class SystemMetricsV1(StrictEvidenceModel):
     record_count: StrictInt = Field(gt=0)
-    metrics: dict[str, MetricEstimateV1]
-    failure_stage_counts: dict[FailureStage, NonnegativeCount]
-    failure_code_counts: dict[FailureCode, NonnegativeCount]
+    metrics: Mapping[str, MetricEstimateV1]
+    failure_stage_counts: Mapping[FailureStage, NonnegativeCount]
+    failure_code_counts: Mapping[FailureCode, NonnegativeCount]
 
     @model_validator(mode="after")
     def frozen_metric_inventory(self) -> SystemMetricsV1:
@@ -711,6 +722,8 @@ class SystemMetricsV1(StrictEvidenceModel):
         recall_counts = self._metric_counts("frontend.required_field_recall")
         if precision_counts[0] != recall_counts[0]:
             raise ValueError("frontend required-field precision and recall must share a numerator")
+        hallucinated_nodes = self._metric_counts("frontend.hallucinated_node_rate")
+        ambiguity_preservation = self._metric_counts("frontend.ambiguity_preservation_rate")
         exact_spans = self._metric_counts("frontend.source_span_exact_rate")
         overlapping_spans = self._metric_counts("frontend.source_span_overlap_rate")
         if exact_spans[1] != overlapping_spans[1]:
@@ -718,6 +731,52 @@ class SystemMetricsV1(StrictEvidenceModel):
         if exact_spans[0] > overlapping_spans[0]:
             raise ValueError(
                 "frontend exact source-span numerator must not exceed overlapping source spans"
+            )
+
+        failure_code_event_bounds: dict[FailureCode, int] = {
+            "frontend.schema_invalid": self.record_count - schema_valid[0],
+            "frontend.required_field_omission": recall_counts[1] - recall_counts[0],
+            "frontend.source_span_mismatch": exact_spans[1] - exact_spans[0],
+            "frontend.hallucinated_node": hallucinated_nodes[0],
+            "frontend.ambiguity_not_preserved": (
+                ambiguity_preservation[1] - ambiguity_preservation[0]
+            ),
+            "realizer.unauthorized_symbol": unauthorized_symbols[0],
+            "realizer.incomplete_eos": eos_complete[1] - eos_complete[0],
+            "realizer.grammar_invalid": grammar_valid[1] - grammar_valid[0],
+            "realizer.constraint_rejection": constraint_rejections[0],
+        }
+        for code, event_count in failure_code_event_bounds.items():
+            if self.failure_code_counts.get(code, 0) > event_count:
+                raise ValueError(
+                    f"{code} count must not exceed its aggregate observation event count"
+                )
+
+        validator_rejection_code_count = sum(
+            self.failure_code_counts.get(code, 0)
+            for code in (
+                "validator.semantic_rejection",
+                "validator.lexical_rejection",
+                "validator.structural_rejection",
+            )
+        )
+        if validator_rejection_code_count > rejected[0]:
+            raise ValueError(
+                "validator rejection failure-code count must not exceed rejected observations"
+            )
+        false_accept_code_count = self.failure_code_counts.get(
+            "validator.false_accept",
+            0,
+        )
+        if false_accept_code_count != false_accepts[0]:
+            raise ValueError(
+                "validator.false_accept count must equal the false-accept metric numerator"
+            )
+        expected_validator_rejection_failures = validator_failures - false_accepts[0]
+        if validator_rejection_code_count != expected_validator_rejection_failures:
+            raise ValueError(
+                "validator rejection failure-code count must equal validator failures "
+                "minus false accepts"
             )
 
         if frontend_failures == 0:
@@ -759,7 +818,32 @@ class SystemMetricsV1(StrictEvidenceModel):
             raise ValueError(
                 "frontend.required_field_f1 must equal the harmonic mean of precision and recall"
             )
+        object.__setattr__(self, "metrics", MappingProxyType(dict(self.metrics)))
+        object.__setattr__(
+            self,
+            "failure_stage_counts",
+            MappingProxyType(dict(self.failure_stage_counts)),
+        )
+        object.__setattr__(
+            self,
+            "failure_code_counts",
+            MappingProxyType(dict(self.failure_code_counts)),
+        )
         return self
+
+    @field_serializer("metrics")
+    def serialize_metrics(
+        self,
+        value: Mapping[str, MetricEstimateV1],
+    ) -> dict[str, MetricEstimateV1]:
+        return dict(value)
+
+    @field_serializer("failure_stage_counts", "failure_code_counts")
+    def serialize_counts(
+        self,
+        value: Mapping[str, int],
+    ) -> dict[str, int]:
+        return dict(value)
 
     def _metric_counts(self, name: str) -> tuple[int, int]:
         estimate = self.metrics[name]
@@ -882,10 +966,31 @@ def _read_regular(path: Path) -> bytes:
         os.close(file_fd)
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        value[key] = item
+    return value
+
+
+def _reject_nonstandard_json_constant(value: str) -> object:
+    raise ValueError(f"nonstandard JSON constant is not permitted: {value}")
+
+
+def _strict_json_loads(data: bytes) -> object:
+    return json.loads(
+        data,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=_reject_nonstandard_json_constant,
+    )
+
+
 def _model_file(path: Path, model: type[StrictEvidenceModel]) -> tuple[StrictEvidenceModel, bytes]:
     data = _read_regular(path)
     try:
-        return model.model_validate_json(data), data
+        return model.model_validate(_strict_json_loads(data)), data
     except ValueError as error:
         raise ValueError(f"invalid benchmark input {path}: {error}") from error
 
@@ -896,7 +1001,7 @@ def _prediction_lines(data: bytes) -> tuple[PredictionRecordV1, ...]:
         if not line.strip():
             raise ValueError(f"benchmark predictions contain a blank line at {number}")
         try:
-            records.append(PredictionRecordV1.model_validate_json(line))
+            records.append(PredictionRecordV1.model_validate(_strict_json_loads(line)))
         except ValueError as error:
             raise ValueError(f"invalid benchmark prediction line {number}: {error}") from error
     if not records:
@@ -1157,7 +1262,7 @@ def _recompute_validated_metrics(
     )
 
 
-def recompute_metrics(
+def _recompute_metrics(
     spec: BenchmarkSpecV1,
     records: tuple[PredictionRecordV1, ...],
     *,
@@ -1165,7 +1270,7 @@ def recompute_metrics(
     prediction_manifest_sha256: str,
     predictions_sha256: str,
 ) -> BenchmarkMetricsV1:
-    """Validate the complete benchmark contract and recompute every reported metric."""
+    """Validate the complete benchmark contract and recompute metrics for trusted inputs."""
 
     _validate_prediction_contract(spec, records)
     return _recompute_validated_metrics(
@@ -1182,7 +1287,9 @@ def _validate_release_cases(spec: BenchmarkSpecV1, release: Path) -> None:
     if _sha256(manifest_bytes) != spec.dataset.manifest_sha256:
         raise ValueError("benchmark dataset manifest SHA-256 does not match the specification")
     try:
-        manifest = json.loads(manifest_bytes)
+        manifest = _strict_json_loads(manifest_bytes)
+        if not isinstance(manifest, dict):
+            raise TypeError("dataset manifest must be a JSON object")
         artifacts = {item["path"]: item for item in manifest["artifacts"]}
         selection = CorpusSelectionV1(
             dataset_version=spec.dataset.dataset_version,

@@ -51,11 +51,14 @@ system definitions, prediction filename, byte length, SHA-256, and record count.
 then fully validates the selected corpus release with the existing race-resistant training-release
 reader and confirms each case's split and source hash.
 
-Library callers can use the exported `recompute_metrics()` function only with a validated
-`BenchmarkSpecV1` and typed prediction records. The function requires the complete, ordered
-case-by-system Cartesian product with no missing, duplicate, or extra records. It also checks every
-record's benchmark ID, dataset identity, case source SHA-256, system identity, evidence kind, and
-per-case gold contract before computing any metric. Report generation uses the same validator.
+Library callers use `generate_evidence_report()` as the supported recomputation API, or invoke the
+`ste-compiler benchmark-report` command. Both routes read every hash-bound artifact through the
+race-resistant file reader, derive the reported SHA-256 identities from those raw bytes, and reject
+duplicate JSON object keys and nonstandard JSON constants before schema validation. They require
+the complete, ordered case-by-system Cartesian product with no missing, duplicate, or extra
+records, and check every record's benchmark ID, dataset identity, case source SHA-256, system
+identity, evidence kind, and per-case gold contract before computing any metric. The lower-level
+typed-record recomputation helper is private so callers cannot attach chosen digests to metrics.
 
 An `external_measured` system must provide an immutable artifact-manifest SHA-256. A
 `deterministic_fixture` system must not claim one, and a specification cannot mix the two evidence
