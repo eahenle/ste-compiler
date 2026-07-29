@@ -7,9 +7,12 @@ import yaml
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from ste_compiler.cli import app
+from ste_compiler.cli import app, resources
 from ste_compiler.ir.models import Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document
+from ste_compiler.realizer import factory as realizer_factory
+from ste_compiler.realizer.constrained import SymbolicLexicalizer
+from ste_compiler.realizer.deterministic import DeterministicRealizer
 from ste_compiler.results import CompileSourceResult, SourceIdentity
 from ste_compiler.training import TrainingRecordValidationError, build_training_record
 
@@ -62,6 +65,31 @@ def test_cli_prints_versioned_compile_source_json_schema():
         SourceIdentity(id=" \t", sha256="0" * 64)
 
 
+def test_cli_validates_and_prints_strict_realizer_config_schema():
+    config = ROOT / "data/realizers/deterministic.yaml"
+
+    validated = runner.invoke(
+        app,
+        ["validate-realizer-config", str(config), "--json"],
+    )
+    schema_result = runner.invoke(app, ["schema", "realizer-config"])
+
+    assert validated.exit_code == 0, validated.output
+    payload = json.loads(validated.stdout)
+    assert payload["schema_version"] == "ste-realizer-config-v1"
+    assert payload["architecture"] == "deterministic"
+    assert payload["artifact_mode"] == "offline-cache-only"
+    assert len(payload["config_sha256"]) == 64
+    assert schema_result.exit_code == 0, schema_result.output
+    schema = json.loads(schema_result.stdout)
+    assert schema["discriminator"]["propertyName"] == "architecture"
+    assert set(schema["discriminator"]["mapping"]) == {
+        "decoder-only-lora",
+        "deterministic",
+        "encoder-decoder",
+    }
+
+
 def test_cli_compiles_raw_source_with_verified_replay_fixture():
     example_root = ROOT / "data/end_to_end"
     result = runner.invoke(
@@ -81,6 +109,50 @@ def test_cli_compiles_raw_source_with_verified_replay_fixture():
     assert len(payload["source"]["sha256"]) == 64
     assert payload["metadata"]["frontend"] == "offline-replay"
     assert payload["validation"]["status"] == "accepted"
+
+
+def test_cli_routes_compile_source_through_versioned_deterministic_config():
+    example_root = ROOT / "data/end_to_end"
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(example_root / "hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(example_root / "hydraulic_warning.ir.yaml"),
+            "--realizer-config",
+            str(ROOT / "data/realizers/deterministic.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["metadata"]["realizer"] == "deterministic"
+    assert payload["metadata"]["artifact_mode"] == "offline-cache-only"
+    assert len(payload["metadata"]["realizer_config_sha256"]) == 64
+    assert payload["ir"]["metadata"]["realizer"] == "deterministic"
+
+
+def test_cli_rejects_ambiguous_realizer_selectors_without_traceback():
+    example_root = ROOT / "data/end_to_end"
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(example_root / "hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(example_root / "hydraulic_warning.ir.yaml"),
+            "--realizer",
+            "deterministic",
+            "--realizer-config",
+            str(ROOT / "data/realizers/deterministic.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--realizer and --realizer-config cannot be combined" in result.stderr
+    assert "Traceback" not in result.output
 
 
 def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
@@ -205,6 +277,128 @@ def test_cli_realize_and_validate():
     assert result.exit_code == 1
     assert "REQUIRED_NODE_OMITTED" in result.stdout
     assert "UNSUPPORTED_SEMANTIC_CHANGE" in result.stdout
+
+
+def test_cli_compile_accepts_versioned_deterministic_config():
+    result = runner.invoke(
+        app,
+        [
+            "compile",
+            str(ROOT / "data/examples/negative.yaml"),
+            "--realizer-config",
+            str(ROOT / "data/realizers/deterministic.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["text"] == "Do not open the shutoff valve."
+    assert payload["metadata"]["artifact_mode"] == "offline-cache-only"
+    assert len(payload["metadata"]["realizer_config_sha256"]) == 64
+
+
+@pytest.mark.parametrize("architecture", ["encoder-decoder", "decoder-only-lora"])
+def test_cli_routes_neural_configs_offline_through_compiler(
+    architecture,
+    tmp_path,
+    monkeypatch,
+):
+    document = load_document(ROOT / "data/examples/negative.yaml")
+    vocabulary, terminology = resources()
+    reference = DeterministicRealizer().realize(document, vocabulary, terminology)
+    plan = SymbolicLexicalizer(vocabulary, terminology).symbolize(reference.text)
+    captured = {}
+
+    class Generator:
+        model_id = f"example/{architecture}"
+        model_revision = "a" * 40
+        base_model_revision = "a" * 40
+        adapter_revision = "b" * 40
+
+        def generate_symbols(self, serialized_ir, allowed_symbols):
+            captured["serialized_ir"] = serialized_ir
+            assert allowed_symbols == frozenset(plan.split())
+            return plan
+
+    def construct(runtime_config):
+        captured["runtime_config"] = runtime_config
+        return Generator()
+
+    identity = {"repo_id": "example/model", "revision": "a" * 40}
+    if architecture == "encoder-decoder":
+        monkeypatch.setattr(
+            realizer_factory,
+            "TransformersEncoderDecoderSymbolGenerator",
+            construct,
+        )
+        config_payload = {
+            "schema_version": "ste-realizer-config-v1",
+            "architecture": architecture,
+            "checkpoint": identity,
+        }
+    else:
+        monkeypatch.setattr(
+            realizer_factory,
+            "DecoderOnlyLoRASymbolGenerator",
+            construct,
+        )
+        config_payload = {
+            "schema_version": "ste-realizer-config-v1",
+            "architecture": architecture,
+            "base_model": identity,
+            "adapter": {
+                "repo_id": "example/adapter",
+                "revision": "b" * 40,
+            },
+            "prompt_profile": "decoder-only-symbol-plan-v1",
+        }
+    config = tmp_path / f"{architecture}.json"
+    config.write_text(json.dumps(config_payload), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "compile",
+            str(ROOT / "data/examples/negative.yaml"),
+            "--realizer-config",
+            str(config),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["metadata"]["realizer"] == "symbolic-neural"
+    assert payload["metadata"]["artifact_mode"] == "offline-cache-only"
+    assert json.loads(captured["serialized_ir"])["metadata"]["realizer"] == "deterministic"
+    assert captured["runtime_config"].local_files_only is True
+
+
+def test_cli_rejects_invalid_realizer_config_without_traceback(tmp_path):
+    config = tmp_path / "mutable-revision.yaml"
+    config.write_text(
+        "schema_version: ste-realizer-config-v1\n"
+        "architecture: encoder-decoder\n"
+        "checkpoint:\n"
+        "  repo_id: example/model\n"
+        "  revision: main\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "compile",
+            str(ROOT / "data/examples/negative.yaml"),
+            "--realizer-config",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "revision" in result.stderr
+    assert "Traceback" not in result.output
 
 
 def test_cli_exports_symbolic_training_record():

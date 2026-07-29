@@ -1,0 +1,11 @@
+schema_version: ste-realizer-config-v1
+architecture: decoder-only-lora
+base_model:
+  repo_id: example/tiny-decoder
+  revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+adapter:
+  repo_id: example/tiny-decoder-adapter
+  revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+prompt_profile: decoder-only-symbol-plan-v1
+max_new_tokens: 512
+max_symbols: 128

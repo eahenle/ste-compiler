@@ -183,14 +183,20 @@ Every run records:
 
 ### Acceptance gates
 
-- The decoder-only smoke-training job completes in CI without network access after fixture
-  preparation; the encoder-decoder job remains.
+- Both smoke-training jobs complete in CI without network access after fixture preparation.
 - A documented reference run completes on the stated hardware.
 - Resuming a run preserves dataset identity and configuration.
 - Published checkpoints load through the package's production safety boundaries.
 - Repeating evaluation from a published checkpoint produces the released prediction hashes.
 
 ## Phase 3: Neural CLI integration
+
+Status: in progress. Strict `ste-realizer-config-v1` files now select deterministic,
+encoder-decoder, and decoder-only LoRA realization for `compile` and the offline replay
+`compile-source` workflow. Neural CLI inference is cache-only and retains immutable Hub commit
+identities in provenance. Explicit fetch, standalone artifact preflight, direct
+content-addressed loading of unpublished trainer outputs, and published reference configurations
+remain.
 
 ### Deliverables
 
@@ -208,6 +214,10 @@ Every run records:
 - Constrained inference rejects unauthorized, incomplete, malformed, or semantically unsupported
   output.
 - Network access is never implicit in offline mode.
+
+The initial selection slice does not make a model-quality claim. Checked-in neural identities are
+illustrative schema examples until reference checkpoints, licenses, checksums, predictions, and
+benchmark reports are published.
 
 ## Phase 4: End-to-end frontends
 

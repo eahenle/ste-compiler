@@ -1,0 +1,8 @@
+schema_version: ste-realizer-config-v1
+architecture: encoder-decoder
+checkpoint:
+  repo_id: example/tiny-encoder-decoder
+  revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+max_source_tokens: 1024
+max_new_tokens: 256
+num_beams: 1
