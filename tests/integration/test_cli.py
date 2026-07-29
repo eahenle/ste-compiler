@@ -1,17 +1,191 @@
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from ste_compiler.cli import app
 from ste_compiler.ir.models import Quantity
 from ste_compiler.ir.serialization import dumps_document, load_document
+from ste_compiler.results import CompileSourceResult, SourceIdentity
 from ste_compiler.training import TrainingRecordValidationError, build_training_record
 
 ROOT = Path(__file__).parents[2]
 runner = CliRunner()
+
+
+def test_cli_runs_packaged_end_to_end_demo():
+    result = runner.invoke(app, ["demo", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    CompileSourceResult.model_validate(payload)
+    assert payload["schema_version"] == "compile-source-v1"
+    assert payload["source"]["id"] == "hydraulic_warning.txt"
+    assert payload["metadata"]["frontend"] == "offline-replay"
+    assert payload["metadata"]["realizer"] == "deterministic"
+    assert payload["validation"] == {"status": "accepted", "violations": []}
+    assert payload["ir"]["sections"][0]["statements"][0]["id"] == "stop_pressure"
+    assert payload["text"] == (
+        "Warning: injury can occur when hydraulic pressure is more than 20 MPa.\n"
+        "If hydraulic pressure is more than 20 MPa, stop the hydraulic pressure."
+    )
+
+
+def test_cli_prints_versioned_compile_source_json_schema():
+    result = runner.invoke(app, ["schema", "compile-source"])
+
+    assert result.exit_code == 0, result.output
+    schema = json.loads(result.stdout)
+    assert schema["title"] == "CompileSourceResult"
+    assert schema["properties"]["schema_version"]["const"] == "compile-source-v1"
+    assert schema["properties"]["source"]["$ref"].endswith("/SourceIdentity")
+    assert schema["$defs"]["SourceIdentity"]["properties"]["id"]["pattern"] == r"\S"
+    assert schema["required"] == [
+        "schema_version",
+        "source",
+        "text",
+        "mappings",
+        "validation",
+        "metadata",
+        "ir",
+    ]
+
+    payload = json.loads(runner.invoke(app, ["demo", "--json"]).stdout)
+    payload.pop("schema_version")
+    with pytest.raises(ValidationError):
+        CompileSourceResult.model_validate(payload)
+    with pytest.raises(ValidationError):
+        SourceIdentity(id=" \t", sha256="0" * 64)
+
+
+def test_cli_compiles_raw_source_with_verified_replay_fixture():
+    example_root = ROOT / "data/end_to_end"
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(example_root / "hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(example_root / "hydraulic_warning.ir.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "compile-source-v1"
+    assert len(payload["source"]["sha256"]) == 64
+    assert payload["metadata"]["frontend"] == "offline-replay"
+    assert payload["validation"]["status"] == "accepted"
+
+
+def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
+    example_root = ROOT / "data/end_to_end"
+    changed = tmp_path / "hydraulic_warning.txt"
+    changed.write_bytes(
+        (example_root / "hydraulic_warning.txt").read_bytes()
+        + b"\nDisconnect the pump before maintenance.\n"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(changed),
+            "--ir-fixture",
+            str(example_root / "hydraulic_warning.ir.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "source SHA-256 does not match the fixture" in result.stderr
+    assert "Traceback" not in result.output
+
+
+def test_cli_replay_rejects_malformed_yaml_without_traceback(tmp_path):
+    example_root = ROOT / "data/end_to_end"
+    malformed = tmp_path / "malformed.yaml"
+    malformed.write_text("sections: [unterminated")
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(example_root / "hydraulic_warning.txt"),
+            "--ir-fixture",
+            str(malformed),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "invalid replay IR fixture" in result.stderr
+    assert "Traceback" not in result.output
+
+
+def test_cli_preserves_crlf_source_offsets_and_hashes_original_bytes(tmp_path):
+    prefix = "Unrepresented heading.\r\n"
+    quote = "Install the access panel."
+    source_bytes = f"{prefix}{quote}\r\n".encode()
+    source = tmp_path / "windows-source.txt"
+    source.write_bytes(source_bytes)
+    proposal = yaml.safe_load((ROOT / "data/examples/installation.yaml").read_text())
+    proposal["sections"][0]["statements"][0]["source_spans"] = [
+        {
+            "source_id": source.name,
+            "start": len(prefix),
+            "end": len(prefix) + len(quote),
+            "quote": quote,
+        }
+    ]
+    proposal["metadata"] = {
+        "frontend": "forged-frontend",
+        "frontend_version": "forged-frontend-version",
+        "realizer": "forged-realizer",
+        "realizer_version": "forged-realizer-version",
+        "vocabulary_version": "forged-vocabulary",
+        "terminology_version": "forged-terminology",
+        "validator_profile": "forged-validator",
+    }
+    fixture = tmp_path / "windows-source.ir.yaml"
+    fixture.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "replay-ir-v1",
+                "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+                "ir": proposal,
+            },
+            sort_keys=False,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(source),
+            "--ir-fixture",
+            str(fixture),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["source"]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
+    assert payload["metadata"] == {
+        "frontend": "offline-replay",
+        "frontend_version": "0.1.0",
+        "realizer": "deterministic",
+        "realizer_version": "0.1.0",
+        "vocabulary_version": "demo-1",
+        "terminology_version": "hydraulic-demo-1",
+        "validator_profile": "strict-demo-1",
+    }
+    assert payload["ir"]["metadata"] == payload["metadata"]
 
 
 def test_cli_realize_and_validate():

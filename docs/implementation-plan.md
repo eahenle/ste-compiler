@@ -1,5 +1,9 @@
 # Implementation plan
 
+This file records the original prototype milestones. The complete package, dataset, model,
+evaluation, documentation, and release roadmap is in
+[V1 end-to-end implementation plan](v1-implementation-plan.md).
+
 1. Confirm the public ASD-STE100 edition and document licensing boundaries; use only an original, permissively licensed demonstration vocabulary.
 2. Define the typed semantic IR, safe serialization, versioned terminology and vocabulary registries, and machine-readable diagnostics.
 3. Build a deterministic sentence planner/realizer, symbolic constrained lexicalizer, and lexical, structural, and metadata-backed semantic validators.
