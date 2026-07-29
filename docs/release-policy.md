@@ -41,7 +41,8 @@ colocated manifest alone is not sufficient.
 CI executes `scripts/ci/distribution_smoke.py` with the reviewed commit timestamp as
 `SOURCE_DATE_EPOCH`. The gate builds wheel and source distributions twice, requires byte-identical
 hashes, inspects required package and release members, installs the wheel outside the checkout with
-network access blocked, runs the packaged demo, and reconstructs and verifies corpus version 2.
+network access blocked, rebuilds that wheel byte-for-byte from the generated source distribution,
+runs the packaged demo, and reconstructs and verifies corpus version 2.
 
 ## Deprecation
 

@@ -101,6 +101,36 @@ def _inspect(wheel: Path, sdist: Path) -> None:
             raise RuntimeError("sdist contains checkout-local metadata")
 
 
+def _build_wheel_from_sdist(
+    sdist: Path,
+    temporary_root: Path,
+    environment: dict[str, str],
+) -> Path:
+    extracted = temporary_root / "extracted-sdist"
+    extracted.mkdir()
+    with tarfile.open(sdist) as archive:
+        archive.extractall(extracted, filter="data")
+    source_roots = tuple(path for path in extracted.iterdir() if path.is_dir())
+    if len(source_roots) != 1:
+        raise RuntimeError("sdist must contain exactly one top-level source directory")
+    output = temporary_root / "sdist-wheel"
+    _run(
+        sys.executable,
+        "-m",
+        "build",
+        "--no-isolation",
+        "--wheel",
+        "--outdir",
+        str(output),
+        str(source_roots[0]),
+        env=environment,
+    )
+    wheels = tuple(output.glob("*.whl"))
+    if len(wheels) != 1:
+        raise RuntimeError("sdist build must produce exactly one wheel")
+    return wheels[0]
+
+
 def _assert_reproducible(
     first: tuple[Path, Path],
     second: tuple[Path, Path],
@@ -200,7 +230,10 @@ def main() -> None:
         second = _build(temporary_root / "second", environment)
         _inspect(*first)
         checksums = _assert_reproducible(first, second)
-        _smoke_installed_wheel(first[0], temporary_root)
+        sdist_wheel = _build_wheel_from_sdist(first[1], temporary_root, environment)
+        if _sha256(sdist_wheel) != _sha256(first[0]):
+            raise RuntimeError("wheel rebuilt from sdist differs from the direct wheel")
+        _smoke_installed_wheel(sdist_wheel, temporary_root)
     print(json.dumps({"distributions": checksums, "status": "verified"}, sort_keys=True))
 
 
