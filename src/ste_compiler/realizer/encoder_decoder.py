@@ -263,7 +263,7 @@ class TransformersEncoderDecoderSymbolGenerator:
         try:
             transformers = import_module("transformers")
             huggingface_hub = import_module("huggingface_hub")
-        except ModuleNotFoundError as error:
+        except ImportError as error:
             raise EncoderDecoderUnavailable(
                 "install ste-compiler[neural] to use the encoder-decoder adapter"
             ) from error
@@ -276,15 +276,20 @@ class TransformersEncoderDecoderSymbolGenerator:
             "local_files_only": True,
             "trust_remote_code": False,
         }
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            str(snapshot),
-            **common,
-        )
-        model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
-            str(snapshot),
-            **common,
-            use_safetensors=True,
-        )
+        try:
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                str(snapshot),
+                **common,
+            )
+            model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
+                str(snapshot),
+                **common,
+                use_safetensors=True,
+            )
+        except Exception as error:
+            raise EncoderDecoderError(
+                "configured encoder-decoder artifacts could not be loaded safely"
+            ) from error
         return tokenizer, model
 
     @staticmethod
@@ -328,6 +333,14 @@ class TransformersEncoderDecoderSymbolGenerator:
         return self._components
 
     def generate_symbols(self, serialized_ir: str, allowed_symbols: frozenset[str]) -> str:
+        try:
+            return self._generate_symbols(serialized_ir, allowed_symbols)
+        except (EncoderDecoderError, InvalidSymbolGeneration):
+            raise
+        except Exception as error:
+            raise EncoderDecoderError("encoder-decoder inference failed safely") from error
+
+    def _generate_symbols(self, serialized_ir: str, allowed_symbols: frozenset[str]) -> str:
         tokenizer, model = self._get_components()
         eos_token_id = tokenizer.eos_token_id
         if eos_token_id is None:

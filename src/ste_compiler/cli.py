@@ -13,7 +13,15 @@ from ste_compiler.frontend import LLMFrontend, ManualFrontend, ReplayIRProvider
 from ste_compiler.ir.models import Document
 from ste_compiler.ir.serialization import load_document
 from ste_compiler.realizer import DeterministicRealizer
-from ste_compiler.realizer.base import RealizationResult
+from ste_compiler.realizer.base import RealizationResult, Realizer
+from ste_compiler.realizer.config import (
+    REALIZER_CONFIG_ADAPTER,
+    load_realizer_config,
+    realizer_config_sha256,
+)
+from ste_compiler.realizer.decoder_lora import DecoderOnlyLoRAError
+from ste_compiler.realizer.encoder_decoder import EncoderDecoderError
+from ste_compiler.realizer.factory import build_realizer
 from ste_compiler.realizer.neural import NeuralRealizerUnavailable
 from ste_compiler.results import CompileSourceResult
 from ste_compiler.terminology import TerminologyRegistry, Vocabulary
@@ -48,6 +56,12 @@ PACKAGE_DATA = Path(__file__).with_name("data")
 DATA_ROOT = PACKAGE_DATA if PACKAGE_DATA.is_dir() else ROOT / "data"
 CONTROLLED_INPUT_ERRORS = (KeyError, ValidationError, ValueError)
 SOURCE_INPUT_ERRORS = (*CONTROLLED_INPUT_ERRORS, OSError)
+REALIZER_INPUT_ERRORS = (
+    *SOURCE_INPUT_ERRORS,
+    DecoderOnlyLoRAError,
+    EncoderDecoderError,
+    NeuralRealizerUnavailable,
+)
 TRAINING_INPUT_ERRORS = (
     *SOURCE_INPUT_ERRORS,
     DecoderLoRATrainingError,
@@ -83,21 +97,33 @@ def compile_document(
     *,
     frontend: str,
     frontend_version: str,
+    realizer: Realizer | None = None,
 ) -> tuple[Document, RealizationResult, ValidationReport]:
-    realizer = DeterministicRealizer()
+    selected_realizer = realizer or DeterministicRealizer()
     metadata = document.metadata.model_copy(
         update={
             "frontend": frontend,
             "frontend_version": frontend_version,
             "realizer": "deterministic",
-            "realizer_version": realizer.version,
+            "realizer_version": DeterministicRealizer.version,
             "vocabulary_version": vocabulary.data.version,
             "terminology_version": terminology.data.version,
             "validator_profile": ValidationPipeline.profile,
         }
     )
     document = document.model_copy(update={"metadata": metadata})
-    result = realizer.realize(document, vocabulary, terminology)
+    result = selected_realizer.realize(document, vocabulary, terminology)
+    result_realizer = result.metadata.get("realizer")
+    result_realizer_version = result.metadata.get("realizer_version")
+    if result_realizer is None or result_realizer_version is None:
+        raise ValueError("realizer result must identify its implementation and version")
+    metadata = document.metadata.model_copy(
+        update={
+            "realizer": result_realizer,
+            "realizer_version": result_realizer_version,
+        }
+    )
+    document = document.model_copy(update={"metadata": metadata})
     report = ValidationPipeline(LexicalValidator(vocabulary, terminology)).validate(
         result.text,
         document,
@@ -124,6 +150,8 @@ def compile_replayed_source(
     source: Path,
     ir_fixture: Path,
     source_id: str,
+    *,
+    realizer: Realizer | None = None,
 ) -> tuple[bytes, str, Document, RealizationResult, ValidationReport]:
     source_bytes = source.read_bytes()
     source_text = source_bytes.decode("utf-8")
@@ -136,6 +164,7 @@ def compile_replayed_source(
         terminology,
         frontend=document.metadata.frontend,
         frontend_version=document.metadata.frontend_version,
+        realizer=realizer,
     )
     return source_bytes, source_text, document, result, report
 
@@ -169,14 +198,22 @@ def run_replay_compilation(
     ir_fixture: Path,
     source_id: str,
     json_output: bool,
+    *,
+    realizer_config: Path | None = None,
 ) -> None:
     try:
+        selected_realizer = (
+            build_realizer(load_realizer_config(realizer_config))
+            if realizer_config is not None
+            else None
+        )
         source_bytes, _, document, result, report = compile_replayed_source(
             source,
             ir_fixture,
             source_id,
+            realizer=selected_realizer,
         )
-    except SOURCE_INPUT_ERRORS as error:
+    except REALIZER_INPUT_ERRORS as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     emit_source_compilation(
@@ -317,6 +354,32 @@ def validate_training_config(
     else:
         typer.echo(
             f"Validated {config.architecture} training config (sha256: {payload['config_sha256']})"
+        )
+
+
+@app.command("validate-realizer-config")
+def validate_realizer_configuration(
+    path: Path,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate and identify one versioned offline realizer configuration."""
+
+    try:
+        config = load_realizer_config(path)
+    except SOURCE_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    payload = {
+        "schema_version": config.schema_version,
+        "architecture": config.architecture,
+        "config_sha256": realizer_config_sha256(config),
+        "artifact_mode": "offline-cache-only",
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Validated {config.architecture} realizer config (sha256: {payload['config_sha256']})"
         )
 
 
@@ -600,19 +663,35 @@ def validate_text(
 
 @app.command()
 def compile(
-    source: Path, frontend: str = "manual", json_output: bool = typer.Option(False, "--json")
+    source: Path,
+    frontend: str = "manual",
+    realizer_config: Annotated[
+        Path | None,
+        typer.Option(help="Strict offline realizer configuration."),
+    ] = None,
+    json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     if frontend != "manual":
         raise typer.BadParameter("Only the offline manual frontend is configured.")
-    doc = load_document(source)
-    vocab, terms = resources()
-    doc, result, report = compile_document(
-        doc,
-        vocab,
-        terms,
-        frontend="manual",
-        frontend_version=ManualFrontend.version,
-    )
+    try:
+        selected_realizer = (
+            build_realizer(load_realizer_config(realizer_config))
+            if realizer_config is not None
+            else None
+        )
+        doc = load_document(source)
+        vocab, terms = resources()
+        doc, result, report = compile_document(
+            doc,
+            vocab,
+            terms,
+            frontend="manual",
+            frontend_version=ManualFrontend.version,
+            realizer=selected_realizer,
+        )
+    except REALIZER_INPUT_ERRORS as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
     if json_output:
         payload = compiled_payload(doc, result, report)
         payload.pop("ir")
@@ -635,7 +714,14 @@ def compile_source(
         ),
     ],
     frontend: Annotated[str, typer.Option(help="Source frontend implementation.")] = "replay",
-    realizer: Annotated[str, typer.Option(help="Realization implementation.")] = "deterministic",
+    realizer: Annotated[
+        str | None,
+        typer.Option(help="Legacy realization implementation selector."),
+    ] = None,
+    realizer_config: Annotated[
+        Path | None,
+        typer.Option(help="Strict offline realizer configuration."),
+    ] = None,
     source_id: Annotated[
         str | None,
         typer.Option(help="Expected source_span source_id; defaults to the source filename."),
@@ -646,12 +732,20 @@ def compile_source(
 
     if frontend != "replay":
         raise typer.BadParameter("Only the offline replay source frontend is configured.")
-    if realizer != "deterministic":
+    if realizer_config is not None and realizer is not None:
+        raise typer.BadParameter("--realizer and --realizer-config cannot be combined.")
+    if realizer not in {None, "deterministic"}:
         raise typer.BadParameter(
             "Only the deterministic realizer is configured for compile-source."
         )
     expected_source_id = source_id or source.name
-    run_replay_compilation(source, ir_fixture, expected_source_id, json_output)
+    run_replay_compilation(
+        source,
+        ir_fixture,
+        expected_source_id,
+        json_output,
+        realizer_config=realizer_config,
+    )
 
 
 @app.command()
@@ -672,6 +766,13 @@ def compile_source_schema() -> None:
     """Print the JSON Schema for `compile-source --json` and `demo --json`."""
 
     typer.echo(json.dumps(CompileSourceResult.model_json_schema(), indent=2))
+
+
+@schema_app.command("realizer-config")
+def realizer_config_schema() -> None:
+    """Print the JSON Schema for strict versioned realizer configuration."""
+
+    typer.echo(json.dumps(REALIZER_CONFIG_ADAPTER.json_schema(), indent=2))
 
 
 @app.command()

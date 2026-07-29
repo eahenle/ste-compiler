@@ -227,6 +227,28 @@ snapshot, package, metric, and output identities, then loads only the private sa
 It also requires the recomputed validation metrics to match the recorded metrics. It does not yet
 produce benchmark predictions or a released prediction hash.
 
+## From a training run to runtime selection
+
+Training and inference use separate versioned contracts. `ste-training-config-v1` binds a corpus,
+base artifacts, optimizer settings, seeds, and run outputs. `ste-realizer-config-v1` selects a
+deterministic or constrained-neural runtime using immutable Hub repository commits and bounded
+decoding settings.
+
+The offline runtime accepts a reviewed realizer configuration on `compile` and `compile-source`
+through `--realizer-config`. It resolves model, tokenizer, and adapter revisions from the local
+cache only; a cache miss does not initiate a download. See the
+[typed offline neural runtime guide](neural-runtime.md).
+
+The smoke trainers' local outputs are not automatically runtime artifacts. They exercise mechanics
+and safe serialization, but the runtime continues to reject arbitrary local model paths. A
+reference training result must be reviewed, licensed, published at an immutable repository
+revision, checksummed, and named by a realizer configuration before it can become a released
+runtime input.
+
+Explicit artifact fetching, direct content-addressed loading of unpublished trainer outputs, and
+benchmark reproduction are follow-up slices. The illustrative checked-in identities are not
+published checkpoints or model-quality claims.
+
 ## Remaining training gates
 
 Both tracks still need documented single-GPU reference configurations, published model artifacts,

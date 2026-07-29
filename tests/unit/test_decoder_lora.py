@@ -84,6 +84,11 @@ class MultipleSequenceFakeModel(ConstrainedFakeModel):
         return [sequence, sequence]
 
 
+class BrokenInferenceModel(ConstrainedFakeModel):
+    def generate(self, **kwargs):
+        raise RuntimeError("incompatible tensor shapes")
+
+
 def _config(**updates):
     values = {
         "base_model_id": "org/compact-decoder",
@@ -125,6 +130,22 @@ def test_decoder_lora_generates_constrained_symbols_and_records_revisions(vocab,
     assert model.generate_arguments["eos_token_id"] == 0
 
 
+def test_decoder_lora_wraps_inference_backend_failure():
+    generator = DecoderOnlyLoRASymbolGenerator(
+        _config(),
+        tokenizer=CharacterTokenizer(),
+        model=BrokenInferenceModel("PERIOD"),
+    )
+
+    with pytest.raises(
+        DecoderOnlyLoRAError,
+        match="inference failed safely",
+    ) as caught:
+        generator.generate_symbols("{}", frozenset({"PERIOD"}))
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
 def test_decoder_lora_grammar_rejects_an_out_of_plan_symbol():
     model = ConstrainedFakeModel("WORD_close")
     generator = DecoderOnlyLoRASymbolGenerator(
@@ -133,11 +154,12 @@ def test_decoder_lora_grammar_rejects_an_out_of_plan_symbol():
         model=model,
     )
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(DecoderOnlyLoRAError, match="inference failed safely") as caught:
         generator.generate_symbols(
             '{"id":"negative"}',
             frozenset({"WORD_do", "WORD_not", "WORD_open"}),
         )
+    assert isinstance(caught.value.__cause__, AssertionError)
 
 
 def test_decoder_lora_postcondition_rejects_a_model_that_ignores_the_grammar():
@@ -524,6 +546,44 @@ def test_decoder_lora_runtime_requires_safe_pinned_artifacts(monkeypatch, tmp_pa
         ),
     ]
     assert adapter_model.evaluated
+
+
+def test_decoder_lora_wraps_third_party_artifact_loading_failure(
+    monkeypatch,
+    tmp_path,
+):
+    class BrokenFactory:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise RuntimeError("incompatible PEFT metadata")
+
+    modules = {
+        "transformers": SimpleNamespace(
+            AutoTokenizer=BrokenFactory,
+            AutoModelForCausalLM=BrokenFactory,
+        ),
+        "peft": SimpleNamespace(
+            PeftConfig=BrokenFactory,
+            PeftModel=BrokenFactory,
+        ),
+        "huggingface_hub": object(),
+    }
+    monkeypatch.setattr(decoder_lora.importlib, "import_module", modules.__getitem__)
+    monkeypatch.setattr(
+        DecoderOnlyLoRASymbolGenerator,
+        "_resolve_safe_adapter_snapshot",
+        lambda config, hub: tmp_path,
+    )
+
+    with pytest.raises(
+        DecoderOnlyLoRAError,
+        match="artifacts could not be loaded safely",
+    ) as caught:
+        DecoderOnlyLoRASymbolGenerator._load_runtime(
+            _config(local_files_only=True),
+        )
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
 
 
 @pytest.mark.parametrize(

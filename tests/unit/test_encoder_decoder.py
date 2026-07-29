@@ -9,6 +9,7 @@ from ste_compiler.realizer import (
     DeterministicRealizer,
     EncoderDecoderConfig,
     EncoderDecoderError,
+    EncoderDecoderUnavailable,
     InvalidSymbolGeneration,
     NeuralRealizer,
     TransformersEncoderDecoderSymbolGenerator,
@@ -107,6 +108,29 @@ def test_encoder_decoder_generation_is_lazy_pinned_and_constrained():
     assert model.kwargs["input_ids"]
 
 
+def test_encoder_decoder_wraps_inference_backend_failure():
+    class BrokenModel(CheckingModel):
+        def generate(self, **kwargs):
+            raise RuntimeError("incompatible tensor shapes")
+
+    tokenizer = CharacterTokenizer()
+    generator = TransformersEncoderDecoderSymbolGenerator(
+        EncoderDecoderConfig(
+            model_id="organization/small-seq2seq",
+            revision=MODEL_REVISION,
+        ),
+        component_loader=lambda config: (tokenizer, BrokenModel(tokenizer, "PERIOD")),
+    )
+
+    with pytest.raises(
+        EncoderDecoderError,
+        match="inference failed safely",
+    ) as caught:
+        generator.generate_symbols("{}", frozenset({"PERIOD"}))
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
 def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, tmp_path):
     calls = []
     tokenizer = object()
@@ -193,6 +217,65 @@ def test_encoder_decoder_loader_requires_one_safe_pinned_snapshot(monkeypatch, t
             },
         ),
     ]
+
+
+def test_encoder_decoder_wraps_third_party_artifact_loading_failure(
+    monkeypatch,
+    tmp_path,
+):
+    class BrokenFactory:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise RuntimeError("corrupt safetensors")
+
+    modules = {
+        "transformers": SimpleNamespace(
+            AutoTokenizer=BrokenFactory,
+            AutoModelForSeq2SeqLM=BrokenFactory,
+        ),
+        "huggingface_hub": object(),
+    }
+    monkeypatch.setattr(encoder_decoder, "import_module", modules.__getitem__)
+    monkeypatch.setattr(
+        TransformersEncoderDecoderSymbolGenerator,
+        "_resolve_safe_model_snapshot",
+        lambda config, hub: tmp_path,
+    )
+
+    with pytest.raises(
+        EncoderDecoderError,
+        match="artifacts could not be loaded safely",
+    ) as caught:
+        TransformersEncoderDecoderSymbolGenerator._load_transformers_components(
+            EncoderDecoderConfig(
+                model_id="organization/small-seq2seq",
+                revision=MODEL_REVISION,
+                local_files_only=True,
+            )
+        )
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
+def test_encoder_decoder_wraps_dependency_import_failure(monkeypatch):
+    def fail_import(name):
+        raise ImportError(f"incompatible dependency: {name}")
+
+    monkeypatch.setattr(encoder_decoder, "import_module", fail_import)
+
+    with pytest.raises(
+        EncoderDecoderUnavailable,
+        match=r"install ste-compiler\[neural\]",
+    ) as caught:
+        TransformersEncoderDecoderSymbolGenerator._load_transformers_components(
+            EncoderDecoderConfig(
+                model_id="organization/small-seq2seq",
+                revision=MODEL_REVISION,
+                local_files_only=True,
+            )
+        )
+
+    assert isinstance(caught.value.__cause__, ImportError)
 
 
 @pytest.mark.parametrize(

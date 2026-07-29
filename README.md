@@ -91,6 +91,33 @@ checkpoint for validation-loss evaluation. The checked-in training configuration
 example, not a selected public model or a runnable quality result. See the
 [reproducible training guide](docs/training.md) for the command and artifact contract.
 
+## Offline realizer selection
+
+Strict `ste-realizer-config-v1` files select the deterministic, encoder-decoder, or decoder-only
+LoRA path without turning inference into an implicit download. Neural configurations identify Hub
+artifacts with full commit digests, reject mutable revisions and local paths, and run cache-only.
+The checked-in neural identities are illustrative schema examples, not published project models or
+quality claims.
+
+Pass a reviewed configuration to either IR compilation or the offline replay workflow:
+
+```bash
+ste-compiler compile \
+  data/examples/warning_pressure.yaml \
+  --realizer-config path/to/realizer.yaml \
+  --json
+ste-compiler compile-source \
+  data/end_to_end/hydraulic_warning.txt \
+  --ir-fixture data/end_to_end/hydraulic_warning.ir.yaml \
+  --realizer-config path/to/realizer.yaml \
+  --json
+```
+
+Omit `--realizer-config` to retain deterministic behavior. See the
+[typed offline neural runtime guide](docs/neural-runtime.md) for the configuration and trust
+boundary. Explicit artifact fetching, direct use of unpublished local trainer outputs, published
+checkpoints, and benchmark results are later slices.
+
 ## Extension points
 
 * **Vocabulary:** add an original/authorized entry to `data/demo_vocabulary.yaml`, including lemma, roles, meaning ID, inflections, example, and confusion notes. Keep its license explicit. Word forms must be unique under case folding and match the lexicalizer's single-word grammar. Unit surfaces must be stripped, nonblank, nonnumeric, and unique.
@@ -118,6 +145,7 @@ General BPE token masking is insufficient: one word can span tokens, a token can
 
 See the [end-to-end demo](docs/end-to-end-demo.md),
 [reproducible training guide](docs/training.md),
+[typed offline neural runtime guide](docs/neural-runtime.md),
 [V1 implementation plan](docs/v1-implementation-plan.md),
 [architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the ADRs for assumptions
 and limitations. Project policies are in [CONTRIBUTING.md](CONTRIBUTING.md),

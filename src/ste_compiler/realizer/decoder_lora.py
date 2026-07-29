@@ -301,34 +301,44 @@ class DecoderOnlyLoRASymbolGenerator:
                 "install ste-compiler[neural]"
             ) from error
 
-        adapter_snapshot = DecoderOnlyLoRASymbolGenerator._resolve_safe_adapter_snapshot(
-            config,
-            huggingface_hub,
-        )
-        adapter_config = peft.PeftConfig.from_pretrained(
-            str(adapter_snapshot),
-            local_files_only=True,
-        )
-        DecoderOnlyLoRASymbolGenerator._validate_adapter_config(config, adapter_config)
-        common = {
-            "revision": config.base_model_revision,
-            "local_files_only": config.local_files_only,
-            "trust_remote_code": False,
-        }
-        tokenizer = transformers.AutoTokenizer.from_pretrained(config.base_model_id, **common)
-        base_model = transformers.AutoModelForCausalLM.from_pretrained(
-            config.base_model_id,
-            **common,
-            use_safetensors=True,
-        )
-        model = peft.PeftModel.from_pretrained(
-            base_model,
-            str(adapter_snapshot),
-            config=adapter_config,
-            local_files_only=True,
-            is_trainable=False,
-        )
-        model.eval()
+        try:
+            adapter_snapshot = DecoderOnlyLoRASymbolGenerator._resolve_safe_adapter_snapshot(
+                config,
+                huggingface_hub,
+            )
+            adapter_config = peft.PeftConfig.from_pretrained(
+                str(adapter_snapshot),
+                local_files_only=True,
+            )
+            DecoderOnlyLoRASymbolGenerator._validate_adapter_config(config, adapter_config)
+            common = {
+                "revision": config.base_model_revision,
+                "local_files_only": config.local_files_only,
+                "trust_remote_code": False,
+            }
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                config.base_model_id,
+                **common,
+            )
+            base_model = transformers.AutoModelForCausalLM.from_pretrained(
+                config.base_model_id,
+                **common,
+                use_safetensors=True,
+            )
+            model = peft.PeftModel.from_pretrained(
+                base_model,
+                str(adapter_snapshot),
+                config=adapter_config,
+                local_files_only=True,
+                is_trainable=False,
+            )
+            model.eval()
+        except DecoderOnlyLoRAError:
+            raise
+        except Exception as error:
+            raise DecoderOnlyLoRAError(
+                "configured decoder-only LoRA artifacts could not be loaded safely"
+            ) from error
         return tokenizer, model
 
     @staticmethod
@@ -385,6 +395,18 @@ class DecoderOnlyLoRASymbolGenerator:
         return canonical_decoder_prompt(serialized_ir)
 
     def generate_symbols(
+        self,
+        serialized_ir: str,
+        allowed_symbols: frozenset[str],
+    ) -> str:
+        try:
+            return self._generate_symbols(serialized_ir, allowed_symbols)
+        except DecoderOnlyLoRAError:
+            raise
+        except Exception as error:
+            raise DecoderOnlyLoRAError("decoder-only LoRA inference failed safely") from error
+
+    def _generate_symbols(
         self,
         serialized_ir: str,
         allowed_symbols: frozenset[str],

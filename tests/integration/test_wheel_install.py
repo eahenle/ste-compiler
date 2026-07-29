@@ -84,11 +84,17 @@ assert result.exit_code == 0, result.output
             (
                 "from ste_compiler.realizer import "
                 "DecoderOnlyLoRAConfig, DecoderOnlyLoRAError, "
+                "DecoderOnlyLoRARealizerConfigV1, DeterministicRealizerConfigV1, "
                 "DecoderOnlyLoRASymbolGenerator, EncoderDecoderConfig, "
-                "EncoderDecoderError, TransformersEncoderDecoderSymbolGenerator; "
+                "EncoderDecoderError, EncoderDecoderRealizerConfigV1, "
+                "TransformersEncoderDecoderSymbolGenerator, build_realizer, "
+                "load_realizer_config, realizer_config_sha256; "
                 "assert DecoderOnlyLoRAConfig and DecoderOnlyLoRAError "
+                "and DecoderOnlyLoRARealizerConfigV1 and DeterministicRealizerConfigV1 "
                 "and DecoderOnlyLoRASymbolGenerator and EncoderDecoderConfig "
-                "and EncoderDecoderError and TransformersEncoderDecoderSymbolGenerator"
+                "and EncoderDecoderError and EncoderDecoderRealizerConfigV1 "
+                "and TransformersEncoderDecoderSymbolGenerator and build_realizer "
+                "and load_realizer_config and realizer_config_sha256"
             ),
         ],
         cwd=tmp_path,
@@ -205,6 +211,62 @@ assert result.exit_code == 0, result.output
         text=True,
     )
     assert json.loads(validated_decoder.stdout)["architecture"] == "decoder-only-lora"
+
+    realizer_directory = installed / "ste_compiler/data/realizers"
+    realizer_configs = {
+        "deterministic": realizer_directory / "deterministic.yaml",
+        "encoder-decoder": realizer_directory / "encoder-decoder-schema-example.yaml",
+        "decoder-only-lora": realizer_directory / "decoder-only-lora-schema-example.yaml",
+    }
+    for architecture, realizer_config in realizer_configs.items():
+        assert realizer_config.is_file()
+        validated_realizer = subprocess.run(
+            [
+                *command,
+                "validate-realizer-config",
+                str(realizer_config),
+                "--json",
+            ],
+            cwd=tmp_path,
+            env=clean_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        realizer_payload = json.loads(validated_realizer.stdout)
+        assert realizer_payload["architecture"] == architecture
+        assert realizer_payload["artifact_mode"] == "offline-cache-only"
+        assert len(realizer_payload["config_sha256"]) == 64
+
+    realizer_schema = subprocess.run(
+        [*command, "schema", "realizer-config"],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(realizer_schema.stdout)["discriminator"]["propertyName"] == "architecture"
+    packaged_example = installed / "ste_compiler/data/examples/negative.yaml"
+    configured_compile = subprocess.run(
+        [
+            *command,
+            "compile",
+            str(packaged_example),
+            "--realizer-config",
+            str(realizer_configs["deterministic"]),
+            "--json",
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    configured_payload = json.loads(configured_compile.stdout)
+    assert configured_payload["text"] == "Do not open the shutoff valve."
+    assert configured_payload["metadata"]["artifact_mode"] == "offline-cache-only"
+
     verified_training = subprocess.run(
         [
             *command,
