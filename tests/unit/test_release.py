@@ -13,7 +13,7 @@ from ste_compiler.training import (
     build_training_record,
     verify_demonstration_corpus,
 )
-from ste_compiler.training.release import _composition
+from ste_compiler.training.release import feature_composition
 
 ROOT = Path(__file__).parents[2]
 CONSTRUCTION = ROOT / "data/demonstration_corpus/v1/source-construction.json"
@@ -143,7 +143,7 @@ def test_release_checksums_coverage_leakage_and_records_are_coherent(vocab):
 
 
 def test_causal_relation_is_part_of_compositional_holdout_identity():
-    assert _composition(("causal_relation", "reference", "statement.instruction")) == (
+    assert feature_composition(("causal_relation", "reference", "statement.instruction")) == (
         "causal_relation",
         "statement.instruction",
     )

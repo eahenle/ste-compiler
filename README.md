@@ -40,6 +40,11 @@ ste-compiler plan-symbols data/examples/warning_pressure.yaml --json
 ste-compiler export-symbolic-corpus data/examples --output training-corpus
 ste-compiler build-demonstration-corpus --output demonstration-corpus
 ste-compiler verify-demonstration-corpus demonstration-corpus
+ste-compiler validate-training-config data/training/encoder-decoder-schema-example.yaml --json
+ste-compiler verify-training-release \
+  data/training/encoder-decoder-schema-example.yaml \
+  datasets/demonstration-corpus-1 \
+  --json
 ste-compiler compile data/examples/warning_pressure.yaml --json
 ste-compiler validate-text data/examples/invalid_semantic.txt --ir data/examples/negative.yaml --json
 ste-compiler glossary check data/demo_terminology.yaml
@@ -86,6 +91,7 @@ model-quality claim.
 General BPE token masking is insufficient: one word can span tokens, a token can contain leading whitespace or multiple characters, and different token paths can create the same unauthorized string. Symbol IDs followed by deterministic lexicalization make the allowed boundary inspectable. Technical terms similarly require controlled `TERM_*` copying, rather than hoping a model spells a multiword canonical form consistently.
 
 See the [end-to-end demo](docs/end-to-end-demo.md),
+[reproducible training guide](docs/training.md),
 [V1 implementation plan](docs/v1-implementation-plan.md),
 [architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the ADRs for assumptions
 and limitations.
