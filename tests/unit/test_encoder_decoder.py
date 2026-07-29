@@ -9,6 +9,7 @@ from ste_compiler.realizer import (
     DeterministicRealizer,
     EncoderDecoderConfig,
     EncoderDecoderError,
+    EncoderDecoderUnavailable,
     InvalidSymbolGeneration,
     NeuralRealizer,
     TransformersEncoderDecoderSymbolGenerator,
@@ -231,6 +232,27 @@ def test_encoder_decoder_wraps_third_party_artifact_loading_failure(
         )
 
     assert isinstance(caught.value.__cause__, RuntimeError)
+
+
+def test_encoder_decoder_wraps_dependency_import_failure(monkeypatch):
+    def fail_import(name):
+        raise ImportError(f"incompatible dependency: {name}")
+
+    monkeypatch.setattr(encoder_decoder, "import_module", fail_import)
+
+    with pytest.raises(
+        EncoderDecoderUnavailable,
+        match=r"install ste-compiler\[neural\]",
+    ) as caught:
+        TransformersEncoderDecoderSymbolGenerator._load_transformers_components(
+            EncoderDecoderConfig(
+                model_id="organization/small-seq2seq",
+                revision=MODEL_REVISION,
+                local_files_only=True,
+            )
+        )
+
+    assert isinstance(caught.value.__cause__, ImportError)
 
 
 @pytest.mark.parametrize(

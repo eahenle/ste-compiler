@@ -263,7 +263,7 @@ class TransformersEncoderDecoderSymbolGenerator:
         try:
             transformers = import_module("transformers")
             huggingface_hub = import_module("huggingface_hub")
-        except ModuleNotFoundError as error:
+        except ImportError as error:
             raise EncoderDecoderUnavailable(
                 "install ste-compiler[neural] to use the encoder-decoder adapter"
             ) from error
