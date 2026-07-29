@@ -44,5 +44,8 @@ def test_reproducible_lock_and_decoder_quick_start_are_shipped():
     assert (ROOT / "uv.lock").is_file()
     assert "uv.lock" not in ignored
     assert "'.[dev,neural]'" in readme
+    assert 'DECODER_SMOKE_ROOT="$(mktemp -d ' in readme
+    assert 'DECODER_SMOKE_MODEL="$DECODER_SMOKE_ROOT/model"' in readme
+    assert 'DECODER_SMOKE_RUN="$DECODER_SMOKE_ROOT/run"' in readme
     assert 'MODEL_SNAPSHOT_MANIFEST_SHA256="$(' in readme
     assert '"$MODEL_SNAPSHOT_MANIFEST_SHA256"' in readme

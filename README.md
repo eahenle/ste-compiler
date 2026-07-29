@@ -45,20 +45,23 @@ ste-compiler verify-training-release \
   data/training/encoder-decoder-schema-example.yaml \
   datasets/demonstration-corpus-1 \
   --json
+DECODER_SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ste-compiler-decoder-smoke.XXXXXX")"
+DECODER_SMOKE_MODEL="$DECODER_SMOKE_ROOT/model"
+DECODER_SMOKE_RUN="$DECODER_SMOKE_ROOT/run"
 MODEL_SNAPSHOT_MANIFEST_SHA256="$(
   ste-compiler prepare-decoder-smoke-fixture \
     data/training/decoder-only-lora-schema-example.yaml \
     datasets/demonstration-corpus-1 \
-    decoder-smoke-model \
+    "$DECODER_SMOKE_MODEL" \
     --json |
     python -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])'
 )"
 ste-compiler train-decoder-lora \
   data/training/decoder-only-lora-schema-example.yaml \
   datasets/demonstration-corpus-1 \
-  decoder-smoke-model \
+  "$DECODER_SMOKE_MODEL" \
   "$MODEL_SNAPSHOT_MANIFEST_SHA256" \
-  decoder-smoke-run \
+  "$DECODER_SMOKE_RUN" \
   --source-checkout .
 ste-compiler compile data/examples/warning_pressure.yaml --json
 ste-compiler validate-text data/examples/invalid_semantic.txt --ir data/examples/negative.yaml --json
