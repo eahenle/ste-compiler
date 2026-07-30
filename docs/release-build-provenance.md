@@ -8,18 +8,29 @@ has two modes:
   checksums and build metadata, and uploads a short-lived workflow artifact.
 - A `push` of a `vMAJOR.MINOR.PATCH` tag follows the same build path, but only after the tag is an
   annotated SSH-signed tag for the exact checkout commit, its version equals both `pyproject.toml`
-  and `CITATION.cff`, and Git accepts its signer through the reviewed repository allowlist. A
-  successful signed-tag build also asks GitHub to create build-provenance and SPDX SBOM attestations
-  for the wheel and source distribution.
+  and `CITATION.cff`, the tagged commit is contained in the reviewed default branch, and Git accepts
+  its signer through the allowlist fetched from the current default branch. The tag workflow has
+  read-only repository access and can only upload a verification bundle. A separate `workflow_run`
+  workflow, loaded from the default branch rather than the tag, independently verifies that bundle,
+  source commit, tag signature, and default-branch signer policy. It then uses trusted scripts to
+  reproduce the distributions from the reviewed source, requires their bytes to match the
+  untrusted build, creates a fresh SBOM and canonical evidence bundle, and only then lets GitHub
+  create build-provenance and SPDX SBOM attestations.
 
 The workflow does not create a tag, GitHub Release, package-index upload, model release, or dataset
 release. The uploaded workflow artifact is verification evidence, not a public package release.
 
 ## Closed signed-tag gate
 
-The signer allowlist at `.github/release/trusted-tag-signers` intentionally contains no key.
-Therefore signed-tag workflow runs fail closed before building until the release owner explicitly
-reviews a release signing identity and commits an SSH `allowed_signers` entry:
+The signer allowlist at `.github/release/trusted-tag-signers` intentionally contains no key. The
+read-only tag build fetches this policy from the current default branch for an early rejection; it
+never trusts the copy in the tagged checkout. More importantly, the privileged `Release
+attestation` workflow executes its validator and reads its policy from its own default-branch
+checkout. It treats the triggering bundle and tagged source as untrusted inputs, verifies their
+canonical inventory and checksums, requires the tagged commit to be contained in its default-branch
+commit, and verifies the tag again. Therefore signed-tag workflow runs fail closed before
+attestation until the release owner explicitly reviews a release signing identity and commits an
+SSH `allowed_signers` entry:
 
 ```text
 release-identity@example.com namespaces="git" ssh-ed25519 AAAA...
@@ -33,7 +44,7 @@ After signer authorization, a release tag must still:
 
 1. use stable `vMAJOR.MINOR.PATCH` syntax without a moving branch, lightweight tag, or prerelease;
 2. equal the project and citation version exactly;
-3. point to the clean reviewed commit selected by the workflow; and
+3. point to a clean commit contained in the reviewed default branch;
 4. carry a valid annotated SSH signature from the allowlist.
 
 The strict validation implementation is
@@ -51,10 +62,12 @@ Use GitHub's workflow UI or:
 gh workflow run release-provenance.yml --ref <reviewed-branch-or-commit>
 ```
 
-A manual run never claims a tag and skips the attestation job. It is suitable for checking action
-compatibility and inspecting the prospective wheel, source distribution, SBOM, manifest, and
-checksums. It is not evidence that the tag, signer, version, package-index environment, or release
-notes were authorized.
+A manual run never claims a tag and skips the attestation job. After this workflow is present on the
+default branch, its successful run triggers the read-only default-branch verifier, including the
+cross-run download, strict bundle validation, trusted rebuild, byte comparison, SBOM generation,
+and canonical finalization. It is suitable for checking action compatibility and inspecting the
+prospective wheel, source distribution, SBOM, manifest, and checksums. It is not evidence that the
+tag, signer, version, package-index environment, or release notes were authorized.
 
 The underlying distribution gate can also retain verified local artifacts in a new directory:
 
@@ -74,8 +87,11 @@ checkout does not persist credentials. SBOM generation disables dependency-snaps
 artifact, and release-asset side effects; the repository workflow uploads the complete evidence
 bundle itself.
 
-Only the signed-tag attestation job receives `id-token: write` and `attestations: write`, plus
-`contents: read`. GitHub uses those permissions to sign and store SLSA build-provenance and SPDX SBOM
+The tag-triggered workflow never receives an identity token or attestation permission. The
+default-branch `workflow_run` first handles untrusted inputs and performs its rebuild in a
+read-only job. A separate dependent job receives `id-token: write` and `attestations: write`; it can
+only download the fixed trusted bundle from that workflow run and invoke pinned attestation
+actions. GitHub uses those permissions to sign and store SLSA build-provenance and SPDX SBOM
 attestations. Consumers can verify a signed-tag distribution online with:
 
 ```bash

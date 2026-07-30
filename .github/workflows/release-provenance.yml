@@ -18,8 +18,6 @@ jobs:
     name: Reproducible release build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    outputs:
-      mode: ${{ steps.identity.outputs.mode }}
     env:
       HF_HUB_OFFLINE: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -44,15 +42,28 @@ jobs:
           cache-dependency-glob: uv.lock
           cache-suffix: release-provenance
       - name: Validate source identity and release gate
-        id: identity
         shell: bash
         run: |
           set -euo pipefail
           mode="dry-run"
           tag_args=()
+          allowed_signers=".github/release/trusted-tag-signers"
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             mode="tag"
             tag_args=(--tag "${GITHUB_REF_NAME}")
+            default_branch="${{ github.event.repository.default_branch }}"
+            git check-ref-format --branch "${default_branch}" >/dev/null
+            git fetch --no-tags --force origin \
+              "+refs/heads/${default_branch}:refs/remotes/origin/${default_branch}"
+            policy_ref="refs/remotes/origin/${default_branch}"
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" "${policy_ref}"; then
+              echo "release tag commit is not reviewed on the default branch" >&2
+              exit 1
+            fi
+            allowed_signers="${RUNNER_TEMP}/trusted-tag-signers"
+            git show \
+              "${policy_ref}:.github/release/trusted-tag-signers" \
+              > "${allowed_signers}"
           fi
           uv run --locked --python 3.12 --extra dev \
             python scripts/release/release_contract.py validate-ref \
@@ -60,9 +71,8 @@ jobs:
             --mode "${mode}" \
             --commit "${GITHUB_SHA}" \
             "${tag_args[@]}" \
-            --allowed-signers .github/release/trusted-tag-signers \
+            --allowed-signers "${allowed_signers}" \
             --output "${RUNNER_TEMP}/release-identity.json"
-          echo "mode=${mode}" >> "${GITHUB_OUTPUT}"
       - name: Build and verify reproducible distributions
         run: >-
           uv run --locked --python 3.12 --extra dev
@@ -90,33 +100,7 @@ jobs:
       - name: Upload verification bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ste-compiler-release-${{ github.sha }}
+          name: ste-compiler-release-${{ github.sha }}-${{ github.run_attempt }}
           path: release
           if-no-files-found: error
           retention-days: 14
-
-  attest:
-    name: Attest signed-tag artifacts
-    needs: build
-    if: needs.build.outputs.mode == 'tag'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    steps:
-      - name: Download verified release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: ste-compiler-release-${{ github.sha }}
-          path: release
-      - name: Attest build provenance
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        with:
-          subject-path: release/distributions/*
-      - name: Attest SPDX SBOM
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        with:
-          subject-path: release/distributions/*
-          sbom-path: release/ste-compiler.spdx.json

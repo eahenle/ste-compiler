@@ -1,0 +1,201 @@
+name: Release attestation
+
+on:
+  workflow_run:
+    workflows:
+      - Release provenance
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Rebuild and verify untrusted release evidence
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (
+        github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      mode: ${{ steps.bundle.outputs.mode }}
+    env:
+      HF_HUB_OFFLINE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Check out trusted validation policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Check out untrusted release source without executing it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: release-source
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: false
+      - name: Download triggering run's untrusted verification bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: >-
+            ste-compiler-release-${{
+              github.event.workflow_run.head_sha
+            }}-${{ github.event.workflow_run.run_attempt }}
+          path: untrusted-release
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Verify untrusted bundle and recover validated identity
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode="dry-run"
+          if [[ "${{ github.event.workflow_run.event }}" == "push" ]]; then
+            mode="tag"
+          fi
+          identity="$(
+            uv run --locked --python 3.12 --extra dev \
+              python scripts/release/release_contract.py verify-bundle \
+              --release-root untrusted-release \
+              --expected-mode "${mode}" \
+              --expected-commit "${{ github.event.workflow_run.head_sha }}"
+          )"
+          python - "${identity}" "${GITHUB_OUTPUT}" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          identity = json.loads(sys.argv[1])
+          mode = identity["mode"]
+          tag = identity["tag"] or ""
+          with pathlib.Path(sys.argv[2]).open("a", encoding="utf-8") as output:
+              output.write(f"mode={mode}\n")
+              output.write(f"tag={tag}\n")
+          PY
+      - name: Verify source identity, tag signature, and trusted signer policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_args=()
+          if [[ "${{ steps.bundle.outputs.mode }}" == "tag" ]]; then
+            if ! git merge-base --is-ancestor \
+              "${{ github.event.workflow_run.head_sha }}" "${GITHUB_SHA}"; then
+              echo "release tag commit is not reviewed on the default branch" >&2
+              exit 1
+            fi
+            tag_args=(
+              --tag "${{ steps.bundle.outputs.tag }}"
+              --allowed-signers .github/release/trusted-tag-signers
+            )
+          else
+            tag_args=(
+              --allowed-signers "${RUNNER_TEMP}/unused-trusted-tag-signers"
+            )
+          fi
+          uv run --locked --python 3.12 --extra dev \
+            python scripts/release/release_contract.py validate-ref \
+            --root release-source \
+            --mode "${{ steps.bundle.outputs.mode }}" \
+            --commit "${{ github.event.workflow_run.head_sha }}" \
+            "${tag_args[@]}" \
+            --output "${RUNNER_TEMP}/trusted-release-identity.json"
+      - name: Rebuild and verify reproducible distributions from reviewed source
+        run: >-
+          uv run --locked --python 3.12 --extra dev
+          python scripts/ci/distribution_smoke.py
+          --source-root release-source
+          --release-output trusted-release/distributions
+      - name: Require upstream and trusted distributions to match
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact in trusted-release/distributions/*; do
+            cmp \
+              "${artifact}" \
+              "untrusted-release/distributions/$(basename "${artifact}")"
+          done
+      - name: Generate trusted SPDX JSON SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: trusted-release/distributions
+          format: spdx-json
+          output-file: trusted-release/ste-compiler.spdx.json
+          syft-version: v1.50.0
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Finalize trusted canonical manifest and checksums
+        run: >-
+          uv run --locked --python 3.12 --extra dev
+          python scripts/release/release_contract.py finalize
+          --release-root trusted-release
+          --identity "${RUNNER_TEMP}/trusted-release-identity.json"
+      - name: Verify trusted final checksums
+        working-directory: trusted-release
+        run: sha256sum --check SHA256SUMS
+      - name: Upload trusted verification bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: >-
+            trusted-release-${{
+              github.event.workflow_run.id
+            }}-${{ github.event.workflow_run.run_attempt }}-${{ github.run_attempt }}
+          path: trusted-release
+          if-no-files-found: error
+          retention-days: 14
+
+  attest:
+    name: Attest trusted signed-tag artifacts
+    needs: verify
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      needs.verify.outputs.mode == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download trusted verification bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: >-
+            trusted-release-${{
+              github.event.workflow_run.id
+            }}-${{ github.event.workflow_run.run_attempt }}-${{ github.run_attempt }}
+          path: release
+      - name: Attest build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/distributions/*
+      - name: Attest SPDX SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/distributions/*
+          sbom-path: release/ste-compiler.spdx.json

@@ -67,11 +67,22 @@ def _run(*command: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> 
     return completed.stdout
 
 
-def _source_date_epoch() -> str:
-    return _run("git", "show", "-s", "--format=%ct", "HEAD").strip()
+def _source_date_epoch(source_root: Path = ROOT) -> str:
+    return _run(
+        "git",
+        "show",
+        "-s",
+        "--format=%ct",
+        "HEAD",
+        cwd=source_root,
+    ).strip()
 
 
-def _build(output: Path, environment: dict[str, str]) -> tuple[Path, Path]:
+def _build(
+    output: Path,
+    environment: dict[str, str],
+    source_root: Path = ROOT,
+) -> tuple[Path, Path]:
     _run(
         sys.executable,
         "-m",
@@ -81,7 +92,7 @@ def _build(output: Path, environment: dict[str, str]) -> tuple[Path, Path]:
         "--wheel",
         "--outdir",
         str(output),
-        str(ROOT),
+        str(source_root),
         env=environment,
     )
     wheels = tuple(output.glob("*.whl"))
@@ -286,20 +297,32 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="New directory that receives the verified wheel and source distribution.",
     )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=ROOT,
+        help=(
+            "Reviewed source checkout to build and verify. The trusted copy of this script "
+            "continues to execute from its own checkout."
+        ),
+    )
     return parser
 
 
 def main() -> None:
     args = _parser().parse_args()
+    source_root = args.source_root.resolve(strict=True)
+    if not source_root.is_dir():
+        raise RuntimeError("source root must be a directory")
     release_output = args.release_output.resolve() if args.release_output is not None else None
     environment = {
         **os.environ,
-        "SOURCE_DATE_EPOCH": _source_date_epoch(),
+        "SOURCE_DATE_EPOCH": _source_date_epoch(source_root),
     }
     with tempfile.TemporaryDirectory(prefix="ste-compiler-distribution-") as directory:
         temporary_root = Path(directory)
-        first = _build(temporary_root / "first", environment)
-        second = _build(temporary_root / "second", environment)
+        first = _build(temporary_root / "first", environment, source_root)
+        second = _build(temporary_root / "second", environment, source_root)
         _inspect(*first)
         checksums = _assert_reproducible(first, second)
         sdist_wheel = _build_wheel_from_sdist(first[1], temporary_root, environment)
