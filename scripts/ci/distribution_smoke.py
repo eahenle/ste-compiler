@@ -33,6 +33,7 @@ WHEEL_SUFFIXES = (
     ".dist-info/entry_points.txt",
 )
 SDIST_SUFFIXES = (
+    "/.gitattributes",
     "/LICENSE",
     "/README.md",
     "/src/ste_compiler/py.typed",

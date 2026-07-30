@@ -20,6 +20,7 @@ def test_citation_metadata_matches_package_release():
 
 def test_required_open_source_policy_files_are_present_and_complete():
     required = [
+        ".gitattributes",
         "CHANGELOG.md",
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
@@ -33,6 +34,7 @@ def test_required_open_source_policy_files_are_present_and_complete():
     for path in required:
         assert (ROOT / path).is_file(), path
     assert "TODO" not in (ROOT / "SECURITY.md").read_text()
+    assert (ROOT / ".gitattributes").read_text(encoding="utf-8") == "* text=auto eol=lf\n"
 
 
 def test_reproducible_lock_and_decoder_quick_start_are_shipped():
