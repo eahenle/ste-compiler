@@ -27,6 +27,7 @@ jobs:
       contents: read
     outputs:
       mode: ${{ steps.bundle.outputs.mode }}
+      trusted-artifact-id: ${{ steps.trusted-bundle.outputs.artifact-id }}
     env:
       HF_HUB_OFFLINE: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -158,6 +159,7 @@ jobs:
         working-directory: trusted-release
         run: sha256sum --check SHA256SUMS
       - name: Upload trusted verification bundle
+        id: trusted-bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: >-
@@ -185,11 +187,9 @@ jobs:
       - name: Download trusted verification bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: >-
-            trusted-release-${{
-              github.event.workflow_run.id
-            }}-${{ github.event.workflow_run.run_attempt }}-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.verify.outputs.trusted-artifact-id }}
           path: release
+          merge-multiple: true
       - name: Attest build provenance
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:

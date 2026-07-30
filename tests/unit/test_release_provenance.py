@@ -694,6 +694,9 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
         "contents": "read",
     }
     assert "id-token" not in verify_job["permissions"]
+    assert verify_job["outputs"]["trusted-artifact-id"] == (
+        "${{ steps.trusted-bundle.outputs.artifact-id }}"
+    )
     attest_job = attestation["jobs"]["attest"]
     assert "workflow_run.event == 'push'" in attest_job["if"]
     assert "needs.verify.outputs.mode == 'tag'" in attest_job["if"]
@@ -719,7 +722,9 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     attestation_raw = ATTESTATION_WORKFLOW.read_text(encoding="utf-8")
     assert "run-id: ${{ github.event.workflow_run.id }}" in attestation_raw
     assert "github.event.workflow_run.run_attempt" in attestation_raw
-    assert attestation_raw.count("github.run_attempt") == 2
+    assert attestation_raw.count("github.run_attempt") == 1
+    assert "artifact-ids: ${{ needs.verify.outputs.trusted-artifact-id }}" in attestation_raw
+    assert "merge-multiple: true" in attestation_raw
     assert "verify-bundle" in attestation_raw
     assert "--source-root release-source" in attestation_raw
     assert "cmp \\" in attestation_raw

@@ -90,9 +90,11 @@ bundle itself.
 The tag-triggered workflow never receives an identity token or attestation permission. The
 default-branch `workflow_run` first handles untrusted inputs and performs its rebuild in a
 read-only job. A separate dependent job receives `id-token: write` and `attestations: write`; it can
-only download the fixed trusted bundle from that workflow run and invoke pinned attestation
-actions. GitHub uses those permissions to sign and store SLSA build-provenance and SPDX SBOM
-attestations. Consumers can verify a signed-tag distribution online with:
+only download the exact trusted artifact ID emitted by the verifier job and invoke pinned
+attestation actions. Binding the handoff to the uploaded artifact ID also makes failed-job retries
+reuse the evidence that actually passed verification. GitHub uses those permissions to sign and
+store SLSA build-provenance and SPDX SBOM attestations. Consumers can verify a signed-tag
+distribution online with:
 
 ```bash
 gh attestation verify path/to/ste_compiler-<version>-py3-none-any.whl \
