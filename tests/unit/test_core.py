@@ -178,7 +178,10 @@ def test_symbolic_plan_rejects_units_attached_to_alphabetic_or_underscore(text, 
 
 
 @given(punctuation=st.from_regex(r"[^\w\s]", fullmatch=True))
-@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    derandomize=True,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 def test_symbolic_plan_represents_every_accepted_punctuation(punctuation, vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
     symbols = lexicalizer.symbolize(punctuation)
@@ -1620,6 +1623,7 @@ def test_llm_frontend_rejects_statements_without_source_spans():
 
 
 @given(st.integers(min_value=0, max_value=1_000_000))
+@settings(derandomize=True)
 def test_quantity_format_is_stable(value):
     quantity = Quantity(value=float(value), unit="Pa")
     realizer = DeterministicRealizer()
