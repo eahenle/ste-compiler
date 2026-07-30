@@ -27,11 +27,33 @@ def _percentage(value: str) -> Decimal:
     return percentage
 
 
-def _count(totals: dict[str, Any], name: str) -> int:
-    value = totals.get(name)
+def _count(summary: dict[str, Any], name: str, *, location: str) -> int:
+    value = summary.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise CoverageGateError(f"totals.{name} must be a non-negative integer")
+        raise CoverageGateError(f"{location}.{name} must be a non-negative integer")
     return value
+
+
+def _summary_counts(summary: dict[str, Any], *, location: str) -> tuple[int, int, int, int]:
+    covered_lines = _count(summary, "covered_lines", location=location)
+    missing_lines = _count(summary, "missing_lines", location=location)
+    num_statements = _count(summary, "num_statements", location=location)
+    covered_branches = _count(summary, "covered_branches", location=location)
+    missing_branches = _count(summary, "missing_branches", location=location)
+    num_branches = _count(summary, "num_branches", location=location)
+    if covered_lines > num_statements:
+        raise CoverageGateError(f"{location} covered lines exceed total statements")
+    if covered_branches > num_branches:
+        raise CoverageGateError(f"{location} covered branches exceed total branches")
+    if covered_lines + missing_lines != num_statements:
+        raise CoverageGateError(
+            f"{location} covered and missing line counts do not equal total statements"
+        )
+    if covered_branches + missing_branches != num_branches:
+        raise CoverageGateError(
+            f"{location} covered and missing branch counts do not equal total branches"
+        )
+    return covered_lines, num_statements, covered_branches, num_branches
 
 
 def _load_counts(path: Path) -> tuple[int, int, int, int]:
@@ -41,20 +63,34 @@ def _load_counts(path: Path) -> tuple[int, int, int, int]:
         raise CoverageGateError(f"cannot read coverage JSON {path}: {error}") from error
     if not isinstance(payload, dict) or not isinstance(payload.get("totals"), dict):
         raise CoverageGateError("coverage JSON must contain an object at totals")
-    totals = payload["totals"]
-    covered_lines = _count(totals, "covered_lines")
-    num_statements = _count(totals, "num_statements")
-    covered_branches = _count(totals, "covered_branches")
-    num_branches = _count(totals, "num_branches")
+    meta = payload.get("meta")
+    if not isinstance(meta, dict) or meta.get("branch_coverage") is not True:
+        raise CoverageGateError("coverage JSON must report branch_coverage=true")
+    files = payload.get("files")
+    if not isinstance(files, dict) or not files:
+        raise CoverageGateError("coverage JSON must contain a non-empty files object")
+
+    counts = _summary_counts(payload["totals"], location="totals")
+    _, num_statements, _, num_branches = counts
     if num_statements == 0:
         raise CoverageGateError("coverage report contains no statements")
     if num_branches == 0:
         raise CoverageGateError("coverage report contains no branches")
-    if covered_lines > num_statements:
-        raise CoverageGateError("covered lines exceed total statements")
-    if covered_branches > num_branches:
-        raise CoverageGateError("covered branches exceed total branches")
-    return covered_lines, num_statements, covered_branches, num_branches
+
+    aggregate = [0, 0, 0, 0]
+    for filename, file_record in files.items():
+        if not isinstance(filename, str) or not filename:
+            raise CoverageGateError("coverage file names must be nonblank strings")
+        if not isinstance(file_record, dict) or not isinstance(file_record.get("summary"), dict):
+            raise CoverageGateError(f"coverage file {filename!r} must contain a summary object")
+        file_counts = _summary_counts(
+            file_record["summary"],
+            location=f"files[{filename!r}].summary",
+        )
+        aggregate = [total + value for total, value in zip(aggregate, file_counts, strict=True)]
+    if tuple(aggregate) != counts:
+        raise CoverageGateError("aggregate file counts do not equal report totals")
+    return counts
 
 
 def _display(covered: int, total: int) -> str:

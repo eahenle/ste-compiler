@@ -41,7 +41,7 @@ class MalformedProvider:
         return cast(dict[str, object], self.output)
 
 
-@settings(max_examples=30, deadline=None)
+@settings(max_examples=30, deadline=None, derandomize=True)
 @given(output=MALFORMED_OUTPUTS, retries=st.integers(min_value=0, max_value=3))
 def test_malformed_provider_outputs_exhaust_only_the_bounded_validation_attempts(
     output: object,
@@ -74,7 +74,7 @@ def test_malformed_provider_outputs_exhaust_only_the_bounded_validation_attempts
 TRANSPORT_ERRORS = st.sampled_from([TimeoutError, ConnectionError])
 
 
-@settings(max_examples=10, deadline=None)
+@settings(max_examples=10, deadline=None, derandomize=True)
 @given(error_type=TRANSPORT_ERRORS, configured_retries=st.integers(min_value=0, max_value=5))
 def test_transport_failures_propagate_once_without_frontend_added_sensitive_context(
     error_type: type[TimeoutError] | type[ConnectionError],

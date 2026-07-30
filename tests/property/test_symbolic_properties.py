@@ -55,7 +55,7 @@ def controlled_text(draw: st.DrawFn) -> str:
     return "".join(pieces)
 
 
-@settings(max_examples=80, deadline=None)
+@settings(max_examples=80, deadline=None, derandomize=True)
 @given(text=controlled_text())
 def test_exact_symbolic_plans_are_lossless_and_stable(text: str) -> None:
     plan = LEXICALIZER.symbolize(text)
@@ -78,7 +78,7 @@ INVALID_SYMBOLS = st.sampled_from(
 )
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=40, deadline=None, derandomize=True)
 @given(text=controlled_text(), invalid_symbol=INVALID_SYMBOLS)
 def test_unauthorized_or_mutated_plan_symbols_fail_closed(
     text: str,
@@ -94,7 +94,7 @@ def test_unauthorized_or_mutated_plan_symbols_fail_closed(
         LEXICALIZER.lexicalize(mutated)
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=40, deadline=None, derandomize=True)
 @given(text=controlled_text())
 def test_exact_plan_marker_cannot_be_moved_or_duplicated(text: str) -> None:
     plan = LEXICALIZER.symbolize(text)

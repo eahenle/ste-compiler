@@ -105,7 +105,7 @@ def documents(draw: st.DrawFn) -> Document:
     )
 
 
-@settings(max_examples=50, deadline=None)
+@settings(max_examples=50, deadline=None, derandomize=True)
 @given(document=documents())
 def test_strict_ir_round_trips_through_json_and_yaml(document: Document) -> None:
     json_round_trip = loads_document(dumps_document(document, as_json=True), ".json")
@@ -143,7 +143,7 @@ def _nested_object(raw: dict[str, object], location: tuple[str | int, ...]) -> d
     return current
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=40, deadline=None, derandomize=True)
 @given(document=documents(), location=UNKNOWN_FIELD_LOCATIONS)
 def test_ir_models_reject_unknown_fields_at_nested_boundaries(
     document: Document,
@@ -167,7 +167,7 @@ CAUSAL_MUTATIONS = st.sampled_from(
 )
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=40, deadline=None, derandomize=True)
 @given(document=documents(), mutation=CAUSAL_MUTATIONS)
 def test_causal_graph_mutations_fail_closed(document: Document, mutation: str) -> None:
     raw = deepcopy(document.model_dump(mode="json"))

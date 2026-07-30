@@ -180,6 +180,18 @@ def test_llm_frontend_rejects_blank_provider_identity():
         LLMFrontend(Provider())
 
 
+@pytest.mark.parametrize("retries", [-1, True, 1.0])
+def test_llm_frontend_rejects_invalid_retry_limits(retries: object) -> None:
+    class Provider:
+        model_id = "test-provider"
+
+        def extract_ir(self, source, schema, feedback):
+            raise AssertionError
+
+    with pytest.raises(ValueError, match="retries must be a non-negative integer"):
+        LLMFrontend(Provider(), retries=retries)  # type: ignore[arg-type]
+
+
 def test_llm_frontend_rejects_blank_source_quote():
     source = (EXAMPLE_ROOT / "hydraulic_warning.txt").read_text()
     proposal = _proposal()

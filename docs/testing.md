@@ -60,7 +60,8 @@ uv run --locked --extra dev pytest -q tests/property
 ```
 
 Hypothesis exercises bounded, deterministic invariants at the package's strictest public
-boundaries:
+boundaries. Each property explicitly enables Hypothesis's derandomized mode, which disables the
+example database and derives a repeatable case sequence from the test definition:
 
 - semantic IR JSON/YAML round trips, nested unknown-field rejection, and invalid causal-graph
   mutations;
@@ -77,7 +78,7 @@ installed-wheel, neural smoke, or distribution-reproducibility jobs.
 
 `LLMFrontend` retries only schema and source-provenance validation failures. With `retries=N`, it
 makes at most `N + 1` proposal attempts and sends machine-readable validation feedback after the
-first failure.
+first failure. Construction rejects booleans, non-integers, and negative retry limits.
 
 `TimeoutError` and `ConnectionError` are outside that retry boundary. The frontend makes one call
 and propagates the same exception unchanged, regardless of its configured validation retries. A

@@ -21,6 +21,8 @@ class LLMFrontend:
     def __init__(self, provider: StructuredIRProvider, retries: int = 2):
         if not provider.model_id or not provider.model_id.strip():
             raise ValueError("frontend provider model_id must be nonblank")
+        if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
+            raise ValueError("frontend retries must be a non-negative integer")
         self.provider, self.retries = provider, retries
 
     @staticmethod
