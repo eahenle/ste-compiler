@@ -103,9 +103,10 @@ jobs:
           set -euo pipefail
           tag_args=()
           if [[ "${{ steps.bundle.outputs.mode }}" == "tag" ]]; then
-            if ! git merge-base --is-ancestor \
-              "${{ github.event.workflow_run.head_sha }}" "${GITHUB_SHA}"; then
-              echo "release tag commit is not reviewed on the default branch" >&2
+            if [[ \
+              "${{ github.event.workflow_run.head_sha }}" != "${GITHUB_SHA}" \
+            ]]; then
+              echo "release tag commit is not the trusted default-branch commit" >&2
               exit 1
             fi
             tag_args=(

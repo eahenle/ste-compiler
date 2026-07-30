@@ -655,8 +655,9 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     checkout = workflow["jobs"]["build"]["steps"][0]
     assert checkout["with"]["persist-credentials"] == "false"
     identity_gate = workflow["jobs"]["build"]["steps"][3]["run"]
-    assert "git merge-base --is-ancestor" in identity_gate
     assert "refs/remotes/origin/${default_branch}" in identity_gate
+    assert 'default_commit="$(git rev-parse "${policy_ref}")"' in identity_gate
+    assert '[[ "${GITHUB_SHA}" != "${default_commit}" ]]' in identity_gate
     assert "git show" in identity_gate
     assert '"${policy_ref}:.github/release/trusted-tag-signers"' in identity_gate
     assert '--allowed-signers "${allowed_signers}"' in identity_gate
@@ -729,7 +730,7 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     assert "--source-root release-source" in attestation_raw
     assert "cmp \\" in attestation_raw
     assert "enable-cache: false" in attestation_raw
-    assert "git merge-base --is-ancestor" in attestation_raw
+    assert '"${{ github.event.workflow_run.head_sha }}" != "${GITHUB_SHA}"' in attestation_raw
     assert "--allowed-signers .github/release/trusted-tag-signers" in attestation_raw
     assert [step["name"] for step in attest_job["steps"]] == [
         "Download trusted verification bundle",

@@ -56,8 +56,9 @@ jobs:
             git fetch --no-tags --force origin \
               "+refs/heads/${default_branch}:refs/remotes/origin/${default_branch}"
             policy_ref="refs/remotes/origin/${default_branch}"
-            if ! git merge-base --is-ancestor "${GITHUB_SHA}" "${policy_ref}"; then
-              echo "release tag commit is not reviewed on the default branch" >&2
+            default_commit="$(git rev-parse "${policy_ref}")"
+            if [[ "${GITHUB_SHA}" != "${default_commit}" ]]; then
+              echo "release tag commit is not the current default-branch commit" >&2
               exit 1
             fi
             allowed_signers="${RUNNER_TEMP}/trusted-tag-signers"

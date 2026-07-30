@@ -8,8 +8,8 @@ has two modes:
   checksums and build metadata, and uploads a short-lived workflow artifact.
 - A `push` of a `vMAJOR.MINOR.PATCH` tag follows the same build path, but only after the tag is an
   annotated SSH-signed tag for the exact checkout commit, its version equals both `pyproject.toml`
-  and `CITATION.cff`, the tagged commit is contained in the reviewed default branch, and Git accepts
-  its signer through the allowlist fetched from the current default branch. The tag workflow has
+  and `CITATION.cff`, the tag points to the exact current reviewed default-branch commit, and Git
+  accepts its signer through the allowlist fetched from that commit. The tag workflow has
   read-only repository access and can only upload a verification bundle. A separate `workflow_run`
   workflow, loaded from the default branch rather than the tag, independently verifies that bundle,
   source commit, tag signature, and default-branch signer policy. It then uses trusted scripts to
@@ -27,10 +27,11 @@ read-only tag build fetches this policy from the current default branch for an e
 never trusts the copy in the tagged checkout. More importantly, the privileged `Release
 attestation` workflow executes its validator and reads its policy from its own default-branch
 checkout. It treats the triggering bundle and tagged source as untrusted inputs, verifies their
-canonical inventory and checksums, requires the tagged commit to be contained in its default-branch
-commit, and verifies the tag again. Therefore signed-tag workflow runs fail closed before
-attestation until the release owner explicitly reviews a release signing identity and commits an
-SSH `allowed_signers` entry:
+canonical inventory and checksums, requires the tagged commit to equal its default-branch commit,
+and verifies the tag again. The exact commit equality makes GitHub's signed build-provenance
+workflow SHA identical to the source commit that produced the distributions. Therefore signed-tag
+workflow runs fail closed before attestation until the release owner explicitly reviews a release
+signing identity and commits an SSH `allowed_signers` entry:
 
 ```text
 release-identity@example.com namespaces="git" ssh-ed25519 AAAA...
@@ -44,7 +45,7 @@ After signer authorization, a release tag must still:
 
 1. use stable `vMAJOR.MINOR.PATCH` syntax without a moving branch, lightweight tag, or prerelease;
 2. equal the project and citation version exactly;
-3. point to a clean commit contained in the reviewed default branch;
+3. point to the exact clean commit currently at the tip of the reviewed default branch;
 4. carry a valid annotated SSH signature from the allowlist.
 
 The strict validation implementation is
