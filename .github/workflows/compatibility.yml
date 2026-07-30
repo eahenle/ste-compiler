@@ -1,0 +1,102 @@
+name: Compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-platform:
+    name: Portable distribution (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      UV_PYTHON_DOWNLOADS: never
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - macos-14
+          - windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: portable-${{ matrix.runner }}
+      - name: Build, reproduce, install, and execute the portable catalog
+        run: uv run --locked --python 3.12 --extra dev python scripts/ci/distribution_smoke.py
+
+  dependency-resolution:
+    name: Dependency resolution (${{ matrix.resolution }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_OFFLINE: "1"
+      MKL_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      TRANSFORMERS_OFFLINE: "1"
+      UV_PYTHON_DOWNLOADS: never
+      RESOLUTION_PROJECT: ${{ github.workspace }}/../ste-compiler-resolution
+    strategy:
+      fail-fast: false
+      matrix:
+        resolution:
+          - lowest-direct
+          - highest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+          cache-suffix: resolution-${{ matrix.resolution }}
+      - name: Stage a resolution-only project without changing the source checkout
+        shell: bash
+        run: |
+          mkdir -p "$RESOLUTION_PROJECT"
+          git archive HEAD | tar -x -C "$RESOLUTION_PROJECT"
+          rm "$RESOLUTION_PROJECT/uv.lock"
+      - name: Resolve every optional dependency independently of the project lock
+        shell: bash
+        run: |
+          uv sync \
+            --directory "$RESOLUTION_PROJECT" \
+            --python 3.12 \
+            --all-extras \
+            --resolution "${{ matrix.resolution }}" \
+            --refresh
+      - name: Run the complete offline suite with the resolved environment
+        shell: bash
+        run: >-
+          uv run --directory "$RESOLUTION_PROJECT" --no-sync
+          pytest -q "$GITHUB_WORKSPACE/tests"

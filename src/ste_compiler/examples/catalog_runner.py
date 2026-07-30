@@ -422,19 +422,51 @@ def _assert_expected(
             )
 
 
-def _portable_execution(catalog: Mapping[str, Any]) -> tuple[str, ...]:
+def _portable_execution(
+    catalog: Mapping[str, Any],
+    *,
+    platform: str | None = None,
+) -> tuple[str, ...]:
     distribution = _require_mapping(catalog.get("distribution"), "catalog distribution")
     if distribution.get("wheel_fixture_base") != WHEEL_FIXTURE_BASE:
         raise CatalogExecutionError(
             f"wheel_fixture_base must be {WHEEL_FIXTURE_BASE!r} for installed execution"
         )
-    execution = _require_string_sequence(
+    default_execution = _require_string_sequence(
         distribution.get("portable_execution"),
         "portable_execution",
     )
-    if not execution:
+    if not default_execution:
         raise CatalogExecutionError("portable_execution cannot be empty")
-    return execution
+    if len(set(default_execution)) != len(default_execution):
+        raise CatalogExecutionError("portable_execution must be unique")
+
+    overrides = _require_mapping(
+        distribution.get("portable_execution_overrides", {}),
+        "portable_execution_overrides",
+    )
+    selected_platform = sys.platform if platform is None else platform
+    if not selected_platform:
+        raise CatalogExecutionError("catalog platform cannot be empty")
+    selected = default_execution
+    for platform_name, execution_raw in overrides.items():
+        if not platform_name:
+            raise CatalogExecutionError("portable execution override platform cannot be empty")
+        override = _require_string_sequence(
+            execution_raw,
+            f"portable_execution_overrides[{platform_name!r}]",
+        )
+        if not override:
+            raise CatalogExecutionError("portable execution override cannot be empty")
+        if len(set(override)) != len(override):
+            raise CatalogExecutionError("portable execution override must be unique")
+        if not set(override).issubset(default_execution):
+            raise CatalogExecutionError(
+                "portable execution override must select from portable_execution"
+            )
+        if platform_name == selected_platform:
+            selected = override
+    return selected
 
 
 def _validate_fixtures(scenario: Mapping[str, Any], package_root: Path) -> frozenset[str]:
@@ -522,12 +554,13 @@ def run_portable_catalog(
     *,
     package_root: Path,
     temporary_root: Path,
+    platform: str | None = None,
 ) -> CatalogResult:
-    """Execute and evaluate every command in every portable manifest scenario."""
+    """Execute and evaluate every command selected for the current platform."""
 
     if catalog.get("schema_version") != CATALOG_SCHEMA:
         raise CatalogExecutionError(f"catalog schema must be {CATALOG_SCHEMA!r}")
-    execution = _portable_execution(catalog)
+    execution = _portable_execution(catalog, platform=platform)
     scenarios_raw = catalog.get("scenarios")
     if not isinstance(scenarios_raw, Sequence) or isinstance(scenarios_raw, str | bytes):
         raise CatalogExecutionError("catalog scenarios must be a sequence")

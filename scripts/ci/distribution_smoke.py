@@ -14,6 +14,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 WHEEL_SUFFIXES = (
     "ste_compiler/py.typed",
@@ -31,6 +33,7 @@ WHEEL_SUFFIXES = (
     ".dist-info/entry_points.txt",
 )
 SDIST_SUFFIXES = (
+    "/.gitattributes",
     "/LICENSE",
     "/README.md",
     "/src/ste_compiler/py.typed",
@@ -213,25 +216,16 @@ def _smoke_installed_wheel(wheel: Path, temporary_root: Path) -> None:
         "TRANSFORMERS_OFFLINE": "1",
     }
     script = """
-import json
 import pathlib
 import subprocess
 import sys
 
-import yaml
 import ste_compiler
 
-installed, output = map(pathlib.Path, sys.argv[1:])
+installed = pathlib.Path(sys.argv[1])
 package_root = pathlib.Path(ste_compiler.__file__).parent.resolve()
 assert package_root.is_relative_to(installed.resolve())
 
-manifest = yaml.safe_load(
-    (package_root / "examples/manifest.yaml").read_text(encoding="utf-8")
-)
-assert manifest["schema_version"] == "ste-executable-examples-v1"
-assert manifest["distribution"]["wheel_fixture_base"] == "ste_compiler"
-assert manifest["distribution"]["portable_execution"] == ["core-ci"]
-assert [scenario["id"] for scenario in manifest["scenarios"]] == list(range(1, 14))
 network_probe = subprocess.run(
     [sys.executable, "-c", "import socket; socket.gethostbyname('example.invalid')"],
     capture_output=True,
@@ -239,34 +233,54 @@ network_probe = subprocess.run(
 )
 assert network_probe.returncode != 0
 assert "distribution smoke test forbids network access" in network_probe.stderr
-catalog_result = subprocess.run(
-    [sys.executable, "-m", "ste_compiler.examples.catalog_runner", str(output)],
-    check=True,
-    capture_output=True,
-    text=True,
-)
-catalog_payload = json.loads(catalog_result.stdout)
-portable = set(manifest["distribution"]["portable_execution"])
-portable_scenarios = [
-    scenario for scenario in manifest["scenarios"] if scenario["execution"] in portable
-]
-assert catalog_payload["execution"] == manifest["distribution"]["portable_execution"]
-assert catalog_payload["scenario_ids"] == [
-    scenario["id"] for scenario in portable_scenarios
-]
-assert catalog_payload["command_count"] == sum(
-    len(scenario["commands"]) for scenario in portable_scenarios
-)
 """
     _run(
         sys.executable,
         "-c",
         script,
         str(installed),
+        cwd=temporary_root,
+        env=environment,
+    )
+
+    manifest = yaml.safe_load(
+        (installed / "ste_compiler/examples/manifest.yaml").read_text(encoding="utf-8")
+    )
+    if (
+        manifest["schema_version"] != "ste-executable-examples-v1"
+        or manifest["distribution"]["wheel_fixture_base"] != "ste_compiler"
+        or manifest["distribution"]["portable_execution"] != ["portable-ci", "posix-ci"]
+        or manifest["distribution"]["portable_execution_overrides"] != {"win32": ["portable-ci"]}
+        or [scenario["id"] for scenario in manifest["scenarios"]] != list(range(1, 14))
+    ):
+        raise RuntimeError("installed executable example manifest does not match its contract")
+    execution = manifest["distribution"]["portable_execution_overrides"].get(
+        sys.platform,
+        manifest["distribution"]["portable_execution"],
+    )
+    portable = set(execution)
+    portable_scenarios = [
+        scenario for scenario in manifest["scenarios"] if scenario["execution"] in portable
+    ]
+    catalog_stdout = _run(
+        sys.executable,
+        "-m",
+        "ste_compiler.examples.catalog_runner",
         str(temporary_root / "installed-catalog-output"),
         cwd=temporary_root,
         env=environment,
     )
+    try:
+        catalog_payload = json.loads(catalog_stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"installed catalog returned invalid JSON: {catalog_stdout}") from error
+    if (
+        catalog_payload["execution"] != execution
+        or catalog_payload["scenario_ids"] != [scenario["id"] for scenario in portable_scenarios]
+        or catalog_payload["command_count"]
+        != sum(len(scenario["commands"]) for scenario in portable_scenarios)
+    ):
+        raise RuntimeError("installed catalog summary does not match its platform selection")
 
 
 def _publish_verified_distributions(

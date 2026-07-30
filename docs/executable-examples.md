@@ -19,24 +19,26 @@ uv run --locked --extra dev pytest -q tests/integration/test_executable_examples
 
 The test normalizes its command working directory to the repository root, so the same absolute test
 path also works when pytest starts in another directory. It blocks connection, datagram-send, and
-standard DNS-resolution socket APIs while it runs every `core-ci` command in the test process. The
-test also parses every non-gated pytest command, verifies that the node still exists in its declared
-`pytest_owner`, and checks that the declared `ci_job` selects that owner. The normal CI test matrix
-discovers this test on Python 3.12, 3.13, and 3.14.
+standard DNS-resolution socket APIs while it runs every `portable-ci` and `posix-ci` command in the
+test process. The test also parses every non-gated pytest command, verifies that the node still
+exists in its declared `pytest_owner`, and checks that the declared `ci_job` selects that owner.
+The normal CI test matrix discovers this test on Python 3.12, 3.13, and 3.14.
 
 This Python tripwire is not an operating-system network sandbox. It does not automatically cover a
 child process, a non-Python executable, or code that bypasses the `socket` module. The current
-`core-ci` commands use the in-process CLI runner or `runpy` and do not spawn children. A future
-example that crosses that boundary must add an independently verified child-process tripwire or run
-under an OS-level egress control before it can retain `network: forbidden`. Neural mechanics
-examples retain their dedicated offline CI jobs because they install PyTorch and Transformers and
-build temporary model fixtures; the normal test matrix excludes tests marked `neural`.
+`portable-ci` and `posix-ci` commands use the in-process CLI runner or `runpy` and do not spawn
+children. A future example that crosses that boundary must add an independently verified
+child-process tripwire or run under an OS-level egress control before it can retain
+`network: forbidden`. Neural mechanics examples retain their dedicated offline CI jobs because
+they install PyTorch and Transformers and build temporary model fixtures; the normal test matrix
+excludes tests marked `neural`.
 
 ## Installed distribution
 
 The wheel intentionally ships the complete manifest, the custom-resource Python module, its three
-resource files, and every `core-ci` fixture under `ste_compiler/`. The machine-readable
-`distribution` block records that portable boundary. From any directory after installation, run:
+resource files, and every installed-catalog fixture under `ste_compiler/`. The machine-readable
+`distribution` block records both execution classes and the narrower `win32` override. From any
+directory after installation, run:
 
 ```bash
 python -m ste_compiler.examples.custom_resources
@@ -54,9 +56,11 @@ slugs. It resolves each scenario directory and proves that it remains below the 
 creation. Portable options use separate value arguments; `--option=value` is rejected so a path
 value cannot bypass package/output confinement. A shared command-dependency registry binds implicit
 CLI, module, and pytest resources to each scenario's declared fixtures in both source and installed
-catalog validation. The runner executes every `portable_execution` command and prints a JSON summary
-only after all expected exits, recursively type-exact JSON fields, and frozen report artifacts
-match. In particular, JSON booleans, integers, and floating-point numbers are not interchangeable.
+catalog validation. Linux and macOS select the default `portable-ci` plus `posix-ci` execution
+classes. Windows selects only `portable-ci`; benchmark reproduction scenario 13 remains
+`posix-ci`. The runner prints a JSON summary only after all expected exits, recursively type-exact
+JSON fields, and frozen report artifacts match. In particular, JSON booleans, integers, and
+floating-point numbers are not interchangeable.
 
 Code that wants to inspect the installed catalog can obtain it without assuming a checkout:
 
@@ -68,12 +72,13 @@ print(catalog.read_text(encoding="utf-8"))
 ```
 
 The distribution smoke builds and installs the wheel into a temporary target outside the source
-checkout. It verifies the 13-entry catalog, requires every `core-ci` fixture below the installed
-package root, and executes the custom-resource module. It also builds a wheel from the sdist and
-guards the sdist's catalog, resources, executable-example test, and broader development artifacts.
-The `existing-ci` and `neural-ci` rows remain source-only because they invoke repository test targets
-and optional development runtimes; that boundary is explicit in the manifest rather than implied by
-missing wheel files.
+checkout. It verifies the 13-entry catalog, requires every installed-catalog fixture below the
+package root, executes the platform-selected catalog, and surfaces the catalog subprocess's stdout
+and stderr on failure. It also builds a wheel from the sdist and guards the sdist's catalog,
+resources, executable-example test, and broader development artifacts. The `existing-ci` and
+`neural-ci` rows remain source-only because they invoke repository test targets and optional
+development runtimes; that boundary is explicit in the manifest rather than implied by missing
+wheel files.
 
 ## Current coverage
 

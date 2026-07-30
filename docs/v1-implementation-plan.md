@@ -392,14 +392,15 @@ and the distinction between mechanics coverage and unreleased model or benchmark
 
 Status: the schema, causal-graph, exact-symbolic-plan, demonstration-corpus V2 integrity, malformed
 provider-output, and provider transport-failure slice is implemented in `tests/property/`.
-`LLMFrontend` currently retries only schema/provenance failures; transport errors propagate after
-one call, so transport retry and redaction policies remain responsibilities of a future live
-provider adapter. Exact-ratio coverage thresholds and a hash-locked five-profile vulnerability and
-license-policy matrix are implemented, and reproducible distribution builds are enforced. A
-least-privilege signed-tag/manual-dry-run provenance workflow now emits checksums, an SPDX SBOM, and
-GitHub attestations only for authorized signed tags; signer selection and trusted package-index
-publishing remain closed decision gates. Cross-platform CI and minimum neural dependency coverage
-remain separate Phase 7 gates.
+`LLMFrontend` currently retries only schema/provenance failures; provider exceptions propagate
+after one call, so transport retry and redaction policies remain responsibilities of a future live
+provider adapter. Exact-ratio coverage thresholds, a hash-locked five-profile vulnerability and
+license-policy matrix, the Linux/macOS/Windows portable distribution matrix, lowest-direct/current
+all-extras resolution, and weekly checked-in artifact/example verification are implemented.
+A least-privilege signed-tag/manual-dry-run provenance workflow also emits canonical checksums and
+an SPDX SBOM, while its trusted verifier grants GitHub attestations only to validated signed-tag
+artifacts. External published-model verification, release-signer authorization, and trusted
+package-index publishing remain closed Phase 7 gates.
 
 ### Open-source release deliverables
 
