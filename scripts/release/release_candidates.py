@@ -883,10 +883,10 @@ def _remove_published_candidates(
             os.unlink(name, dir_fd=stage_descriptor)
     except OSError:
         return
-    try:
-        os.rmdir(output_name, dir_fd=parent_descriptor)
-    except OSError:
-        pass
+
+
+def _stat_output_parent(path: Path) -> os.stat_result:
+    return os.stat(path, follow_symlinks=False)
 
 
 def build_candidate_directory(
@@ -971,7 +971,7 @@ def build_candidate_directory(
                 dependencies=report_dependencies,
             )
             try:
-                current_parent = os.stat(output_parent, follow_symlinks=False)
+                current_parent = _stat_output_parent(output_parent)
             except OSError as error:
                 raise ReleaseCandidateError(
                     "candidate output parent changed during candidate construction"
@@ -1004,6 +1004,19 @@ def build_candidate_directory(
                     output.name,
                 )
                 published = True
+                published_parent = _stat_output_parent(output_parent)
+                if (
+                    published_parent.st_dev,
+                    published_parent.st_ino,
+                    published_parent.st_mode,
+                ) != (
+                    parent_identity.st_dev,
+                    parent_identity.st_ino,
+                    parent_identity.st_mode,
+                ):
+                    raise ReleaseCandidateError(
+                        "candidate output parent changed during candidate publication"
+                    )
                 published_output = os.stat(
                     output.name,
                     dir_fd=parent_descriptor,
@@ -1016,19 +1029,6 @@ def build_candidate_directory(
                 ) != (opened_output.st_dev, opened_output.st_ino):
                     raise ReleaseCandidateError(
                         "published candidate directory changed before verification"
-                    )
-                published_parent = os.stat(output_parent, follow_symlinks=False)
-                if (
-                    published_parent.st_dev,
-                    published_parent.st_ino,
-                    published_parent.st_mode,
-                ) != (
-                    parent_identity.st_dev,
-                    parent_identity.st_ino,
-                    parent_identity.st_mode,
-                ):
-                    raise ReleaseCandidateError(
-                        "candidate output parent changed during candidate publication"
                     )
             except BaseException:
                 if published:

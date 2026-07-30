@@ -979,6 +979,54 @@ def test_builder_rejects_published_name_swap_without_deleting_replacement(
     verify_candidate_directory(displaced, identity)
 
 
+def test_builder_checks_published_name_after_parent_revalidation(
+    tmp_path: Path,
+    identity: ReleaseIdentity,
+    source_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "candidates"
+    displaced = tmp_path / "displaced-candidates"
+    replacements = {
+        _dataset_name(identity): b"replacement dataset",
+        _report_name(identity): b"replacement report",
+    }
+    real_rename = candidates._rename_no_replace
+    real_parent_stat = candidates._stat_output_parent
+    renamed = False
+    swapped = False
+
+    def mark_renamed(
+        parent_descriptor: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal renamed
+        real_rename(parent_descriptor, source_name, destination_name)
+        renamed = True
+
+    def swap_during_parent_check(path: Path) -> os.stat_result:
+        nonlocal swapped
+        result = real_parent_stat(path)
+        if renamed and not swapped and path == output.parent:
+            output.rename(displaced)
+            output.mkdir()
+            for name, data in replacements.items():
+                (output / name).write_bytes(data)
+            swapped = True
+        return result
+
+    monkeypatch.setattr(candidates, "_rename_no_replace", mark_renamed)
+    monkeypatch.setattr(candidates, "_stat_output_parent", swap_during_parent_check)
+
+    with pytest.raises(ReleaseCandidateError, match="changed before verification"):
+        build_candidate_directory(source_repository, identity, output)
+
+    assert swapped
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == replacements
+    verify_candidate_directory(displaced, identity)
+
+
 def test_build_rejects_existing_output_without_modifying_it(
     tmp_path: Path,
     identity: ReleaseIdentity,
