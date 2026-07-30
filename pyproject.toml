@@ -24,7 +24,7 @@ classifiers = [
   "Topic :: Text Processing :: Linguistic",
   "Typing :: Typed",
 ]
-dependencies = ["pydantic>=2.9,<3", "PyYAML>=6.0,<7", "typer>=0.12,<1"]
+dependencies = ["pydantic>=2.10,<3", "PyYAML>=6.0.1,<7", "typer>=0.26,<1"]
 
 [project.urls]
 Homepage = "https://github.com/eahenle/ste-compiler"
@@ -40,25 +40,25 @@ dev = [
   "hatchling>=1.27",
   "pytest>=8",
   "pytest-cov>=6,<8",
-  "hypothesis>=6",
+  "hypothesis>=6.88.2",
   "mypy>=1.11",
   "pip>=24",
   "ruff>=0.8",
   "types-PyYAML>=6.0",
 ]
 neural = [
-  "huggingface-hub>=0.25,<2",
-  "transformers>=4.45,<6",
+  "huggingface-hub>=1.3,<2",
+  "transformers>=5,<6",
   "peft>=0.13,<1",
   "torch>=2.4,<3",
-  "safetensors>=0.4,<1",
-  "tokenizers>=0.20,<1",
+  "safetensors>=0.4.3,<1",
+  "tokenizers>=0.22,<1",
 ]
 encoder-training = [
-  "huggingface-hub>=0.25,<2",
-  "safetensors>=0.4,<1",
+  "huggingface-hub>=1.3,<2",
+  "safetensors>=0.4.3,<1",
   "torch>=2.4,<3",
-  "transformers>=4.45,<6",
+  "transformers>=5,<6",
 ]
 
 [dependency-groups]

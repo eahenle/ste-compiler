@@ -48,6 +48,39 @@ untested change.
 - Architecture-specific jobs retain focused offline neural smoke coverage.
 - `Distribution smoke` proves reproducible wheel and source-distribution construction plus
   outside-checkout execution.
+- `Portable distribution` repeats the reproducible build, installed-wheel, network tripwire, and
+  portable executable-catalog boundary on Ubuntu 24.04, macOS 14, and Windows Server 2022.
+- `Dependency resolution` stages the commit into a disposable resolution-only project, deletes
+  only that project's copy of the lock, resolves every extra with uv's `lowest-direct` and
+  `highest` strategies, and runs the complete offline suite against each resulting environment
+  while retaining the clean source checkout required by provenance tests. The committed lock
+  remains the reproducible default; these two jobs test the declared lower bounds and current
+  compatible releases independently.
+- `Scheduled artifact and example verification` runs every Monday at 09:17 UTC and on manual
+  dispatch. It rebuilds and installs the distribution, runs the packaged portable catalog, and
+  reconstructs the checked-in demonstration corpora, benchmark evidence, and mechanics reference
+  releases.
+
+## Platform scope
+
+Linux is the full support gate: Python 3.12, 3.13, and 3.14 core tests, complete Python 3.12
+all-extras coverage, both offline neural mechanics paths, hardened POSIX artifact publication and
+reading, and distribution reproduction all run there.
+
+macOS 14 and Windows Server 2022 run the Python 3.12 distribution and installed portable-catalog
+gate. This proves package construction, installation outside the checkout, CLI and module entry
+points, packaged resources, the seven credential-free portable scenarios, and their nine commands.
+It does not claim full neural training coverage on either platform. Windows also does not support
+the explicitly POSIX-only symbolic-corpus export, hardened artifact-bundle publication, benchmark
+report publication, or reference-release publication paths. Those exclusions are enforced by the
+implementation and remain covered by Linux rejection tests. Hardened paths are not promoted to
+cross-platform support merely because the portable catalog passes.
+
+The scheduled job verifies artifacts committed to or bundled with this repository. No externally
+published project model exists yet, so CI has no external model URL or digest to verify. Adding one
+requires a reviewed immutable locator, checksum, license authorization, and intended-use metadata;
+until then, external artifact verification remains an explicit release gate rather than a network
+placeholder.
 
 Coverage does not establish model quality, semantic correctness by itself, or suitability for a
 production use case. Those claims require the repository's separate deterministic contracts and

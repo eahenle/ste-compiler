@@ -35,6 +35,10 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
   line and 76% branch floors.
 - A hash-locked five-profile dependency vulnerability matrix and fail-closed all-extras license
   policy with exact, expiring suppression contracts.
+- Linux, macOS, and Windows installed-distribution catalog smoke coverage, independent
+  lowest-direct and current all-extras dependency resolution, and weekly checked-in artifact
+  reconstruction. The new lower-bound gate also corrects the Python 3.12 floors for the core,
+  development, and neural direct dependencies.
 
 ## [0.1.0] - Unreleased
 

@@ -1,0 +1,51 @@
+name: Scheduled artifact and example verification
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-artifact-verification
+  cancel-in-progress: true
+
+jobs:
+  installed-artifact-verification:
+    name: Installed wheel, examples, and checked-in artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_OFFLINE: "1"
+      MKL_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      TRANSFORMERS_OFFLINE: "1"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: scheduled-artifacts
+      - name: Verify reproducible distributions and the installed portable catalog
+        run: uv run --locked --python 3.12 --extra dev python scripts/ci/distribution_smoke.py
+      - name: Reconstruct and verify every checked-in release artifact
+        run: >-
+          uv run --locked --python 3.12 --all-extras pytest -q
+          tests/integration/test_executable_examples.py
+          tests/unit/test_benchmark_evidence.py
+          tests/unit/test_reference_release.py
+          tests/unit/test_release.py

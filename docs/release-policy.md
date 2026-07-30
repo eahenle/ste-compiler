@@ -11,11 +11,15 @@ to released bytes produces a new artifact version instead of replacing the old i
 
 ## Supported environments
 
-- Core package: the Python versions listed in `pyproject.toml` and exercised by CI.
+- Core package: Python 3.12, 3.13, and 3.14 on Linux. Python 3.12 installed-distribution and
+  portable-catalog behavior is additionally exercised on macOS 14 and Windows Server 2022.
 - Neural features: the explicitly locked dependency and hardware profile documented by the
-  corresponding release.
-- Hardened training-release and model-artifact bundle reads: POSIX filesystems with directory
-  descriptors and no-follow support.
+  corresponding release. Current neural mechanics CI runs on Linux CPU; macOS and Windows neural
+  training are not claimed as supported profiles.
+- Hardened training-release and model-artifact bundle reads and publication: Linux POSIX
+  filesystems with directory descriptors and no-follow support. The portable package imports and
+  catalog run on Windows, but symbolic-corpus export and hardened artifact/report/reference-release
+  publication remain explicit POSIX-only exclusions.
 
 Optional providers and live network integrations are outside the credential-free core support
 contract.
@@ -52,6 +56,13 @@ a new output directory. The release workflow then creates an SPDX JSON SBOM, a c
 `ste-release-build-manifest-v1` inventory, and `SHA256SUMS`. GitHub build and SBOM attestations are
 limited to a successfully verified signed-version-tag run; manual dry-runs do not receive release
 attestations.
+
+Compatibility CI repeats that installed-distribution boundary on Linux, macOS, and Windows and
+tests both the lowest declared direct dependencies and the highest currently compatible
+all-extras resolution. Weekly credential-free CI repeats installed-wheel catalog execution and
+checked-in corpus, benchmark, and mechanics-release reconstruction. It does not contact an
+external artifact host until the project publishes an immutable, licensed model locator and
+digest.
 
 ## Deprecation
 
