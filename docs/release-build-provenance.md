@@ -60,8 +60,11 @@ attempting to checksum itself.
 Use GitHub's workflow UI or:
 
 ```bash
-gh workflow run release-provenance.yml --ref <reviewed-branch-or-commit>
+gh workflow run release-provenance.yml --ref <reviewed-branch-or-tag>
 ```
+
+A manual workflow ref must be a branch or tag whose tip is the exact commit to rehearse; the
+`gh workflow run --ref` option does not accept a raw commit SHA.
 
 A manual run never claims a tag and skips the attestation job. After this workflow is present on the
 default branch, its successful run triggers the read-only default-branch verifier, including the

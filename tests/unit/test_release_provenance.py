@@ -737,6 +737,11 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
         "Attest build provenance",
         "Attest SPDX SBOM",
     ]
+    provenance_docs = (ROOT / "docs/release-build-provenance.md").read_text(encoding="utf-8")
+    assert (
+        "gh workflow run release-provenance.yml --ref <reviewed-branch-or-tag>" in provenance_docs
+    )
+    assert "branch-or-commit" not in provenance_docs
 
 
 def test_repository_signer_policy_is_explicitly_closed_pending_authorization() -> None:
