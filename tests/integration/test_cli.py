@@ -3,6 +3,7 @@ import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
@@ -37,6 +38,130 @@ OFFLINE_NEURAL_CONFIGS = tuple(
 OFFLINE_SOURCE = ROOT / next(
     fixture for fixture in OFFLINE_EXAMPLE["fixtures"] if fixture.startswith("data/examples/")
 )
+REPLAY_METADATA = {
+    "frontend": "offline-replay",
+    "frontend_version": "0.1.0",
+    "realizer": "deterministic",
+    "realizer_version": "0.2.0",
+    "vocabulary_version": "demo-3",
+    "terminology_version": "hydraulic-demo-1",
+    "validator_profile": "strict-demo-1",
+}
+RAW_SOURCE_REPLAY_CASES = (
+    {
+        "record_id": "test_multisection_state",
+        "split": "test",
+        "sha256": "7f5f570480a7ead8e59023ded56a0f4affc8d4e5c8214a0baf664f4f0444680e",
+        "text": (
+            "Hydraulic pressure is not more than 15 MPa.\n"
+            "Unit is safe.\n"
+            "Keep the access panel fully tight."
+        ),
+        "mappings": (
+            (
+                1,
+                "Hydraulic pressure is not more than 15 MPa.",
+                ("pressure_state",),
+                (
+                    "test_multisection_state.txt",
+                    0,
+                    43,
+                    "Hydraulic pressure is not more than 15 MPa.",
+                ),
+                None,
+            ),
+            (
+                2,
+                "Unit is safe.",
+                ("safe_state",),
+                ("test_multisection_state.txt", 44, 61, "The unit is safe."),
+                None,
+            ),
+            (
+                3,
+                "Keep the access panel fully tight.",
+                ("keep_panel",),
+                (
+                    "test_multisection_state.txt",
+                    62,
+                    96,
+                    "Keep the access panel fully tight.",
+                ),
+                None,
+            ),
+        ),
+    },
+    {
+        "record_id": "adversarial_reference_sequence",
+        "split": "adversarial",
+        "sha256": "76b3e3a5d7fee55ec600888ebc1a56376fae9ab1d6dc178140903713b17382bd",
+        "text": (
+            "Open the access panel before the test.\n"
+            "Inspect the pump.\n\n"
+            "Cause: Open the access panel before the test.\n"
+            "Effect: Inspect the pump."
+        ),
+        "mappings": (
+            (
+                1,
+                "Open the access panel before the test.",
+                ("open_panel",),
+                (
+                    "adversarial_reference_sequence.txt",
+                    0,
+                    38,
+                    "Open the access panel before the test.",
+                ),
+                None,
+            ),
+            (
+                2,
+                "Inspect the pump.",
+                ("inspect_pump",),
+                (
+                    "adversarial_reference_sequence.txt",
+                    95,
+                    112,
+                    "Inspect the pump.",
+                ),
+                None,
+            ),
+            (
+                3,
+                "Cause: Open the access panel before the test.",
+                ("open_panel_causes_inspection", "open_panel"),
+                (
+                    "adversarial_reference_sequence.txt",
+                    39,
+                    94,
+                    "Opening the access panel causes inspection of the pump.",
+                ),
+                "cause",
+            ),
+            (
+                4,
+                "Effect: Inspect the pump.",
+                ("open_panel_causes_inspection", "inspect_pump"),
+                (
+                    "adversarial_reference_sequence.txt",
+                    39,
+                    94,
+                    "Opening the access panel causes inspection of the pump.",
+                ),
+                "effect",
+            ),
+        ),
+    },
+)
+
+
+def _corpus_v2_record(split: str, record_id: str) -> dict[str, Any]:
+    path = ROOT / f"datasets/demonstration-corpus-2/{split}.jsonl"
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        if record["record_id"] == record_id:
+            return record
+    raise AssertionError(f"Corpus V2 record is missing: {record_id}")
 
 
 def test_cli_runs_packaged_end_to_end_demo():
@@ -339,6 +464,71 @@ def test_cli_compiles_raw_source_with_verified_replay_fixture():
     assert payload["validation"]["status"] == "accepted"
 
 
+@pytest.mark.parametrize(
+    "case",
+    RAW_SOURCE_REPLAY_CASES,
+    ids=lambda case: str(case["record_id"]),
+)
+def test_cli_replays_corpus_v2_source_and_ir_exactly(case):
+    record_id = case["record_id"]
+    source_id = f"{record_id}.txt"
+    example_root = ROOT / "data/end_to_end"
+    source_path = example_root / source_id
+    fixture_path = example_root / f"{record_id}.ir.yaml"
+    corpus_record = _corpus_v2_record(case["split"], record_id)
+    fixture = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+
+    assert corpus_record["source"]["license_id"] == "MIT"
+    assert source_path.read_bytes() == corpus_record["source"]["text"].encode()
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == case["sha256"]
+    assert fixture == {
+        "schema_version": "replay-ir-v1",
+        "source_sha256": case["sha256"],
+        "ir": corpus_record["ir"],
+    }
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(source_path),
+            "--ir-fixture",
+            str(fixture_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    CompileSourceResult.model_validate(payload)
+    expected_ir = json.loads(json.dumps(corpus_record["ir"]))
+    expected_ir["metadata"] = REPLAY_METADATA
+    assert payload["schema_version"] == "compile-source-v1"
+    assert payload["source"] == {"id": source_id, "sha256": case["sha256"]}
+    assert payload["ir"] == expected_ir
+    assert payload["text"] == case["text"]
+    assert payload["validation"] == {"status": "accepted", "violations": []}
+    assert payload["metadata"] == REPLAY_METADATA
+    assert (
+        tuple(
+            (
+                mapping["sentence"],
+                mapping["text"],
+                tuple(mapping["ir_node_ids"]),
+                (
+                    mapping["features"]["source_spans"][0]["source_id"],
+                    mapping["features"]["source_spans"][0]["start"],
+                    mapping["features"]["source_spans"][0]["end"],
+                    mapping["features"]["source_spans"][0]["quote"],
+                ),
+                mapping["features"].get("causal_role"),
+            )
+            for mapping in payload["mappings"]
+        )
+        == case["mappings"]
+    )
+
+
 def test_cli_routes_compile_source_through_versioned_deterministic_config():
     example_root = ROOT / "data/end_to_end"
     result = runner.invoke(
@@ -402,6 +592,35 @@ def test_cli_replay_rejects_changed_source_without_traceback(tmp_path):
             str(changed),
             "--ir-fixture",
             str(example_root / "hydraulic_warning.ir.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "source SHA-256 does not match the fixture" in result.stderr
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "case",
+    RAW_SOURCE_REPLAY_CASES,
+    ids=lambda case: str(case["record_id"]),
+)
+def test_cli_corpus_v2_replay_rejects_any_source_byte_change(case, tmp_path):
+    record_id = case["record_id"]
+    example_root = ROOT / "data/end_to_end"
+    source = example_root / f"{record_id}.txt"
+    changed = tmp_path / source.name
+    changed_bytes = bytearray(source.read_bytes())
+    changed_bytes[-1] ^= 1
+    changed.write_bytes(changed_bytes)
+
+    result = runner.invoke(
+        app,
+        [
+            "compile-source",
+            str(changed),
+            "--ir-fixture",
+            str(example_root / f"{record_id}.ir.yaml"),
         ],
     )
 

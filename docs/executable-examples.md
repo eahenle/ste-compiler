@@ -85,7 +85,7 @@ wheel files.
 | # | Scenario | State | Executable evidence |
 |---:|---|---|---|
 | 1 | Raw source to deterministic controlled text | Tested | `ste-compiler demo --json` |
-| 2 | Offline replay source extraction | Tested | Explicit `compile-source` source/IR pair |
+| 2 | Offline replay source extraction | Tested | Three explicit `compile-source` source/IR pairs, including verbatim Corpus V2 multi-section and reference/causal records |
 | 3 | Optional live-provider extraction | Gated | No live structured provider or credential contract |
 | 4 | Custom vocabulary and terminology | Tested | `python examples/custom_resources.py` |
 | 5 | Dataset construction and manifest inspection | Tested | Corpus V2 build, manifest assertions, and byte verification |

@@ -369,7 +369,7 @@ def test_installed_catalog_runner_applies_win32_portable_override(
 
     assert result.execution == ("portable-ci",)
     assert result.scenario_ids == (1, 2, 4, 5, 10, 11)
-    assert result.command_count == 7
+    assert result.command_count == 9
     assert evaluated == [command for scenario in expected for command in scenario["commands"]]
 
 

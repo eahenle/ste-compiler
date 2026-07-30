@@ -47,8 +47,10 @@ replacement.
 
 `feature-coverage.json` is the machine-readable positive-coverage report. The regular test suite
 also exercises invalid construction schema fields, resource identities, licenses, source spans,
-required feature coverage, leakage, nonempty output handling, and release tampering. Exhaustive
-mutation coverage for every nested IR schema field remains a separate Phase 1 gate.
+required feature coverage, leakage, nonempty output handling, and release tampering. Schema-derived
+property tests cover every document-reachable nested IR model and field through required-field
+deletion, defaulted-field omission, unknown-field injection, constrained-value mutations, and
+graph-invariant mutations.
 
 ## Reproducibility
 

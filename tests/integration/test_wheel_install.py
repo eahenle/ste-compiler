@@ -206,6 +206,56 @@ assert result.exit_code == 0, result.output
     assert demo_payload["metadata"]["frontend"] == "offline-replay"
     assert demo_payload["validation"]["status"] == "accepted"
 
+    replay_cases = (
+        (
+            "test_multisection_state",
+            "7f5f570480a7ead8e59023ded56a0f4affc8d4e5c8214a0baf664f4f0444680e",
+            (
+                "Hydraulic pressure is not more than 15 MPa.\n"
+                "Unit is safe.\n"
+                "Keep the access panel fully tight."
+            ),
+            3,
+        ),
+        (
+            "adversarial_reference_sequence",
+            "76b3e3a5d7fee55ec600888ebc1a56376fae9ab1d6dc178140903713b17382bd",
+            (
+                "Open the access panel before the test.\n"
+                "Inspect the pump.\n\n"
+                "Cause: Open the access panel before the test.\n"
+                "Effect: Inspect the pump."
+            ),
+            4,
+        ),
+    )
+    for record_id, source_sha256, expected_text, mapping_count in replay_cases:
+        replayed = subprocess.run(
+            [
+                *command,
+                "compile-source",
+                str(package_root / f"data/end_to_end/{record_id}.txt"),
+                "--ir-fixture",
+                str(package_root / f"data/end_to_end/{record_id}.ir.yaml"),
+                "--json",
+            ],
+            cwd=tmp_path,
+            env=clean_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        replay_payload = json.loads(replayed.stdout)
+        assert replay_payload["source"] == {
+            "id": f"{record_id}.txt",
+            "sha256": source_sha256,
+        }
+        assert replay_payload["ir"]["id"] == record_id
+        assert replay_payload["text"] == expected_text
+        assert len(replay_payload["mappings"]) == mapping_count
+        assert replay_payload["metadata"]["frontend"] == "offline-replay"
+        assert replay_payload["validation"] == {"status": "accepted", "violations": []}
+
     realized = subprocess.run(
         [*command, "realize", str(ROOT / "data/examples/negative.yaml")],
         cwd=tmp_path,

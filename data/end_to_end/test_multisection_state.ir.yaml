@@ -1,0 +1,74 @@
+schema_version: replay-ir-v1
+source_sha256: 7f5f570480a7ead8e59023ded56a0f4affc8d4e5c8214a0baf664f4f0444680e
+ir:
+  ambiguities: []
+  causal_relations: []
+  id: test_multisection_state
+  metadata:
+    frontend: deterministic-corpus-construction
+    frontend_version: 0.1.0
+    realizer: deterministic
+    realizer_version: 0.2.0
+    terminology_version: demonstration-corpus-2
+    validator_profile: strict-demo-1
+    vocabulary_version: demo-3
+  references: []
+  sections:
+  - id: description
+    kind: description
+    statements:
+    - id: pressure_state
+      kind: state
+      predicate: is
+      source_spans:
+      - end: 43
+        quote: Hydraulic pressure is not more than 15 MPa.
+        source_id: test_multisection_state.txt
+        start: 0
+      subject:
+        term_id: hydraulic_pressure
+      value:
+        comparator: at_most
+        tolerance: null
+        unit: MPa
+        value: 15.0
+    - id: safe_state
+      kind: state
+      predicate: is
+      source_spans:
+      - end: 61
+        quote: The unit is safe.
+        source_id: test_multisection_state.txt
+        start: 44
+      subject:
+        id: unit
+        name: unit
+      value: safe
+    title: null
+  - id: procedure
+    kind: procedure
+    statements:
+    - action:
+        id: keep
+        lemma: keep
+      actor: null
+      conditions: []
+      hazards: []
+      id: keep_panel
+      indirect_object: null
+      kind: instruction
+      manner: fully tight
+      negated: false
+      object:
+        term_id: access_panel
+      purpose: null
+      quantity_constraints: []
+      required: true
+      source_spans:
+      - end: 96
+        quote: Keep the access panel fully tight.
+        source_id: test_multisection_state.txt
+        start: 62
+      temporal_relations: []
+    title: null
+  title: System state and procedure

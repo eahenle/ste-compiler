@@ -48,7 +48,7 @@ Print the formal JSON Schema for this result:
 ste-compiler schema compile-source
 ```
 
-## Run an explicit source/fixture pair
+## Run the explicit source/fixture pairs
 
 From a source checkout:
 
@@ -57,12 +57,30 @@ ste-compiler compile-source \
   data/end_to_end/hydraulic_warning.txt \
   --ir-fixture data/end_to_end/hydraulic_warning.ir.yaml \
   --json
+ste-compiler compile-source \
+  data/end_to_end/test_multisection_state.txt \
+  --ir-fixture data/end_to_end/test_multisection_state.ir.yaml \
+  --json
+ste-compiler compile-source \
+  data/end_to_end/adversarial_reference_sequence.txt \
+  --ir-fixture data/end_to_end/adversarial_reference_sequence.ir.yaml \
+  --json
 ```
 
-The versioned replay fixture includes the SHA-256 of the complete source file. Its `source_spans`
-must identify `hydraulic_warning.txt`; every span must be within the raw source and its `quote`
-must exactly equal the source substring at `[start:end]`. Changing any source byte—including text
-outside all represented spans—without updating and re-reviewing the gold IR therefore fails closed:
+| Pair | Demonstrated boundary | Source SHA-256 |
+|---|---|---|
+| `hydraulic_warning` | condition, hazard, threshold, and warning realization | `b4c9933386cfff902e7fbd087ff95031993ab4dcbfb870fb92ce722ba8579f37` |
+| `test_multisection_state` | description/procedure sections, quantity state, string state, and manner | `7f5f570480a7ead8e59023ded56a0f4affc8d4e5c8214a0baf664f4f0444680e` |
+| `adversarial_reference_sequence` | temporal sequence, reference metadata, causal relation, and cause/effect mappings | `76b3e3a5d7fee55ec600888ebc1a56376fae9ab1d6dc178140903713b17382bd` |
+
+The multi-section and reference/causal pairs are copied verbatim from the MIT-licensed frozen
+Corpus V2 records with the same IDs. Their tests require exact source bytes and IR equality to the
+corpus release as well as exact controlled text, mappings, provenance, metadata, and validation.
+
+Each versioned replay fixture includes the SHA-256 of the complete source file. Its `source_spans`
+must identify the source file; every span must be within the raw source and its `quote` must exactly
+equal the source substring at `[start:end]`. Changing any source byte—including text outside all
+represented spans—without updating and re-reviewing the gold IR therefore fails closed:
 
 ```text
 replay IR source SHA-256 does not match the fixture
@@ -77,5 +95,5 @@ applies the `Document` schema, requires provenance for each statement, validates
 verifies exact source identity and text, and overwrites any frontend identity claimed by the
 proposal. Only then can realization and validation run.
 
-The next frontend milestone adds an optional live structured provider behind the same boundary.
-The offline demo will remain the stable regression and documentation path.
+An optional live structured provider remains behind the same boundary. These offline pairs remain
+the stable regression and documentation path.

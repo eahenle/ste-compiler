@@ -44,10 +44,11 @@ A new user can:
 
 ## Phase 0: Freeze the reference workflow
 
-Status: in progress. The offline replay frontend, exact provenance verification, packaged
+Status: complete. The offline replay frontend, exact provenance verification, packaged
 `ste-compiler demo`, explicit `compile-source` workflow, and `compile-source-v1` output marker are
-implemented. `ste-compiler schema compile-source` exposes the formal result schema. Additional
-raw-source examples remain.
+implemented. `ste-compiler schema compile-source` exposes the formal result schema. Three
+MIT-licensed source/IR pairs cover a hazard workflow plus verbatim Corpus V2 multi-section and
+reference/causal records.
 
 ### Deliverables
 
@@ -55,7 +56,7 @@ raw-source examples remain.
 - Offline replay frontend that returns a stored IR proposal while exercising the same schema and
   provenance boundary used by a live frontend.
 - Exact source-span verification: source identity, bounds, and quoted source text.
-- One checked-in raw-source example with gold IR and expected validated output.
+- Three checked-in raw-source examples with gold IR and expected validated output.
 - Machine-readable output containing IR, controlled text, mappings, validation, and reproducibility
   metadata.
 - A versioned JSON output schema for end-to-end results.
@@ -75,8 +76,10 @@ Status: in progress. `demonstration-corpus-2` now provides a 24-record, original
 benchmark-contract demonstration with frozen 12/4/4/4 splits, raw source and gold IR,
 deterministic text and symbolic plans, resource snapshots, expanded terminology and boundary
 coverage, leakage checks, licensing, manifests, checksums, and byte-for-byte reconstruction.
-Benchmark-scale source expansion, exhaustive nested-IR schema-negative mutation coverage, and
-publication as a versioned downloadable release remain.
+Schema-derived property tests now delete every required field, omit every defaulted field, reject
+unknown fields at every document-reachable nested model boundary, and exercise constrained fields
+and graph invariants. Benchmark-scale source expansion and publication as a versioned downloadable
+release remain.
 
 ### Deliverables
 
