@@ -43,6 +43,8 @@ untested change.
 - `Tests` runs the non-neural suite on Python 3.12, 3.13, and 3.14.
 - `Coverage` runs every test and every extra on Python 3.12 with network-backed model access
   disabled, then enforces line and branch floors.
+- `Dependencies` exports five hash-locked core/optional profiles, queries current vulnerability
+  data, and reconciles an isolated all-extras license inventory against reviewed policy.
 - Architecture-specific jobs retain focused offline neural smoke coverage.
 - `Distribution smoke` proves reproducible wheel and source-distribution construction plus
   outside-checkout execution.
@@ -50,6 +52,12 @@ untested change.
 Coverage does not establish model quality, semantic correctness by itself, or suitability for a
 production use case. Those claims require the repository's separate deterministic contracts and
 versioned evaluation evidence.
+
+Ordinary package tests remain network-free. The dedicated dependency matrix is the exception: it
+uses the network without credentials to query OSV vulnerability data and download only
+hash-locked distributions. See the
+[dependency vulnerability and license policy](dependency-policy.md) for exact profiles,
+fail-closed report checks, and suppression rules.
 
 ## Property and adversarial suite
 

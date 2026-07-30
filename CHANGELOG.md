@@ -30,6 +30,8 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
   verification without embedding model weights.
 - An offline all-extras coverage gate with deterministic exact-ratio enforcement of initial 88%
   line and 76% branch floors.
+- A hash-locked five-profile dependency vulnerability matrix and fail-closed all-extras license
+  policy with exact, expiring suppression contracts.
 
 ## [0.1.0] - Unreleased
 
