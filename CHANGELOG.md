@@ -22,6 +22,9 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A non-publishing release-provenance workflow with immutable action pins, reproducible retained
   distributions, canonical checksums, SPDX SBOM generation, and signed-tag-only GitHub attestations
   behind an explicitly closed release-signer gate.
+- Identity-bound Corpus V2 dataset and deterministic fixture-report release candidates with exact
+  outer inventories, trusted-code reproduction over validated release source, byte comparison, and
+  candidate build-provenance attestation.
 - A bounded Hypothesis and adversarial suite for strict IR, causal graphs, exact symbolic plans,
   demonstration-corpus V2 integrity, and structured-provider failure boundaries.
 - A credential-free raw-source-to-validated-text reference workflow with three packaged replay

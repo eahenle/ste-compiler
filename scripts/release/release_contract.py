@@ -5,20 +5,35 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import stat
 import subprocess
+import sys
 import tomllib
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
 
+if __name__ == "__main__":
+    repository_root = str(Path(__file__).resolve().parents[2])
+    if repository_root not in sys.path:
+        sys.path.insert(0, repository_root)
+    sys.modules.setdefault("scripts.release.release_contract", sys.modules[__name__])
+
 TAG_PATTERN = re.compile(r"v(?P<version>0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 IDENTITY_SCHEMA = "ste-release-build-identity-v1"
 MANIFEST_SCHEMA = "ste-release-build-manifest-v1"
+CANDIDATE_ARCHIVE_TEMPLATES = (
+    "ste-compiler-{version}-dataset-demonstration-corpus-2.tar",
+    "ste-compiler-{version}-report-ste-compiler-pipeline-fixture-1.tar",
+)
 Mode = Literal["dry-run", "tag"]
 
 
@@ -48,6 +63,30 @@ class ReleaseIdentity:
             "tag": self.tag,
             "version": self.version,
         }
+
+
+@dataclass(frozen=True)
+class _FileIdentity:
+    device: int
+    inode: int
+    mode: int
+    links: int
+    size: int
+    modified_ns: int
+    changed_ns: int
+
+
+@dataclass(frozen=True)
+class _FileSnapshot:
+    path: Path
+    descriptor: int
+    identity: _FileIdentity
+    data: bytes | None
+    sha256: str
+
+    @property
+    def size(self) -> int:
+        return self.identity.size
 
 
 def _run(root: Path, *command: str) -> str:
@@ -259,45 +298,160 @@ def _parse_identity(payload: Any) -> ReleaseIdentity:
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+def _file_identity(status: os.stat_result) -> _FileIdentity:
+    return _FileIdentity(
+        device=status.st_dev,
+        inode=status.st_ino,
+        mode=status.st_mode,
+        links=status.st_nlink,
+        size=status.st_size,
+        modified_ns=status.st_mtime_ns,
+        changed_ns=status.st_ctime_ns,
+    )
+
+
+def _require_single_link_regular(identity: _FileIdentity, *, label: str) -> None:
+    if not stat.S_ISREG(identity.mode) or identity.links != 1:
+        raise ReleaseContractError(f"{label} must be a single-link regular file")
+
+
+def _confirm_snapshot(snapshot: _FileSnapshot, *, label: str) -> None:
+    try:
+        descriptor_identity = _file_identity(os.fstat(snapshot.descriptor))
+        path_identity = _file_identity(os.stat(snapshot.path, follow_symlinks=False))
+    except OSError as error:
+        raise ReleaseContractError(f"cannot recheck {label}: {error}") from error
+    _require_single_link_regular(descriptor_identity, label=label)
+    _require_single_link_regular(path_identity, label=label)
+    if descriptor_identity != snapshot.identity or path_identity != snapshot.identity:
+        raise ReleaseContractError(f"{label} changed while it was being verified")
+
+
+@contextmanager
+def _snapshot_regular_file(
+    path: Path,
+    *,
+    label: str,
+    capture: bool = False,
+) -> Iterator[_FileSnapshot]:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ReleaseContractError("release file snapshots require O_NOFOLLOW support")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor: int | None = None
+    try:
+        before = _file_identity(os.stat(path, follow_symlinks=False))
+        _require_single_link_regular(before, label=label)
+        descriptor = os.open(path, flags)
+        opened = _file_identity(os.fstat(descriptor))
+        _require_single_link_regular(opened, label=label)
+        if opened != before:
+            raise ReleaseContractError(f"{label} changed before it could be opened")
+        digest = hashlib.sha256()
+        chunks: list[bytes] | None = [] if capture else None
+        size = 0
+        while chunk := os.read(descriptor, 1024 * 1024):
             digest.update(chunk)
-    return digest.hexdigest()
+            size += len(chunk)
+            if chunks is not None:
+                chunks.append(chunk)
+        data = b"".join(chunks) if chunks is not None else None
+        after = _file_identity(os.fstat(descriptor))
+        path_after = _file_identity(os.stat(path, follow_symlinks=False))
+        _require_single_link_regular(after, label=label)
+        _require_single_link_regular(path_after, label=label)
+        if after != opened or path_after != opened or size != opened.size:
+            raise ReleaseContractError(f"{label} changed while it was being read")
+        snapshot = _FileSnapshot(
+            path=path,
+            descriptor=descriptor,
+            identity=opened,
+            data=data,
+            sha256=digest.hexdigest(),
+        )
+        yield snapshot
+    except OSError as error:
+        raise ReleaseContractError(f"cannot snapshot {label}: {error}") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
-def _release_files(root: Path, excluded: frozenset[Path]) -> tuple[Path, ...]:
-    resolved = root.resolve()
-    entries = tuple(sorted(resolved.rglob("*")))
-    if any(path.is_symlink() for path in entries):
-        raise ReleaseContractError("release evidence must not contain symbolic links")
-    files = tuple(path for path in entries if path.is_file() and path.resolve() not in excluded)
-    if not files:
-        raise ReleaseContractError("release evidence directory cannot be empty")
-    for path in files:
-        if path.is_symlink() or not path.resolve().is_relative_to(resolved):
-            raise ReleaseContractError("release evidence must contain only in-tree regular files")
-    return files
+def _write_new_regular_file(path: Path, data: bytes, *, label: str) -> None:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ReleaseContractError("release metadata publication requires O_NOFOLLOW support")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags, 0o644)
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise ReleaseContractError(f"cannot write {label}")
+            view = view[written:]
+        identity = _file_identity(os.fstat(descriptor))
+        path_identity = _file_identity(os.stat(path, follow_symlinks=False))
+        _require_single_link_regular(identity, label=label)
+        if identity != path_identity or identity.size != len(data):
+            raise ReleaseContractError(f"{label} changed while it was being written")
+    except FileExistsError as error:
+        raise ReleaseContractError("release metadata outputs must not already exist") from error
+    except OSError as error:
+        raise ReleaseContractError(f"cannot write {label}: {error}") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
-def _validate_release_layout(root: Path, identity: ReleaseIdentity) -> None:
+def _candidate_archive_names(identity: ReleaseIdentity) -> tuple[str, ...]:
+    return tuple(
+        template.format(version=identity.version) for template in CANDIDATE_ARCHIVE_TEMPLATES
+    )
+
+
+def _verify_candidate_contract(path: Path, identity: ReleaseIdentity) -> None:
+    try:
+        from scripts.release.release_candidates import verify_candidate_directory
+
+        verify_candidate_directory(path, identity)
+    except (ImportError, OSError, RuntimeError, ValueError) as error:
+        raise ReleaseContractError(f"release candidates failed verification: {error}") from error
+
+
+def _candidate_archive_paths(
+    path: Path,
+    identity: ReleaseIdentity,
+) -> tuple[Path, ...]:
+    if not path.is_dir() or path.is_symlink():
+        raise ReleaseContractError("release must contain a real candidates directory")
+    entries = tuple(sorted(path.iterdir()))
+    expected_names = _candidate_archive_names(identity)
+    if {entry.name for entry in entries} != set(expected_names):
+        raise ReleaseContractError(
+            "release candidates must contain exactly the identity-bound dataset and report archives"
+        )
+    return tuple(path / name for name in expected_names)
+
+
+def _validate_release_layout(
+    root: Path,
+    identity: ReleaseIdentity,
+) -> tuple[Path, ...]:
     root_entries = tuple(root.iterdir())
     if any(path.is_symlink() for path in root_entries):
         raise ReleaseContractError("release evidence must not contain symbolic links")
     if {path.name for path in root_entries} != {
+        "candidates",
         "distributions",
         "ste-compiler.spdx.json",
     }:
         raise ReleaseContractError("release has an unexpected pre-finalization file inventory")
+    candidates = _candidate_archive_paths(root / "candidates", identity)
     distributions = root / "distributions"
     if not distributions.is_dir() or distributions.is_symlink():
         raise ReleaseContractError("release must contain a real distributions directory")
     distribution_files = tuple(sorted(distributions.iterdir()))
-    if (
-        any(not path.is_file() or path.is_symlink() for path in distribution_files)
-        or len(distribution_files) != 2
-    ):
+    if len(distribution_files) != 2:
         raise ReleaseContractError(
             "release must contain exactly one wheel and one source distribution"
         )
@@ -316,11 +470,14 @@ def _validate_release_layout(root: Path, identity: ReleaseIdentity) -> None:
         )
 
     sbom = root / "ste-compiler.spdx.json"
-    if not sbom.is_file() or sbom.is_symlink():
-        raise ReleaseContractError("release must contain a real SPDX JSON SBOM")
+    return tuple(sorted((*candidates, *distribution_files, sbom)))
+
+
+def _validate_sbom(snapshot: _FileSnapshot) -> None:
+    data = _captured_data(snapshot, label="release SPDX JSON SBOM")
     try:
-        payload: Any = json.loads(sbom.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        payload: Any = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ReleaseContractError(f"cannot read release SPDX JSON SBOM: {error}") from error
     if (
         not isinstance(payload, dict)
@@ -328,6 +485,12 @@ def _validate_release_layout(root: Path, identity: ReleaseIdentity) -> None:
         or not isinstance(payload.get("SPDXID"), str)
     ):
         raise ReleaseContractError("release SBOM must be an SPDX 2.3 JSON document")
+
+
+def _captured_data(snapshot: _FileSnapshot, *, label: str) -> bytes:
+    if snapshot.data is None:
+        raise ReleaseContractError(f"{label} was not captured")
+    return snapshot.data
 
 
 def finalize_release(release_root: Path, identity_path: Path) -> tuple[Path, Path]:
@@ -341,49 +504,86 @@ def finalize_release(release_root: Path, identity_path: Path) -> tuple[Path, Pat
     identity = read_identity(identity_path)
     manifest_path = release_root / "release-build.json"
     checksums_path = release_root / "SHA256SUMS"
-    if manifest_path.exists() or checksums_path.exists():
+    if os.path.lexists(manifest_path) or os.path.lexists(checksums_path):
         raise ReleaseContractError("release metadata outputs must not already exist")
-    _validate_release_layout(release_root, identity)
+    subject_paths = _validate_release_layout(release_root, identity)
 
-    subjects = _release_files(
-        release_root,
-        frozenset({manifest_path.resolve(), checksums_path.resolve()}),
-    )
-    manifest = {
-        **identity.as_dict(),
-        "artifacts": [
-            {
-                "bytes": path.stat().st_size,
-                "path": path.relative_to(release_root).as_posix(),
-                "sha256": _sha256(path),
-            }
-            for path in subjects
-        ],
-        "identity_schema_version": identity.schema_version,
-        "schema_version": MANIFEST_SCHEMA,
-    }
-    manifest_path.write_bytes(_canonical_json(manifest))
-    checksum_subjects = (*subjects, manifest_path)
-    checksums_path.write_text(
-        "".join(
-            f"{_sha256(path)}  {path.relative_to(release_root).as_posix()}\n"
-            for path in sorted(checksum_subjects)
-        ),
-        encoding="utf-8",
-    )
+    with ExitStack() as snapshots:
+        subjects = tuple(
+            snapshots.enter_context(
+                _snapshot_regular_file(
+                    path,
+                    label=f"release artifact {path.relative_to(release_root).as_posix()!r}",
+                    capture=path.name == "ste-compiler.spdx.json",
+                )
+            )
+            for path in subject_paths
+        )
+        subject_by_path = {
+            snapshot.path.relative_to(release_root).as_posix(): snapshot for snapshot in subjects
+        }
+        _verify_candidate_contract(release_root / "candidates", identity)
+        for snapshot in subjects:
+            _confirm_snapshot(
+                snapshot,
+                label=(f"release artifact {snapshot.path.relative_to(release_root).as_posix()!r}"),
+            )
+        _validate_sbom(subject_by_path["ste-compiler.spdx.json"])
+        manifest = {
+            **identity.as_dict(),
+            "artifacts": [
+                {
+                    "bytes": snapshot.size,
+                    "path": relative_path,
+                    "sha256": snapshot.sha256,
+                }
+                for relative_path, snapshot in subject_by_path.items()
+            ],
+            "identity_schema_version": identity.schema_version,
+            "schema_version": MANIFEST_SCHEMA,
+        }
+        _write_new_regular_file(
+            manifest_path,
+            _canonical_json(manifest),
+            label="release build manifest",
+        )
+        manifest_snapshot = snapshots.enter_context(
+            _snapshot_regular_file(
+                manifest_path,
+                label="release build manifest",
+                capture=True,
+            )
+        )
+        checksum_snapshots = (*subjects, manifest_snapshot)
+        checksum_data = "".join(
+            (f"{snapshot.sha256}  {snapshot.path.relative_to(release_root).as_posix()}\n")
+            for snapshot in sorted(
+                checksum_snapshots,
+                key=lambda item: item.path.relative_to(release_root).as_posix(),
+            )
+        ).encode()
+        _write_new_regular_file(
+            checksums_path,
+            checksum_data,
+            label="release checksum list",
+        )
+        for snapshot in checksum_snapshots:
+            _confirm_snapshot(
+                snapshot,
+                label=(f"release subject {snapshot.path.relative_to(release_root).as_posix()!r}"),
+            )
     return manifest_path, checksums_path
 
 
-def _read_release_manifest(
-    manifest_path: Path,
+def _parse_release_manifest(
+    encoded: bytes,
 ) -> tuple[ReleaseIdentity, tuple[tuple[str, int, str], ...]]:
     try:
-        encoded = manifest_path.read_bytes()
         payload: Any = json.loads(
             encoded.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_json_fields,
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ReleaseContractError(f"cannot read release build manifest: {error}") from error
     expected_keys = {
         "artifacts",
@@ -455,6 +655,7 @@ def _verified_release_root(release_root: Path) -> Path:
         raise ReleaseContractError("release bundle must not contain symbolic links")
     if {path.name for path in root_entries} != {
         "SHA256SUMS",
+        "candidates",
         "distributions",
         "release-build.json",
         "ste-compiler.spdx.json",
@@ -462,19 +663,19 @@ def _verified_release_root(release_root: Path) -> Path:
         raise ReleaseContractError("release bundle has an unexpected file inventory")
     if not (root / "distributions").is_dir():
         raise ReleaseContractError("release bundle must contain a real distributions directory")
-    for name in ("SHA256SUMS", "release-build.json", "ste-compiler.spdx.json"):
-        if not (root / name).is_file():
-            raise ReleaseContractError(f"release bundle must contain a real {name} file")
+    if not (root / "candidates").is_dir():
+        raise ReleaseContractError("release bundle must contain a real candidates directory")
     return root
 
 
-def _verified_release_subjects(root: Path, identity: ReleaseIdentity) -> tuple[Path, ...]:
+def _verified_release_subject_paths(
+    root: Path,
+    identity: ReleaseIdentity,
+) -> tuple[Path, ...]:
+    candidates = _candidate_archive_paths(root / "candidates", identity)
     distributions = root / "distributions"
     distribution_files = tuple(sorted(distributions.iterdir()))
-    if (
-        any(not path.is_file() or path.is_symlink() for path in distribution_files)
-        or len(distribution_files) != 2
-    ):
+    if len(distribution_files) != 2:
         raise ReleaseContractError(
             "release bundle must contain exactly one wheel and one source distribution"
         )
@@ -491,17 +692,13 @@ def _verified_release_subjects(root: Path, identity: ReleaseIdentity) -> tuple[P
         raise ReleaseContractError(
             "release bundle distribution filenames do not match the release identity version"
         )
-    manifest_path = root / "release-build.json"
-    checksums_path = root / "SHA256SUMS"
-    subjects = _release_files(
-        root,
-        frozenset({manifest_path.resolve(), checksums_path.resolve()}),
-    )
     expected_paths = {
+        *(f"candidates/{archive_name}" for archive_name in _candidate_archive_names(identity)),
         f"distributions/{wheels[0].name}",
         f"distributions/{expected_sdist}",
         "ste-compiler.spdx.json",
     }
+    subjects = tuple(sorted((*candidates, *distribution_files, root / "ste-compiler.spdx.json")))
     if {path.relative_to(root).as_posix() for path in subjects} != expected_paths:
         raise ReleaseContractError("release bundle has an unexpected artifact inventory")
     return subjects
@@ -521,44 +718,85 @@ def verify_release_bundle(
         raise ReleaseContractError("expected release mode must be dry-run or tag")
     root = _verified_release_root(release_root)
     manifest_path = root / "release-build.json"
-    identity, artifacts = _read_release_manifest(manifest_path)
-    if identity.mode != expected_mode:
-        raise ReleaseContractError(
-            f"release bundle mode {identity.mode!r} does not equal expected mode {expected_mode!r}"
-        )
-    if identity.commit != expected_commit:
-        raise ReleaseContractError(
-            f"release bundle commit {identity.commit} does not equal expected commit {expected_commit}"
-        )
-
-    subjects = _verified_release_subjects(root, identity)
-    subject_by_path = {path.relative_to(root).as_posix(): path for path in subjects}
-    if tuple(subject_by_path) != tuple(artifact[0] for artifact in artifacts):
-        raise ReleaseContractError(
-            "release build manifest artifact inventory does not match the release bundle"
-        )
-    for relative_path, expected_size, expected_digest in artifacts:
-        artifact_path = subject_by_path[relative_path]
-        if artifact_path.stat().st_size != expected_size:
-            raise ReleaseContractError(
-                f"release artifact size does not match manifest: {relative_path}"
+    checksums_path = root / "SHA256SUMS"
+    with ExitStack() as snapshots:
+        manifest_snapshot = snapshots.enter_context(
+            _snapshot_regular_file(
+                manifest_path,
+                label="release build manifest",
+                capture=True,
             )
-        if _sha256(artifact_path) != expected_digest:
+        )
+        identity, artifacts = _parse_release_manifest(
+            _captured_data(manifest_snapshot, label="release build manifest")
+        )
+        if identity.mode != expected_mode:
             raise ReleaseContractError(
-                f"release artifact SHA-256 does not match manifest: {relative_path}"
+                f"release bundle mode {identity.mode!r} "
+                f"does not equal expected mode {expected_mode!r}"
+            )
+        if identity.commit != expected_commit:
+            raise ReleaseContractError(
+                f"release bundle commit {identity.commit} "
+                f"does not equal expected commit {expected_commit}"
             )
 
-    checksum_subjects = tuple(sorted((*subjects, manifest_path)))
-    canonical_checksums = "".join(
-        f"{_sha256(path)}  {path.relative_to(root).as_posix()}\n" for path in checksum_subjects
-    ).encode()
-    try:
-        actual_checksums = (root / "SHA256SUMS").read_bytes()
-    except OSError as error:
-        raise ReleaseContractError(f"cannot read release bundle checksums: {error}") from error
-    if actual_checksums != canonical_checksums:
-        raise ReleaseContractError("SHA256SUMS is not the canonical release bundle checksum list")
-    return identity
+        subject_paths = _verified_release_subject_paths(root, identity)
+        subjects = tuple(
+            snapshots.enter_context(
+                _snapshot_regular_file(
+                    path,
+                    label=f"release artifact {path.relative_to(root).as_posix()!r}",
+                    capture=path.name == "ste-compiler.spdx.json",
+                )
+            )
+            for path in subject_paths
+        )
+        checksums_snapshot = snapshots.enter_context(
+            _snapshot_regular_file(
+                checksums_path,
+                label="release checksum list",
+                capture=True,
+            )
+        )
+        subject_by_path = {
+            snapshot.path.relative_to(root).as_posix(): snapshot for snapshot in subjects
+        }
+        if tuple(subject_by_path) != tuple(artifact[0] for artifact in artifacts):
+            raise ReleaseContractError(
+                "release build manifest artifact inventory does not match the release bundle"
+            )
+        _verify_candidate_contract(root / "candidates", identity)
+        for relative_path, expected_size, expected_digest in artifacts:
+            snapshot = subject_by_path[relative_path]
+            if snapshot.size != expected_size:
+                raise ReleaseContractError(
+                    f"release artifact size does not match manifest: {relative_path}"
+                )
+            if snapshot.sha256 != expected_digest:
+                raise ReleaseContractError(
+                    f"release artifact SHA-256 does not match manifest: {relative_path}"
+                )
+
+        _validate_sbom(subject_by_path["ste-compiler.spdx.json"])
+        checksum_snapshots = (*subjects, manifest_snapshot)
+        canonical_checksums = "".join(
+            (f"{snapshot.sha256}  {snapshot.path.relative_to(root).as_posix()}\n")
+            for snapshot in sorted(
+                checksum_snapshots,
+                key=lambda item: item.path.relative_to(root).as_posix(),
+            )
+        ).encode()
+        if _captured_data(checksums_snapshot, label="release checksum list") != canonical_checksums:
+            raise ReleaseContractError(
+                "SHA256SUMS is not the canonical release bundle checksum list"
+            )
+        for snapshot in (*checksum_snapshots, checksums_snapshot):
+            _confirm_snapshot(
+                snapshot,
+                label=(f"release subject {snapshot.path.relative_to(root).as_posix()!r}"),
+            )
+        return identity
 
 
 def _parser() -> argparse.ArgumentParser:

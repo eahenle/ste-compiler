@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import yaml
 
 from scripts.ci.distribution_smoke import _publish_verified_distributions
+from scripts.release import release_contract as release_contract_module
 from scripts.release.release_contract import (
+    CANDIDATE_ARCHIVE_TEMPLATES,
     IDENTITY_SCHEMA,
     MANIFEST_SCHEMA,
     ReleaseContractError,
@@ -22,12 +28,25 @@ from scripts.release.release_contract import (
     verify_release_bundle,
     write_identity,
 )
+from scripts.release.release_contract import (
+    main as release_contract_main,
+)
 
 ROOT = Path(__file__).parents[2]
 WORKFLOW = ROOT / ".github/workflows/release-provenance.yml"
 ATTESTATION_WORKFLOW = ROOT / ".github/workflows/release-attestation.yml"
+SCHEDULED_WORKFLOW = ROOT / ".github/workflows/scheduled-verification.yml"
 TRUSTED_SIGNERS = ROOT / ".github/release/trusted-tag-signers"
 ACTION_PIN = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
+
+
+@pytest.fixture(autouse=True)
+def _accept_synthetic_candidate_archives(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        release_contract_module,
+        "_verify_candidate_contract",
+        lambda _path, _identity: None,
+    )
 
 
 def _run(root: Path, *command: str) -> str:
@@ -59,23 +78,33 @@ def _repository(tmp_path: Path) -> Path:
     return root
 
 
-def _release_bundle(
+def _write_synthetic_candidates(release: Path, version: str) -> Path:
+    candidates = release / "candidates"
+    candidates.mkdir(parents=True)
+    for template in CANDIDATE_ARCHIVE_TEMPLATES:
+        name = template.format(version=version)
+        candidates.joinpath(name).write_bytes(name.encode())
+    return candidates
+
+
+def _release_inputs(
     tmp_path: Path,
     *,
-    mode: str = "tag",
+    mode: Literal["dry-run", "tag"] = "tag",
     commit: str = "a" * 40,
-) -> Path:
+) -> tuple[Path, Path]:
     release = tmp_path / "release"
     distributions = release / "distributions"
     distributions.mkdir(parents=True)
     (distributions / "ste_compiler-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
     (distributions / "ste_compiler-0.1.0.tar.gz").write_bytes(b"sdist")
+    _write_synthetic_candidates(release, "0.1.0")
     (release / "ste-compiler.spdx.json").write_text(
         '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3"}\n',
         encoding="utf-8",
     )
     identity_path = tmp_path / "identity.json"
-    identity_mode = "tag" if mode == "tag" else "dry-run"
+    identity_mode: Literal["dry-run", "tag"] = "tag" if mode == "tag" else "dry-run"
     write_identity(
         ReleaseIdentity(
             schema_version=IDENTITY_SCHEMA,
@@ -87,6 +116,16 @@ def _release_bundle(
         ),
         identity_path,
     )
+    return release, identity_path
+
+
+def _release_bundle(
+    tmp_path: Path,
+    *,
+    mode: Literal["dry-run", "tag"] = "tag",
+    commit: str = "a" * 40,
+) -> Path:
+    release, identity_path = _release_inputs(tmp_path, mode=mode, commit=commit)
     finalize_release(release, identity_path)
     return release
 
@@ -255,26 +294,7 @@ def test_tag_mode_rejects_lightweight_tag_and_disabled_signer_policy(tmp_path: P
 
 
 def test_finalize_release_writes_canonical_inventory_and_checksums(tmp_path: Path) -> None:
-    release = tmp_path / "release"
-    distributions = release / "distributions"
-    distributions.mkdir(parents=True)
-    (distributions / "ste_compiler-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
-    (distributions / "ste_compiler-0.1.0.tar.gz").write_bytes(b"sdist")
-    (release / "ste-compiler.spdx.json").write_text(
-        '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3"}\n'
-    )
-    identity_path = tmp_path / "identity.json"
-    write_identity(
-        ReleaseIdentity(
-            schema_version=IDENTITY_SCHEMA,
-            mode="dry-run",
-            version="0.1.0",
-            commit="a" * 40,
-            source_date_epoch=1729,
-            tag=None,
-        ),
-        identity_path,
-    )
+    release, identity_path = _release_inputs(tmp_path, mode="dry-run")
 
     manifest_path, checksums_path = finalize_release(release, identity_path)
 
@@ -283,12 +303,16 @@ def test_finalize_release_writes_canonical_inventory_and_checksums(tmp_path: Pat
     assert manifest["identity_schema_version"] == IDENTITY_SCHEMA
     assert manifest["mode"] == "dry-run"
     assert [artifact["path"] for artifact in manifest["artifacts"]] == [
+        "candidates/ste-compiler-0.1.0-dataset-demonstration-corpus-2.tar",
+        "candidates/ste-compiler-0.1.0-report-ste-compiler-pipeline-fixture-1.tar",
         "distributions/ste_compiler-0.1.0-py3-none-any.whl",
         "distributions/ste_compiler-0.1.0.tar.gz",
         "ste-compiler.spdx.json",
     ]
     checksum_paths = [line.split("  ", 1)[1] for line in checksums_path.read_text().splitlines()]
     assert checksum_paths == [
+        "candidates/ste-compiler-0.1.0-dataset-demonstration-corpus-2.tar",
+        "candidates/ste-compiler-0.1.0-report-ste-compiler-pipeline-fixture-1.tar",
         "distributions/ste_compiler-0.1.0-py3-none-any.whl",
         "distributions/ste_compiler-0.1.0.tar.gz",
         "release-build.json",
@@ -296,6 +320,251 @@ def test_finalize_release_writes_canonical_inventory_and_checksums(tmp_path: Pat
     ]
     with pytest.raises(ReleaseContractError, match="must not already exist"):
         finalize_release(release, identity_path)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are unavailable")
+@pytest.mark.parametrize("operation", ["finalize", "verify"])
+def test_release_contract_rejects_fifo_subjects_without_opening(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    if operation == "finalize":
+        release, identity_path = _release_inputs(tmp_path)
+    else:
+        release = _release_bundle(tmp_path)
+        identity_path = None
+    wheel = release / "distributions/ste_compiler-0.1.0-py3-none-any.whl"
+    wheel.unlink()
+    os.mkfifo(wheel)
+
+    with pytest.raises(ReleaseContractError, match="single-link regular"):
+        if identity_path is None:
+            verify_release_bundle(
+                release,
+                expected_commit="a" * 40,
+                expected_mode="tag",
+            )
+        else:
+            finalize_release(release, identity_path)
+
+
+@pytest.mark.parametrize("operation", ["finalize", "verify"])
+def test_release_contract_rejects_subject_path_swap_after_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    if operation == "finalize":
+        release, identity_path = _release_inputs(tmp_path)
+    else:
+        release = _release_bundle(tmp_path)
+        identity_path = None
+    wheel = release.resolve() / "distributions/ste_compiler-0.1.0-py3-none-any.whl"
+    original_open = os.open
+    swapped = False
+
+    def open_then_swap(
+        path: str | os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if dir_fd is None:
+            descriptor = original_open(path, flags, mode)
+        else:
+            descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if not swapped and Path(path) == wheel:
+            wheel.replace(wheel.with_name(f".{wheel.name}.opened"))
+            wheel.write_bytes(b"replacement")
+            swapped = True
+        return descriptor
+
+    monkeypatch.setattr(os, "open", open_then_swap)
+
+    with pytest.raises(
+        ReleaseContractError,
+        match="changed before it could be opened|changed while it was being read",
+    ):
+        if identity_path is None:
+            verify_release_bundle(
+                release,
+                expected_commit="a" * 40,
+                expected_mode="tag",
+            )
+        else:
+            finalize_release(release, identity_path)
+    assert swapped
+
+
+@pytest.mark.parametrize("operation", ["finalize", "verify"])
+def test_release_contract_snapshots_each_subject_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    if operation == "finalize":
+        release, identity_path = _release_inputs(tmp_path)
+    else:
+        release = _release_bundle(tmp_path)
+        identity_path = None
+    original_snapshot = release_contract_module._snapshot_regular_file
+    snapshot_counts: Counter[Path] = Counter()
+
+    @contextmanager
+    def counted_snapshot(
+        path: Path,
+        *,
+        label: str,
+        capture: bool = False,
+    ) -> Iterator[Any]:
+        snapshot_counts[path] += 1
+        with original_snapshot(path, label=label, capture=capture) as snapshot:
+            yield snapshot
+
+    monkeypatch.setattr(
+        release_contract_module,
+        "_snapshot_regular_file",
+        counted_snapshot,
+    )
+
+    if identity_path is None:
+        verify_release_bundle(
+            release,
+            expected_commit="a" * 40,
+            expected_mode="tag",
+        )
+    else:
+        finalize_release(release, identity_path)
+
+    expected_paths = {
+        release.resolve() / "candidates/ste-compiler-0.1.0-dataset-demonstration-corpus-2.tar",
+        release.resolve()
+        / "candidates/ste-compiler-0.1.0-report-ste-compiler-pipeline-fixture-1.tar",
+        release.resolve() / "distributions/ste_compiler-0.1.0-py3-none-any.whl",
+        release.resolve() / "distributions/ste_compiler-0.1.0.tar.gz",
+        release.resolve() / "release-build.json",
+        release.resolve() / "ste-compiler.spdx.json",
+    }
+    if identity_path is None:
+        expected_paths.add(release.resolve() / "SHA256SUMS")
+    assert snapshot_counts == Counter({path: 1 for path in expected_paths})
+
+
+def test_candidate_contract_is_verified_before_and_after_finalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release, identity_path = _release_inputs(tmp_path)
+    calls: list[tuple[Path, ReleaseIdentity]] = []
+    monkeypatch.setattr(
+        release_contract_module,
+        "_verify_candidate_contract",
+        lambda path, identity: calls.append((path, identity)),
+    )
+
+    finalize_release(release, identity_path)
+    identity = verify_release_bundle(
+        release,
+        expected_commit="a" * 40,
+        expected_mode="tag",
+    )
+
+    assert calls == [
+        (release.resolve() / "candidates", identity),
+        (release.resolve() / "candidates", identity),
+    ]
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "symlink", "hardlink"])
+def test_finalize_release_requires_exact_candidate_archive_inventory(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    release, identity_path = _release_inputs(tmp_path)
+    candidates = release / "candidates"
+    if mutation == "missing":
+        next(candidates.iterdir()).unlink()
+    elif mutation == "extra":
+        (candidates / "unreviewed.tar").write_bytes(b"unreviewed")
+    elif mutation == "symlink":
+        candidate = next(candidates.iterdir())
+        candidate.unlink()
+        outside = tmp_path / "outside-candidate.tar"
+        outside.write_bytes(b"outside")
+        candidate.symlink_to(outside)
+    else:
+        candidate = next(candidates.iterdir())
+        candidate.unlink()
+        outside = tmp_path / "outside-candidate.tar"
+        outside.write_bytes(b"outside")
+        candidate.hardlink_to(outside)
+
+    with pytest.raises(
+        ReleaseContractError,
+        match="must contain exactly|single-link regular",
+    ):
+        finalize_release(release, identity_path)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "symlink", "hardlink"])
+def test_verify_release_bundle_requires_exact_candidate_archive_inventory(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    release = _release_bundle(tmp_path)
+    candidates = release / "candidates"
+    if mutation == "missing":
+        next(candidates.iterdir()).unlink()
+    elif mutation == "extra":
+        (candidates / "unreviewed.tar").write_bytes(b"unreviewed")
+    elif mutation == "symlink":
+        candidate = next(candidates.iterdir())
+        candidate.unlink()
+        outside = tmp_path / "outside-candidate.tar"
+        outside.write_bytes(b"outside")
+        candidate.symlink_to(outside)
+    else:
+        candidate = next(candidates.iterdir())
+        candidate.unlink()
+        outside = tmp_path / "outside-candidate.tar"
+        outside.write_bytes(b"outside")
+        candidate.hardlink_to(outside)
+
+    with pytest.raises(
+        ReleaseContractError,
+        match="must contain exactly|single-link regular",
+    ):
+        verify_release_bundle(
+            release,
+            expected_commit="a" * 40,
+            expected_mode="tag",
+        )
+
+
+def test_verify_release_bundle_rechecks_candidate_identity_and_cross_links(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = _release_bundle(tmp_path)
+    candidate = release / ("candidates/ste-compiler-0.1.0-dataset-demonstration-corpus-2.tar")
+    candidate.write_bytes(b"hostile replacement")
+
+    def reject_tampered_candidates(_path: Path, _identity: ReleaseIdentity) -> None:
+        raise ReleaseContractError("candidate identity or cross-link does not match")
+
+    monkeypatch.setattr(
+        release_contract_module,
+        "_verify_candidate_contract",
+        reject_tampered_candidates,
+    )
+    with pytest.raises(ReleaseContractError, match="candidate identity or cross-link"):
+        verify_release_bundle(
+            release,
+            expected_commit="a" * 40,
+            expected_mode="tag",
+        )
 
 
 def test_verified_distribution_copy_requires_new_output(tmp_path: Path) -> None:
@@ -374,6 +643,7 @@ def test_finalize_release_rejects_distribution_version_mismatch(tmp_path: Path) 
     distributions.mkdir(parents=True)
     (distributions / "ste_compiler-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
     (distributions / "ste_compiler-0.1.0.tar.gz").write_bytes(b"sdist")
+    _write_synthetic_candidates(release, "0.2.0")
     (release / "ste-compiler.spdx.json").write_text(
         '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3"}\n'
     )
@@ -394,7 +664,11 @@ def test_finalize_release_rejects_distribution_version_mismatch(tmp_path: Path) 
         finalize_release(release, identity_path)
 
 
-def test_verify_release_bundle_returns_identity_and_prints_safe_json(tmp_path: Path) -> None:
+def test_verify_release_bundle_returns_identity_and_prints_safe_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     release = _release_bundle(tmp_path)
 
     identity = verify_release_bundle(
@@ -411,10 +685,11 @@ def test_verify_release_bundle_returns_identity_and_prints_safe_json(tmp_path: P
         source_date_epoch=1729,
         tag="v0.1.0",
     )
-    completed = subprocess.run(
+    monkeypatch.setattr(
+        sys,
+        "argv",
         [
-            sys.executable,
-            str(ROOT / "scripts/release/release_contract.py"),
+            "release_contract.py",
             "verify-bundle",
             "--release-root",
             str(release),
@@ -423,12 +698,83 @@ def test_verify_release_bundle_returns_identity_and_prints_safe_json(tmp_path: P
             "--expected-mode",
             "tag",
         ],
+    )
+    release_contract_main()
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == identity.as_dict()
+    assert captured.err == ""
+
+
+def test_direct_script_finalizes_and_verifies_real_candidate_archives(
+    tmp_path: Path,
+) -> None:
+    candidate_module = pytest.importorskip("scripts.release.release_candidates")
+    if _run(ROOT, "git", "status", "--porcelain"):
+        pytest.skip("direct release subprocess integration requires a clean checkout")
+    commit = _run(ROOT, "git", "rev-parse", "HEAD")
+    identity = validate_release_ref(
+        ROOT,
+        mode="dry-run",
+        commit=commit,
+        tag=None,
+        allowed_signers=tmp_path / "unused-signers",
+    )
+    identity_path = tmp_path / "identity.json"
+    write_identity(identity, identity_path)
+    release = tmp_path / "release"
+    release.mkdir()
+    candidate_module.build_candidate_directory(
+        ROOT,
+        identity,
+        release / "candidates",
+    )
+    distributions = release / "distributions"
+    distributions.mkdir()
+    distributions.joinpath(f"ste_compiler-{identity.version}-py3-none-any.whl").write_bytes(
+        b"wheel"
+    )
+    distributions.joinpath(f"ste_compiler-{identity.version}.tar.gz").write_bytes(b"sdist")
+    (release / "ste-compiler.spdx.json").write_text(
+        '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3"}\n',
+        encoding="utf-8",
+    )
+    command = [sys.executable, str(ROOT / "scripts/release/release_contract.py")]
+
+    finalized = subprocess.run(
+        [
+            *command,
+            "finalize",
+            "--release-root",
+            str(release),
+            "--identity",
+            str(identity_path),
+        ],
+        cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
-    assert json.loads(completed.stdout) == identity.as_dict()
-    assert completed.stderr == ""
+    verified = subprocess.run(
+        [
+            *command,
+            "verify-bundle",
+            "--release-root",
+            str(release),
+            "--expected-commit",
+            commit,
+            "--expected-mode",
+            "dry-run",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(finalized.stdout)["status"] == "finalized"
+    assert json.loads(verified.stdout) == identity.as_dict()
+    assert finalized.stderr == ""
+    assert verified.stderr == ""
 
 
 def test_verify_release_bundle_accepts_only_the_expected_mode_and_commit(
@@ -567,7 +913,7 @@ def test_verify_release_bundle_rejects_duplicate_and_unexpected_manifest_fields(
         ("path", "../outside", "canonical and relative"),
         (
             "path",
-            "distributions/ste_compiler-0.1.0-aaa.whl",
+            "candidates/ste-compiler-0.1.0-aaa.tar",
             "does not match the release bundle",
         ),
         ("bytes", True, "nonnegative integer"),
@@ -674,6 +1020,23 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     assert "packages: write" not in raw
     assert "gh release" not in raw
     assert "ste-compiler-release-${{ github.sha }}-${{ github.run_attempt }}" in raw
+    assert raw.count("build_candidate_directory") == 2
+    assert raw.count("verify_candidate_directory") == 2
+    assert 'parent / "release-candidates"' in raw
+    assert 'mv "${runner_temp}/release-candidates" release/candidates' in raw
+    candidate_step = next(
+        step
+        for step in workflow["jobs"]["build"]["steps"]
+        if step["name"] == "Build and verify offline release candidates"
+    )
+    distribution_step = next(
+        step
+        for step in workflow["jobs"]["build"]["steps"]
+        if step["name"] == "Build and verify reproducible distributions"
+    )
+    assert workflow["jobs"]["build"]["steps"].index(candidate_step) < (
+        workflow["jobs"]["build"]["steps"].index(distribution_step)
+    )
 
     attestation = yaml.load(
         ATTESTATION_WORKFLOW.read_text(encoding="utf-8"),
@@ -729,14 +1092,50 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     assert "verify-bundle" in attestation_raw
     assert "--source-root release-source" in attestation_raw
     assert "cmp \\" in attestation_raw
+    assert attestation_raw.count("build_candidate_directory") == 2
+    assert attestation_raw.count("verify_candidate_directory") == 2
+    assert 'build_candidate_directory(Path("release-source"), identity, candidates)' in (
+        attestation_raw
+    )
+    assert "release-source/scripts/release/release_candidates.py" not in attestation_raw
+    assert 'Path("trusted-release/candidates")' in attestation_raw
+    assert "untrusted-release/candidates/$(basename" in attestation_raw
     assert "enable-cache: false" in attestation_raw
     assert '"${{ github.event.workflow_run.head_sha }}" != "${GITHUB_SHA}"' in attestation_raw
     assert "--allowed-signers .github/release/trusted-tag-signers" in attestation_raw
     assert [step["name"] for step in attest_job["steps"]] == [
-        "Download trusted verification bundle",
-        "Attest build provenance",
-        "Attest SPDX SBOM",
+        "Download immutable trusted verification bundle",
+        "Attest distribution build provenance",
+        "Attest distribution SPDX SBOM",
+        "Attest candidate build provenance",
     ]
+    assert attest_job["steps"][1]["with"] == {
+        "subject-path": "release/distributions/*",
+    }
+    assert attest_job["steps"][2]["with"] == {
+        "subject-path": "release/distributions/*",
+        "sbom-path": "release/ste-compiler.spdx.json",
+    }
+    assert attest_job["steps"][3]["with"] == {
+        "subject-path": "release/candidates/*",
+    }
+    privileged_job = json.dumps(attest_job, sort_keys=True).casefold()
+    assert "release/candidates/*" in privileged_job
+    assert "release/distributions/*" in privileged_job
+    assert "release/ste-compiler.spdx.json" in privileged_job
+    assert "checkout" not in privileged_job
+    assert all("run" not in step for step in attest_job["steps"])
+
+    scheduled_raw = SCHEDULED_WORKFLOW.read_text(encoding="utf-8")
+    scheduled = yaml.load(scheduled_raw, Loader=yaml.BaseLoader)
+    assert scheduled["permissions"] == {"contents": "read"}
+    assert "build_candidate_directory" in scheduled_raw
+    assert "verify_candidate_directory" in scheduled_raw
+    assert "scheduled-candidates-first" in scheduled_raw
+    assert "scheduled-candidates-second" in scheduled_raw
+    assert "${RUNNER_TEMP}/scheduled-candidates-first" in scheduled_raw
+    assert "${RUNNER_TEMP}/scheduled-candidates-second" in scheduled_raw
+    assert "cmp \\" in scheduled_raw
     provenance_docs = (ROOT / "docs/release-build-provenance.md").read_text(encoding="utf-8")
     assert (
         "gh workflow run release-provenance.yml --ref <reviewed-branch-or-tag>" in provenance_docs

@@ -46,6 +46,13 @@ snapshot, rebuilds the release in an isolated temporary directory, and requires 
 to match. The repository test suite also reconstructs the checked-in release and compares every
 file byte for byte.
 
+The non-publishing release workflow packages Corpus V2 as
+`ste-compiler-<version>-dataset-demonstration-corpus-2.tar`. Its candidate manifest is bound to the
+same release identity as the wheel, source distribution, fixture-report candidate, and outer
+release manifest. Candidate verification reconstructs and validates the corpus before finalization;
+the trusted workflow rebuilds the archive independently and requires byte identity. This candidate
+remains verification evidence until an authorized release process publishes it.
+
 ## Artifact contract
 
 The release contains:
@@ -75,5 +82,6 @@ deterministic realization, symbolization, and the validation pipeline before wri
 
 These are deliberately small demonstration corpora. They exercise the complete data contract and
 the project’s neural smoke paths, but they are not enough to establish model quality. Corpus 2
-makes the benchmark shape and acceptance gates executable; benchmark-scale source expansion and a
-downloadable GitHub release attachment remain before Phase 1 is complete.
+makes the benchmark shape and acceptance gates executable. Its reproducible release candidate now
+exists, but benchmark-scale source expansion and an authorized downloadable GitHub release
+attachment remain before Phase 1 is complete.

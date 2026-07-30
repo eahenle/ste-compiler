@@ -74,11 +74,36 @@ jobs:
             "${tag_args[@]}" \
             --allowed-signers "${allowed_signers}" \
             --output "${RUNNER_TEMP}/release-identity.json"
+      - name: Build and verify offline release candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --locked --python 3.12 --extra dev \
+            python - "${RUNNER_TEMP}/release-identity.json" <<'PY'
+          import sys
+          from pathlib import Path
+
+          from scripts.release.release_candidates import (
+              build_candidate_directory,
+              verify_candidate_directory,
+          )
+          from scripts.release.release_contract import read_identity
+
+          identity = read_identity(Path(sys.argv[1]))
+          candidates = Path(sys.argv[1]).parent / "release-candidates"
+          build_candidate_directory(Path.cwd(), identity, candidates)
+          verify_candidate_directory(candidates, identity)
+          PY
       - name: Build and verify reproducible distributions
         run: >-
           uv run --locked --python 3.12 --extra dev
           python scripts/ci/distribution_smoke.py
           --release-output release/distributions
+      - name: Stage the complete verified candidate directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "${RUNNER_TEMP}/release-candidates" release/candidates
       - name: Generate SPDX JSON SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:

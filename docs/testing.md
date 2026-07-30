@@ -62,7 +62,8 @@ untested change.
 - `Scheduled artifact and example verification` runs every Monday at 09:17 UTC and on manual
   dispatch. It rebuilds and installs the distribution, runs the packaged portable catalog, and
   reconstructs the checked-in demonstration corpora, benchmark evidence, and mechanics reference
-  releases.
+  releases. It also builds the two identity-bound dataset/report release candidates twice, verifies
+  both candidate directories, and requires byte-identical archives.
 
 ## Platform scope
 
@@ -86,6 +87,13 @@ published project model exists yet, so CI has no external model URL or digest to
 requires a reviewed immutable locator, checksum, license authorization, and intended-use metadata;
 until then, external artifact verification remains an explicit release gate rather than a network
 placeholder.
+
+Release-provenance tests enforce the exact two-file candidate inventory in pre-finalized and final
+bundles, canonical manifest and checksum inclusion, identity/cross-link re-verification, and
+rejection of missing, extra, symlinked, hard-linked, altered, or candidate-verifier-rejected inputs.
+Workflow structure tests require the offline build, trusted-code/exact-release-source rebuild, byte
+comparison, pinned actions, read-only verification permissions, nonpublishing behavior, and a
+privileged job with no checkout or shell execution.
 
 Coverage does not establish model quality, semantic correctness by itself, or suitability for a
 production use case. Those claims require the repository's separate deterministic contracts and

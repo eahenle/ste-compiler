@@ -49,3 +49,39 @@ jobs:
           tests/unit/test_benchmark_evidence.py
           tests/unit/test_reference_release.py
           tests/unit/test_release.py
+      - name: Build, verify, and compare release candidates twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="${RUNNER_TEMP}/scheduled-release-identity.json"
+          uv run --locked --python 3.12 --extra dev \
+            python scripts/release/release_contract.py validate-ref \
+            --root "${GITHUB_WORKSPACE}" \
+            --mode dry-run \
+            --commit "${GITHUB_SHA}" \
+            --allowed-signers .github/release/trusted-tag-signers \
+            --output "${identity}"
+          uv run --locked --python 3.12 --extra dev \
+            python - \
+            "${identity}" \
+            "${RUNNER_TEMP}/scheduled-candidates-first" \
+            "${RUNNER_TEMP}/scheduled-candidates-second" <<'PY'
+          import sys
+          from pathlib import Path
+
+          from scripts.release.release_candidates import (
+              build_candidate_directory,
+              verify_candidate_directory,
+          )
+          from scripts.release.release_contract import read_identity
+
+          identity = read_identity(Path(sys.argv[1]))
+          for output in (Path(sys.argv[2]), Path(sys.argv[3])):
+              build_candidate_directory(Path.cwd(), identity, output)
+              verify_candidate_directory(output, identity)
+          PY
+          for artifact in "${RUNNER_TEMP}"/scheduled-candidates-first/*; do
+            cmp \
+              "${artifact}" \
+              "${RUNNER_TEMP}/scheduled-candidates-second/$(basename "${artifact}")"
+          done
