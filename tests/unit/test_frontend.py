@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,50 @@ def test_replay_provider_rejects_unsupported_or_non_object_fixtures(tmp_path):
         ReplayIRProvider.from_path(malformed)
 
 
+def test_replay_provider_loads_json_fixture(tmp_path):
+    source = (EXAMPLE_ROOT / "hydraulic_warning.txt").read_text()
+    fixture = tmp_path / "proposal.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "schema_version": "replay-ir-v1",
+                "source_sha256": _source_digest(source),
+                "ir": _proposal(),
+            }
+        )
+    )
+
+    assert ReplayIRProvider.from_path(fixture).extract_ir(source, {}, None) == _proposal()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("schema_version", "replay-ir-v2", "schema_version must be"),
+        ("ir", [], "ir must contain a string-keyed object"),
+        ("source_sha256", 1, "source_sha256 must be a string"),
+    ],
+)
+def test_replay_provider_rejects_invalid_envelope_values(tmp_path, field, value, message):
+    source = (EXAMPLE_ROOT / "hydraulic_warning.txt").read_text()
+    payload = {
+        "schema_version": "replay-ir-v1",
+        "source_sha256": _source_digest(source),
+        "ir": _proposal(),
+    }
+    payload[field] = value
+    fixture = tmp_path / "proposal.yaml"
+    fixture.write_text(yaml.safe_dump(payload))
+
+    with pytest.raises(ValueError, match=message):
+        ReplayIRProvider.from_path(fixture)
+
+
+def test_replay_provider_rejects_invalid_source_digest() -> None:
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        ReplayIRProvider({}, "not-a-digest")
+
+
 def test_replay_provider_binds_proposal_to_the_complete_source():
     source = (EXAMPLE_ROOT / "hydraulic_warning.txt").read_text()
     provider = ReplayIRProvider(_proposal(), _source_digest(source))
@@ -133,3 +178,24 @@ def test_llm_frontend_rejects_blank_provider_identity():
 
     with pytest.raises(ValueError, match="model_id must be nonblank"):
         LLMFrontend(Provider())
+
+
+@pytest.mark.parametrize("retries", [-1, True, 1.0])
+def test_llm_frontend_rejects_invalid_retry_limits(retries: object) -> None:
+    class Provider:
+        model_id = "test-provider"
+
+        def extract_ir(self, source, schema, feedback):
+            raise AssertionError
+
+    with pytest.raises(ValueError, match="retries must be a non-negative integer"):
+        LLMFrontend(Provider(), retries=retries)  # type: ignore[arg-type]
+
+
+def test_llm_frontend_rejects_blank_source_quote():
+    source = (EXAMPLE_ROOT / "hydraulic_warning.txt").read_text()
+    proposal = _proposal()
+    proposal["sections"][0]["statements"][0]["source_spans"][0]["quote"] = " "
+
+    with pytest.raises(ValueError, match="nonblank source quotes"):
+        LLMFrontend(ReplayIRProvider(proposal, _source_digest(source)), retries=0).parse(source)

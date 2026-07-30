@@ -178,7 +178,10 @@ def test_symbolic_plan_rejects_units_attached_to_alphabetic_or_underscore(text, 
 
 
 @given(punctuation=st.from_regex(r"[^\w\s]", fullmatch=True))
-@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    derandomize=True,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 def test_symbolic_plan_represents_every_accepted_punctuation(punctuation, vocab, terms):
     lexicalizer = SymbolicLexicalizer(vocab, terms)
     symbols = lexicalizer.symbolize(punctuation)
@@ -978,6 +981,17 @@ def test_lexical_and_structural_diagnostics(vocab, terms):
     assert lexical[0].model_dump_json()
 
 
+def test_structural_diagnostics_cover_causal_passive_and_paragraph_limits():
+    diagnostics = StructuralValidator(max_paragraph_sentences=2).validate(
+        "Cause: The valve was closed. Open the valve. Stop the pump."
+    )
+
+    assert {diagnostic.code for diagnostic in diagnostics} == {
+        "PARAGRAPH_TOO_LONG",
+        "PASSIVE_VOICE",
+    }
+
+
 def test_terminology_schema_rejects_empty_canonical_form(terms):
     data = terms.data.model_dump()
     data["terms"][0]["canonical_form"] = ""
@@ -1185,6 +1199,7 @@ def test_unicode_casefold_matching_requires_original_character_boundaries():
     assert whole_casefold_spans("ß", "s") == ()
     assert whole_casefold_spans("XSTRASSE", "strasse") == ()
     assert whole_casefold_spans("STRASSE_y", "strasse") == ()
+    assert whole_casefold_spans("text", "") == ()
 
 
 def test_symbolizer_uses_original_span_for_unicode_casefold_expansion(vocab, terms):
@@ -1608,6 +1623,7 @@ def test_llm_frontend_rejects_statements_without_source_spans():
 
 
 @given(st.integers(min_value=0, max_value=1_000_000))
+@settings(derandomize=True)
 def test_quantity_format_is_stable(value):
     quantity = Quantity(value=float(value), unit="Pa")
     realizer = DeterministicRealizer()

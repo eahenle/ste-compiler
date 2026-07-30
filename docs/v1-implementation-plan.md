@@ -381,12 +381,21 @@ and the distinction between mechanics coverage and unreleased model or benchmark
 
 - Ruff formatting and lint.
 - Strict mypy.
-- Maintained line and branch coverage thresholds.
+- Maintained line and branch coverage thresholds. The initial offline all-extras gate enforces 88%
+  line and 76% branch coverage from exact coverage.py counts on Python 3.12; floor increases remain
+  follow-up hardening.
 - Property tests for schemas, symbols, and corpus invariants.
 - Adversarial tests for paths, symlinks, artifact corruption, malformed model output, and provider
   failures.
 - Dependency vulnerability and license checks.
 - Reproducible build and artifact provenance checks.
+
+Status: the schema, causal-graph, exact-symbolic-plan, demonstration-corpus V2 integrity, malformed
+provider-output, and provider transport-failure slice is implemented in `tests/property/`.
+`LLMFrontend` currently retries only schema/provenance failures; transport errors propagate after
+one call, so transport retry and redaction policies remain responsibilities of a future live
+provider adapter. Coverage thresholds, cross-platform CI, dependency/license checks, and release
+signing remain separate Phase 7 gates.
 
 ### Open-source release deliverables
 

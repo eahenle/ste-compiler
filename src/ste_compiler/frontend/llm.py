@@ -21,6 +21,8 @@ class LLMFrontend:
     def __init__(self, provider: StructuredIRProvider, retries: int = 2):
         if not provider.model_id or not provider.model_id.strip():
             raise ValueError("frontend provider model_id must be nonblank")
+        if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
+            raise ValueError("frontend retries must be a non-negative integer")
         self.provider, self.retries = provider, retries
 
     @staticmethod
@@ -40,10 +42,13 @@ class LLMFrontend:
     def parse(self, source: str, *, source_id: str | None = None) -> Document:
         feedback = None
         for attempt in range(self.retries + 1):
+            proposal = self.provider.extract_ir(
+                source,
+                Document.model_json_schema(),
+                feedback,
+            )
             try:
-                doc = Document.model_validate(
-                    self.provider.extract_ir(source, Document.model_json_schema(), feedback)
-                )
+                doc = Document.model_validate(proposal)
                 statements = [statement for sec in doc.sections for statement in sec.statements]
                 if any(not statement.source_spans for statement in statements):
                     raise ValueError("all extracted claims must include quoted source spans")

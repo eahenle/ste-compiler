@@ -528,6 +528,40 @@ def test_installed_catalog_validation_binds_implicit_command_resources(
         )
 
 
+def test_installed_catalog_runner_rejects_duplicate_fixtures(tmp_path: Path) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    scenario = manifest["scenarios"][0]
+    manifest["scenarios"] = [scenario]
+    scenario["fixtures"].append(scenario["fixtures"][0])
+
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="scenario fixtures must be unique",
+    ):
+        catalog_runner.run_portable_catalog(
+            manifest,
+            package_root=ROOT,
+            temporary_root=tmp_path / "duplicate-fixture",
+        )
+
+
+def test_installed_catalog_runner_rejects_missing_fixture(tmp_path: Path) -> None:
+    manifest = copy.deepcopy(_load_manifest())
+    scenario = manifest["scenarios"][0]
+    manifest["scenarios"] = [scenario]
+    scenario["fixtures"] = ["data/examples/does-not-exist.yaml"]
+
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="installed scenario fixture does not exist",
+    ):
+        catalog_runner.run_portable_catalog(
+            manifest,
+            package_root=ROOT,
+            temporary_root=tmp_path / "missing-fixture",
+        )
+
+
 @pytest.mark.parametrize(
     ("observed", "expected"),
     [
@@ -595,3 +629,102 @@ def test_installed_and_source_json_expectations_accept_same_type_values(
         temporary=tmp_path,
         fixtures=set(),
     )
+
+
+@pytest.mark.parametrize(
+    ("artifact_path", "message"),
+    (
+        ("report.json", "expected artifact path must start with"),
+        ("{tmp}/../escaped.json", "expected artifact path escapes its scenario"),
+    ),
+)
+def test_catalog_expectation_rejects_unconfined_artifact_paths(
+    tmp_path: Path,
+    artifact_path: str,
+    message: str,
+) -> None:
+    with pytest.raises(catalog_runner.CatalogExecutionError, match=message):
+        catalog_runner._assert_expected(
+            {
+                "exit_code": 0,
+                "file_json_paths": {artifact_path: {"status": "accepted"}},
+            },
+            catalog_runner.CommandResult(0, "", ""),
+            tmp_path,
+            package_root=ROOT,
+            fixtures=frozenset(),
+        )
+
+
+def test_catalog_expectation_rejects_missing_json_artifact(tmp_path: Path) -> None:
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="cannot read expected artifact",
+    ):
+        catalog_runner._assert_expected(
+            {
+                "exit_code": 0,
+                "file_json_paths": {"{tmp}/missing.json": {"status": "accepted"}},
+            },
+            catalog_runner.CommandResult(0, "", ""),
+            tmp_path,
+            package_root=ROOT,
+            fixtures=frozenset(),
+        )
+
+
+def test_catalog_expectation_rejects_invalid_json_artifact(tmp_path: Path) -> None:
+    artifact = tmp_path / "invalid.json"
+    artifact.write_text("not JSON", encoding="utf-8")
+
+    with pytest.raises(catalog_runner.CatalogExecutionError, match="is not valid JSON"):
+        catalog_runner._assert_expected(
+            {
+                "exit_code": 0,
+                "file_json_paths": {"{tmp}/invalid.json": {"status": "accepted"}},
+            },
+            catalog_runner.CommandResult(0, "", ""),
+            tmp_path,
+            package_root=ROOT,
+            fixtures=frozenset(),
+        )
+
+
+def test_catalog_expectation_rejects_undeclared_frozen_artifact(tmp_path: Path) -> None:
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="frozen expected artifact is not a declared fixture",
+    ):
+        catalog_runner._assert_expected(
+            {
+                "exit_code": 0,
+                "file_matches": {
+                    "{tmp}/report.json": "data/examples/undeclared-report.json",
+                },
+            },
+            catalog_runner.CommandResult(0, "", ""),
+            tmp_path,
+            package_root=ROOT,
+            fixtures=frozenset(),
+        )
+
+
+def test_catalog_expectation_rejects_frozen_artifact_byte_mismatch(tmp_path: Path) -> None:
+    artifact = tmp_path / "report.json"
+    artifact.write_bytes(b"observed\n")
+    frozen_path = "data/benchmark/v1/expected-report/metrics.json"
+
+    with pytest.raises(
+        catalog_runner.CatalogExecutionError,
+        match="generated artifact.*does not match",
+    ):
+        catalog_runner._assert_expected(
+            {
+                "exit_code": 0,
+                "file_matches": {"{tmp}/report.json": frozen_path},
+            },
+            catalog_runner.CommandResult(0, "", ""),
+            tmp_path,
+            package_root=ROOT,
+            fixtures=frozenset({frozen_path}),
+        )

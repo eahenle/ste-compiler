@@ -19,6 +19,8 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A machine-readable 13-scenario example catalog with credential-free CI execution, explicit
   external gates, custom-resource fixtures, reproducible benchmark-fixture reporting, and an
   installed-wheel catalog boundary verified outside the source checkout.
+- A bounded Hypothesis and adversarial suite for strict IR, causal graphs, exact symbolic plans,
+  demonstration-corpus V2 integrity, and structured-provider failure boundaries.
 - A credential-free raw-source-to-validated-text reference workflow.
 - Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
   adapter runs, with portable typed identities and untrusted CLI locators kept separate.
@@ -26,6 +28,8 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A dual-architecture mechanics release workflow with explicit license authorization, immutable
   local-loader configurations, canonical prediction hashes, model cards, and byte-reproducible
   verification without embedding model weights.
+- An offline all-extras coverage gate with deterministic exact-ratio enforcement of initial 88%
+  line and 76% branch floors.
 
 ## [0.1.0] - Unreleased
 
