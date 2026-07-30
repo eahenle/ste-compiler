@@ -1,0 +1,3 @@
+# Signed-tag builds are deliberately disabled until the release owner reviews and adds an SSH
+# allowed-signers entry. Format:
+# release-identity@example.com namespaces="git" ssh-ed25519 AAAA...

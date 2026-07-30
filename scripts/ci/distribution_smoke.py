@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -34,6 +36,7 @@ SDIST_SUFFIXES = (
     "/src/ste_compiler/py.typed",
     "/datasets/demonstration-corpus-1/manifest.json",
     "/datasets/demonstration-corpus-2/manifest.json",
+    "/docs/release-build-provenance.md",
     "/docs/v1-implementation-plan.md",
     "/examples/__init__.py",
     "/examples/custom_resources.py",
@@ -42,6 +45,7 @@ SDIST_SUFFIXES = (
     "/examples/resources/custom_terminology.yaml",
     "/examples/resources/custom_vocabulary.yaml",
     "/scripts/ci/distribution_smoke.py",
+    "/scripts/release/release_contract.py",
     "/tests/integration/test_executable_examples.py",
 )
 
@@ -63,11 +67,22 @@ def _run(*command: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> 
     return completed.stdout
 
 
-def _source_date_epoch() -> str:
-    return _run("git", "show", "-s", "--format=%ct", "HEAD").strip()
+def _source_date_epoch(source_root: Path = ROOT) -> str:
+    return _run(
+        "git",
+        "show",
+        "-s",
+        "--format=%ct",
+        "HEAD",
+        cwd=source_root,
+    ).strip()
 
 
-def _build(output: Path, environment: dict[str, str]) -> tuple[Path, Path]:
+def _build(
+    output: Path,
+    environment: dict[str, str],
+    source_root: Path = ROOT,
+) -> tuple[Path, Path]:
     _run(
         sys.executable,
         "-m",
@@ -77,7 +92,7 @@ def _build(output: Path, environment: dict[str, str]) -> tuple[Path, Path]:
         "--wheel",
         "--outdir",
         str(output),
-        str(ROOT),
+        str(source_root),
         env=environment,
     )
     wheels = tuple(output.glob("*.whl"))
@@ -254,22 +269,78 @@ assert catalog_payload["command_count"] == sum(
     )
 
 
+def _publish_verified_distributions(
+    distributions: tuple[Path, Path],
+    output: Path,
+) -> tuple[Path, Path]:
+    if output.exists():
+        raise RuntimeError("release output directory must not already exist")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.mkdir()
+    try:
+        copied = (
+            output / distributions[0].name,
+            output / distributions[1].name,
+        )
+        for source, destination in zip(distributions, copied, strict=True):
+            shutil.copyfile(source, destination)
+    except Exception:
+        shutil.rmtree(output)
+        raise
+    return copied
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--release-output",
+        type=Path,
+        help="New directory that receives the verified wheel and source distribution.",
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=ROOT,
+        help=(
+            "Reviewed source checkout to build and verify. The trusted copy of this script "
+            "continues to execute from its own checkout."
+        ),
+    )
+    return parser
+
+
 def main() -> None:
+    args = _parser().parse_args()
+    source_root = args.source_root.resolve(strict=True)
+    if not source_root.is_dir():
+        raise RuntimeError("source root must be a directory")
+    release_output = args.release_output.resolve() if args.release_output is not None else None
     environment = {
         **os.environ,
-        "SOURCE_DATE_EPOCH": _source_date_epoch(),
+        "SOURCE_DATE_EPOCH": _source_date_epoch(source_root),
     }
     with tempfile.TemporaryDirectory(prefix="ste-compiler-distribution-") as directory:
         temporary_root = Path(directory)
-        first = _build(temporary_root / "first", environment)
-        second = _build(temporary_root / "second", environment)
+        first = _build(temporary_root / "first", environment, source_root)
+        second = _build(temporary_root / "second", environment, source_root)
         _inspect(*first)
         checksums = _assert_reproducible(first, second)
         sdist_wheel = _build_wheel_from_sdist(first[1], temporary_root, environment)
         if _sha256(sdist_wheel) != _sha256(first[0]):
             raise RuntimeError("wheel rebuilt from sdist differs from the direct wheel")
         _smoke_installed_wheel(sdist_wheel, temporary_root)
-    print(json.dumps({"distributions": checksums, "status": "verified"}, sort_keys=True))
+        if release_output is not None:
+            _publish_verified_distributions(first, release_output)
+    print(
+        json.dumps(
+            {
+                "distributions": checksums,
+                "release_output": str(release_output) if release_output is not None else None,
+                "status": "verified",
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

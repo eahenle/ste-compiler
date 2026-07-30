@@ -19,6 +19,9 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
 - A machine-readable 13-scenario example catalog with credential-free CI execution, explicit
   external gates, custom-resource fixtures, reproducible benchmark-fixture reporting, and an
   installed-wheel catalog boundary verified outside the source checkout.
+- A non-publishing release-provenance workflow with immutable action pins, reproducible retained
+  distributions, canonical checksums, SPDX SBOM generation, and signed-tag-only GitHub attestations
+  behind an explicitly closed release-signer gate.
 - A bounded Hypothesis and adversarial suite for strict IR, causal graphs, exact symbolic plans,
   demonstration-corpus V2 integrity, and structured-provider failure boundaries.
 - A credential-free raw-source-to-validated-text reference workflow.

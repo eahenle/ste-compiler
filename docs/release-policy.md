@@ -32,9 +32,12 @@ A public release requires:
 5. license and intended-use review; and
 6. a clean, signed tag created from the reviewed release commit.
 
-Package-index publication should use trusted publishing and attach build provenance. GitHub release
-assets must include checksums. Model and dataset artifacts too large for the package must be linked
-by immutable repository revision and digest. A model bundle publication must carry the externally
+Package-index publication should use trusted publishing and attach build provenance. The current
+[release build provenance workflow](release-build-provenance.md) deliberately stops before package
+or GitHub Release publication: manual runs create only disposable verification artifacts, and the
+signed-tag path is closed until a release signer is explicitly authorized. GitHub release assets
+must include checksums. Model and dataset artifacts too large for the package must be linked by
+immutable repository revision and digest. A model bundle publication must carry the externally
 retained `artifact-manifest.json` SHA-256 in signed or otherwise reviewed release metadata; the
 colocated manifest alone is not sufficient.
 
@@ -43,6 +46,12 @@ CI executes `scripts/ci/distribution_smoke.py` with the reviewed commit timestam
 hashes, inspects required package and release members, installs the wheel outside the checkout with
 network access blocked, rebuilds that wheel byte-for-byte from the generated source distribution,
 runs the packaged demo, and reconstructs and verifies corpus version 2.
+
+With `--release-output`, that same gate copies only the verified wheel and source distribution into
+a new output directory. The release workflow then creates an SPDX JSON SBOM, a canonical
+`ste-release-build-manifest-v1` inventory, and `SHA256SUMS`. GitHub build and SBOM attestations are
+limited to a successfully verified signed-version-tag run; manual dry-runs do not receive release
+attestations.
 
 ## Deprecation
 
