@@ -44,7 +44,9 @@ descriptor for that parent, and the parent identity is checked before and after 
 Publication uses an atomic platform no-replace operation, keeps the renamed stage descriptor open,
 and requires the final output name to resolve to that exact directory before returning. A
 concurrently created or substituted destination is preserved and never removed as cleanup for the
-private stage.
+private stage. Once the atomic rename succeeds, exceptional concurrent path changes do not trigger
+a partial name-based rollback: the completed staged directory remains intact rather than becoming
+an empty destination that blocks a safe retry.
 
 Library callers use:
 

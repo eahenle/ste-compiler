@@ -858,31 +858,24 @@ def _remove_private_stage(
         pass
 
 
-def _remove_published_candidates(
+def _directory_name_matches_descriptor(
     parent_descriptor: int,
-    output_name: str,
-    stage_descriptor: int,
-    archive_names: tuple[str, ...],
-) -> None:
+    name: str,
+    descriptor: int,
+) -> bool:
     try:
         named = os.stat(
-            output_name,
+            name,
             dir_fd=parent_descriptor,
             follow_symlinks=False,
         )
-        opened = os.fstat(stage_descriptor)
+        opened = os.fstat(descriptor)
     except OSError:
-        return
-    if not stat.S_ISDIR(named.st_mode) or (named.st_dev, named.st_ino) != (
+        return False
+    return stat.S_ISDIR(named.st_mode) and (named.st_dev, named.st_ino) == (
         opened.st_dev,
         opened.st_ino,
-    ):
-        return
-    try:
-        for name in archive_names:
-            os.unlink(name, dir_fd=stage_descriptor)
-    except OSError:
-        return
+    )
 
 
 def _stat_output_parent(path: Path) -> os.stat_result:
@@ -1005,14 +998,9 @@ def build_candidate_directory(
                 )
                 published = True
                 published_parent = _stat_output_parent(output_parent)
-                if (
-                    published_parent.st_dev,
-                    published_parent.st_ino,
-                    published_parent.st_mode,
-                ) != (
+                if (published_parent.st_dev, published_parent.st_ino) != (
                     parent_identity.st_dev,
                     parent_identity.st_ino,
-                    parent_identity.st_mode,
                 ):
                     raise ReleaseCandidateError(
                         "candidate output parent changed during candidate publication"
@@ -1031,13 +1019,19 @@ def build_candidate_directory(
                         "published candidate directory changed before verification"
                     )
             except BaseException:
-                if published:
-                    _remove_published_candidates(
+                if not published:
+                    output_is_stage = _directory_name_matches_descriptor(
                         parent_descriptor,
                         output.name,
                         stage_descriptor,
-                        archive_names,
                     )
+                    private_name_is_stage = _directory_name_matches_descriptor(
+                        parent_descriptor,
+                        stage_name,
+                        stage_descriptor,
+                    )
+                    published = output_is_stage or not private_name_is_stage
+                if published:
                     os.close(stage_descriptor)
                 else:
                     _remove_private_stage(

@@ -1027,6 +1027,92 @@ def test_builder_checks_published_name_after_parent_revalidation(
     verify_candidate_directory(displaced, identity)
 
 
+def test_builder_accepts_inode_stable_parent_permission_change_after_rename(
+    tmp_path: Path,
+    identity: ReleaseIdentity,
+    source_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "candidates"
+    real_rename = candidates._rename_no_replace
+    original_mode = output.parent.stat().st_mode & 0o777
+    changed_mode = 0o755 if original_mode != 0o755 else 0o700
+
+    def rename_then_chmod_parent(
+        parent_descriptor: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        real_rename(parent_descriptor, source_name, destination_name)
+        os.chmod(output.parent, changed_mode)
+
+    monkeypatch.setattr(candidates, "_rename_no_replace", rename_then_chmod_parent)
+
+    build_candidate_directory(source_repository, identity, output)
+
+    verify_candidate_directory(output, identity)
+    assert output.parent.stat().st_mode & 0o777 == changed_mode
+
+
+def test_builder_preserves_complete_stage_when_rename_raises_after_success(
+    tmp_path: Path,
+    identity: ReleaseIdentity,
+    source_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "candidates"
+    real_rename = candidates._rename_no_replace
+
+    def rename_then_raise(
+        parent_descriptor: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        real_rename(parent_descriptor, source_name, destination_name)
+        raise RuntimeError("injected post-rename interruption")
+
+    monkeypatch.setattr(candidates, "_rename_no_replace", rename_then_raise)
+
+    with pytest.raises(RuntimeError, match="post-rename interruption"):
+        build_candidate_directory(source_repository, identity, output)
+
+    verify_candidate_directory(output, identity)
+    assert not list(tmp_path.glob(".ste-release-candidates-stage-*"))
+
+
+def test_builder_preserves_displaced_stage_when_rename_raises_after_success(
+    tmp_path: Path,
+    identity: ReleaseIdentity,
+    source_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "candidates"
+    displaced = tmp_path / "displaced-candidates"
+    real_rename = candidates._rename_no_replace
+
+    def rename_displace_then_raise(
+        parent_descriptor: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        real_rename(parent_descriptor, source_name, destination_name)
+        output.rename(displaced)
+        raise RuntimeError("injected post-rename interruption")
+
+    monkeypatch.setattr(
+        candidates,
+        "_rename_no_replace",
+        rename_displace_then_raise,
+    )
+
+    with pytest.raises(RuntimeError, match="post-rename interruption"):
+        build_candidate_directory(source_repository, identity, output)
+
+    assert not output.exists()
+    verify_candidate_directory(displaced, identity)
+    assert not list(tmp_path.glob(".ste-release-candidates-stage-*"))
+
+
 def test_build_rejects_existing_output_without_modifying_it(
     tmp_path: Path,
     identity: ReleaseIdentity,
