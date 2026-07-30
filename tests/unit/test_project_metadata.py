@@ -113,7 +113,8 @@ def test_compatibility_workflow_covers_platform_and_dependency_profiles():
 
 
 def test_declared_dependency_floors_match_the_verified_python_312_profiles():
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = metadata["project"]
     assert project["dependencies"] == [
         "pydantic>=2.10,<3",
         "PyYAML>=6.0.1,<7",
@@ -124,6 +125,11 @@ def test_declared_dependency_floors_match_the_verified_python_312_profiles():
     assert "transformers>=5,<6" in project["optional-dependencies"]["neural"]
     assert "safetensors>=0.4.3,<1" in project["optional-dependencies"]["neural"]
     assert "tokenizers>=0.22,<1" in project["optional-dependencies"]["neural"]
+    assert "torch>=2.4,<3" in project["optional-dependencies"]["neural"]
+    assert "torch>=2.4,<3" in project["optional-dependencies"]["encoder-training"]
+    assert metadata["tool"]["uv"]["required-environments"] == [
+        "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    ]
 
 
 def test_scheduled_workflow_verifies_installed_examples_and_checked_in_artifacts():

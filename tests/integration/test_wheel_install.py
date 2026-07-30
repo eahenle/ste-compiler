@@ -52,10 +52,11 @@ def test_installed_wheel_contains_default_cli_data(tmp_path):
     clean_env["PYTHONPATH"] = str(installed)
     package_root = installed / "ste_compiler"
     catalog = yaml.safe_load((package_root / "examples/manifest.yaml").read_text(encoding="utf-8"))
-    assert catalog["distribution"]["portable_execution"] == ["core-ci"]
+    assert catalog["distribution"]["portable_execution"] == ["portable-ci", "posix-ci"]
+    assert catalog["distribution"]["portable_execution_overrides"] == {"win32": ["portable-ci"]}
     assert [scenario["id"] for scenario in catalog["scenarios"]] == list(range(1, 14))
     for scenario in catalog["scenarios"]:
-        if scenario["execution"] == "core-ci":
+        if scenario["execution"] in catalog["distribution"]["portable_execution"]:
             for fixture in scenario["fixtures"]:
                 assert (package_root / fixture).exists(), fixture
 

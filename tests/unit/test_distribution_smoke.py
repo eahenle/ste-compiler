@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.ci import distribution_smoke
 
 
@@ -136,3 +138,37 @@ def test_parser_preserves_trusted_checkout_as_default() -> None:
     args = distribution_smoke._parser().parse_args([])
 
     assert args.source_root == distribution_smoke.ROOT
+
+
+def test_installed_catalog_failure_surfaces_nested_stdout_and_stderr(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest = (distribution_smoke.ROOT / "examples/manifest.yaml").read_text(encoding="utf-8")
+
+    def fake_run(
+        *command: str,
+        cwd: Path = distribution_smoke.ROOT,
+        env: dict[str, str] | None = None,
+    ) -> str:
+        del cwd, env
+        if command[1:4] == ("-m", "pip", "install"):
+            package_root = tmp_path / "installed/ste_compiler/examples"
+            package_root.mkdir(parents=True)
+            (package_root / "manifest.yaml").write_text(manifest, encoding="utf-8")
+            return ""
+        if command[1:3] == ("-m", "ste_compiler.examples.catalog_runner"):
+            raise RuntimeError(
+                "command failed\nstdout:\nnested catalog stdout\nstderr:\nnested catalog stderr"
+            )
+        if command[1] == "-c":
+            return ""
+        raise AssertionError(f"unexpected command: {command!r}")
+
+    monkeypatch.setattr(distribution_smoke, "_run", fake_run)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"nested catalog stdout[\s\S]*nested catalog stderr",
+    ):
+        distribution_smoke._smoke_installed_wheel(tmp_path / "package.whl", tmp_path)

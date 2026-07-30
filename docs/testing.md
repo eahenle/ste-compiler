@@ -55,7 +55,10 @@ untested change.
   `highest` strategies, and runs the complete offline suite against each resulting environment
   while retaining the clean source checkout required by provenance tests. The committed lock
   remains the reproducible default; these two jobs test the declared lower bounds and current
-  compatible releases independently.
+  compatible releases independently. The uv project metadata requires an installable Linux x86_64
+  resolution so `lowest-direct` selects PyTorch's compatible `+cpu` wheel instead of an
+  unsuffixed wheel published only for another architecture; this resolver-platform contract
+  preserves the tested `torch>=2.4,<3` dependency floor.
 - `Scheduled artifact and example verification` runs every Monday at 09:17 UTC and on manual
   dispatch. It rebuilds and installs the distribution, runs the packaged portable catalog, and
   reconstructs the checked-in demonstration corpora, benchmark evidence, and mechanics reference
@@ -69,9 +72,11 @@ reading, and distribution reproduction all run there.
 
 macOS 14 and Windows Server 2022 run the Python 3.12 distribution and installed portable-catalog
 gate. This proves package construction, installation outside the checkout, CLI and module entry
-points, packaged resources, the seven credential-free portable scenarios, and their nine commands.
-It does not claim full neural training coverage on either platform. Windows also does not support
-the explicitly POSIX-only symbolic-corpus export, hardened artifact-bundle publication, benchmark
+points, and packaged resources. macOS runs the default seven credential-free scenarios and nine
+commands, including the POSIX benchmark-reproduction scenario. Windows applies the manifest's
+explicit `win32` override and runs the six portable scenarios and their seven commands. It does not
+claim full neural training coverage on either platform. Windows also does not support the
+explicitly POSIX-only symbolic-corpus export, hardened artifact-bundle publication, benchmark
 report publication, or reference-release publication paths. Those exclusions are enforced by the
 implementation and remain covered by Linux rejection tests. Hardened paths are not promoted to
 cross-platform support merely because the portable catalog passes.

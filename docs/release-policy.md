@@ -11,8 +11,9 @@ to released bytes produces a new artifact version instead of replacing the old i
 
 ## Supported environments
 
-- Core package: Python 3.12, 3.13, and 3.14 on Linux. Python 3.12 installed-distribution and
-  portable-catalog behavior is additionally exercised on macOS 14 and Windows Server 2022.
+- Core package: Python 3.12, 3.13, and 3.14 on Linux. Python 3.12 installed-distribution behavior is
+  additionally exercised on macOS 14 and Windows Server 2022. macOS runs the seven-scenario default
+  installed catalog; Windows runs its six-scenario portable override.
 - Neural features: the explicitly locked dependency and hardware profile documented by the
   corresponding release. Current neural mechanics CI runs on Linux CPU; macOS and Windows neural
   training are not claimed as supported profiles.

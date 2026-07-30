@@ -3,14 +3,16 @@ plan_reference: docs/v1-implementation-plan.md#phase-6-examples-and-documentatio
 distribution:
   wheel_catalog: ste_compiler/examples/manifest.yaml
   wheel_fixture_base: ste_compiler
-  portable_execution: [core-ci]
+  portable_execution: [portable-ci, posix-ci]
+  portable_execution_overrides:
+    win32: [portable-ci]
   source_only_execution: [existing-ci, neural-ci]
 scenarios:
   - id: 1
     slug: raw-source-deterministic
     title: Raw source to deterministic controlled text
     status: tested
-    execution: core-ci
+    execution: portable-ci
     network: forbidden
     fixtures:
       - data/end_to_end/hydraulic_warning.txt
@@ -34,7 +36,7 @@ scenarios:
     slug: offline-replay-extraction
     title: Offline replay source extraction
     status: tested
-    execution: core-ci
+    execution: portable-ci
     network: forbidden
     fixtures:
       - data/end_to_end/hydraulic_warning.txt
@@ -72,7 +74,7 @@ scenarios:
     slug: custom-resources
     title: Custom vocabulary and terminology
     status: tested
-    execution: core-ci
+    execution: portable-ci
     network: forbidden
     fixtures:
       - examples/resources/custom_installation.yaml
@@ -92,7 +94,7 @@ scenarios:
     slug: dataset-construction
     title: Dataset construction and manifest inspection
     status: tested
-    execution: core-ci
+    execution: portable-ci
     network: forbidden
     fixtures:
       - data/demonstration_corpus/v2/source-construction.json
@@ -194,7 +196,7 @@ scenarios:
     slug: provenance-alignment
     title: Provenance and alignment inspection
     status: tested
-    execution: core-ci
+    execution: portable-ci
     network: forbidden
     fixtures:
       - data/examples/negative.yaml
@@ -224,7 +226,7 @@ scenarios:
     slug: expected-validation-rejection
     title: Expected validation rejection
     status: tested
-    execution: core-ci
+    execution: portable-ci
     network: forbidden
     fixtures:
       - data/examples/invalid_semantic.txt
@@ -276,7 +278,7 @@ scenarios:
     slug: benchmark-reproduction
     title: Benchmark reproduction
     status: tested
-    execution: core-ci
+    execution: posix-ci
     network: forbidden
     fixtures:
       - data/benchmark/v1/benchmark-spec.json

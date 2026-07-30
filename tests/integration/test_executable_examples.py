@@ -136,7 +136,8 @@ def test_example_manifest_is_complete_and_honest():
     assert manifest["distribution"] == {
         "wheel_catalog": "ste_compiler/examples/manifest.yaml",
         "wheel_fixture_base": "ste_compiler",
-        "portable_execution": ["core-ci"],
+        "portable_execution": ["portable-ci", "posix-ci"],
+        "portable_execution_overrides": {"win32": ["portable-ci"]},
         "source_only_execution": ["existing-ci", "neural-ci"],
     }
     scenarios = manifest["scenarios"]
@@ -215,8 +216,10 @@ def test_manifest_pytest_nodes_are_owned_and_selected_by_their_ci_jobs():
             )
 
 
-CORE_SCENARIOS = tuple(
-    scenario for scenario in _load_manifest()["scenarios"] if scenario["execution"] == "core-ci"
+INSTALLED_SCENARIOS = tuple(
+    scenario
+    for scenario in _load_manifest()["scenarios"]
+    if scenario["execution"] in {"portable-ci", "posix-ci"}
 )
 
 
@@ -243,10 +246,10 @@ def test_network_tripwire_blocks_connection_and_datagram_paths(
 
 @pytest.mark.parametrize(
     "scenario",
-    CORE_SCENARIOS,
-    ids=[scenario["slug"] for scenario in CORE_SCENARIOS],
+    INSTALLED_SCENARIOS,
+    ids=[scenario["slug"] for scenario in INSTALLED_SCENARIOS],
 )
-def test_core_executable_example(
+def test_installed_executable_example(
     scenario: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -276,7 +279,7 @@ def test_core_executable_example(
         )
 
 
-def test_core_executable_examples_run_when_pytest_starts_outside_checkout(
+def test_installed_executable_examples_run_when_pytest_starts_outside_checkout(
     tmp_path: Path,
 ) -> None:
     environment = {key: value for key, value in os.environ.items() if key != "PYTEST_ADDOPTS"}
@@ -286,7 +289,7 @@ def test_core_executable_examples_run_when_pytest_starts_outside_checkout(
             "-m",
             "pytest",
             "-q",
-            f"{Path(__file__).resolve()}::test_core_executable_example",
+            f"{Path(__file__).resolve()}::test_installed_executable_example",
         ],
         cwd=tmp_path,
         env=environment,
@@ -297,9 +300,11 @@ def test_core_executable_examples_run_when_pytest_starts_outside_checkout(
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_installed_catalog_runner_selects_and_evaluates_every_portable_command(
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_installed_catalog_runner_selects_every_default_platform_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    platform: str,
 ) -> None:
     manifest = _load_manifest()
     portable = set(manifest["distribution"]["portable_execution"])
@@ -323,11 +328,48 @@ def test_installed_catalog_runner_selects_and_evaluates_every_portable_command(
         manifest,
         package_root=ROOT,
         temporary_root=tmp_path / "installed-catalog",
+        platform=platform,
     )
 
     assert result.execution == tuple(manifest["distribution"]["portable_execution"])
     assert result.scenario_ids == tuple(scenario["id"] for scenario in expected)
     assert result.command_count == sum(len(scenario["commands"]) for scenario in expected)
+    assert evaluated == [command for scenario in expected for command in scenario["commands"]]
+
+
+def test_installed_catalog_runner_applies_win32_portable_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _load_manifest()
+    evaluated: list[object] = []
+
+    def record_command(
+        command: object,
+        *,
+        package_root: Path,
+        temporary: Path,
+        fixtures: frozenset[str],
+    ) -> None:
+        assert package_root == ROOT
+        assert temporary.is_relative_to(tmp_path)
+        assert fixtures
+        evaluated.append(command)
+
+    monkeypatch.setattr(catalog_runner.sys, "platform", "win32")
+    monkeypatch.setattr(catalog_runner, "_execute_and_evaluate", record_command)
+    result = catalog_runner.run_portable_catalog(
+        manifest,
+        package_root=ROOT,
+        temporary_root=tmp_path / "win32-installed-catalog",
+    )
+    expected = [
+        scenario for scenario in manifest["scenarios"] if scenario["execution"] == "portable-ci"
+    ]
+
+    assert result.execution == ("portable-ci",)
+    assert result.scenario_ids == (1, 2, 4, 5, 10, 11)
+    assert result.command_count == 7
     assert evaluated == [command for scenario in expected for command in scenario["commands"]]
 
 
