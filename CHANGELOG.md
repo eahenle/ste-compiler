@@ -24,7 +24,8 @@ Versioning. Until 1.0, minor releases can contain documented breaking changes.
   behind an explicitly closed release-signer gate.
 - A bounded Hypothesis and adversarial suite for strict IR, causal graphs, exact symbolic plans,
   demonstration-corpus V2 integrity, and structured-provider failure boundaries.
-- A credential-free raw-source-to-validated-text reference workflow.
+- A credential-free raw-source-to-validated-text reference workflow with three packaged replay
+  pairs, including verbatim MIT-licensed Corpus V2 multi-section and reference/causal records.
 - Content-addressed local runtime loading for encoder-decoder checkpoints and decoder-only LoRA
   adapter runs, with portable typed identities and untrusted CLI locators kept separate.
 - A reproducible wheel/sdist inspection and outside-checkout offline execution gate.

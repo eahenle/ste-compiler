@@ -1,0 +1,78 @@
+schema_version: replay-ir-v1
+source_sha256: 76b3e3a5d7fee55ec600888ebc1a56376fae9ab1d6dc178140903713b17382bd
+ir:
+  ambiguities: []
+  causal_relations:
+  - cause_node_id: open_panel
+    effect_node_id: inspect_pump
+    id: open_panel_causes_inspection
+    source_spans:
+    - end: 94
+      quote: Opening the access panel causes inspection of the pump.
+      source_id: adversarial_reference_sequence.txt
+      start: 39
+  id: adversarial_reference_sequence
+  metadata:
+    frontend: deterministic-corpus-construction
+    frontend_version: 0.1.0
+    realizer: deterministic
+    realizer_version: 0.2.0
+    terminology_version: demonstration-corpus-2
+    validator_profile: strict-demo-1
+    vocabulary_version: demo-3
+  references:
+  - label: system manual
+    target: synthetic-manual-section-1
+  sections:
+  - id: procedure
+    kind: procedure
+    statements:
+    - action:
+        id: open
+        lemma: open
+      actor: null
+      conditions: []
+      hazards: []
+      id: open_panel
+      indirect_object: null
+      kind: instruction
+      manner: null
+      negated: false
+      object:
+        term_id: access_panel
+      purpose: null
+      quantity_constraints: []
+      required: true
+      source_spans:
+      - end: 38
+        quote: Open the access panel before the test.
+        source_id: adversarial_reference_sequence.txt
+        start: 0
+      temporal_relations:
+      - event: the test
+        relation: before
+    - action:
+        id: inspect
+        lemma: inspect
+      actor: null
+      conditions: []
+      hazards: []
+      id: inspect_pump
+      indirect_object: null
+      kind: instruction
+      manner: null
+      negated: false
+      object:
+        id: pump
+        name: pump
+      purpose: null
+      quantity_constraints: []
+      required: true
+      source_spans:
+      - end: 112
+        quote: Inspect the pump.
+        source_id: adversarial_reference_sequence.txt
+        start: 95
+      temporal_relations: []
+    title: null
+  title: Procedure with a reference

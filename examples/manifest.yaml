@@ -41,6 +41,10 @@ scenarios:
     fixtures:
       - data/end_to_end/hydraulic_warning.txt
       - data/end_to_end/hydraulic_warning.ir.yaml
+      - data/end_to_end/test_multisection_state.txt
+      - data/end_to_end/test_multisection_state.ir.yaml
+      - data/end_to_end/adversarial_reference_sequence.txt
+      - data/end_to_end/adversarial_reference_sequence.ir.yaml
       - data/demo_vocabulary.yaml
       - data/demo_terminology.yaml
     commands:
@@ -57,6 +61,66 @@ scenarios:
             schema_version: compile-source-v1
             source.id: hydraulic_warning.txt
             source.sha256: b4c9933386cfff902e7fbd087ff95031993ab4dcbfb870fb92ce722ba8579f37
+            metadata.frontend: offline-replay
+            validation.status: accepted
+      - argv:
+          - ste-compiler
+          - compile-source
+          - data/end_to_end/test_multisection_state.txt
+          - --ir-fixture
+          - data/end_to_end/test_multisection_state.ir.yaml
+          - --json
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            schema_version: compile-source-v1
+            source.id: test_multisection_state.txt
+            source.sha256: 7f5f570480a7ead8e59023ded56a0f4affc8d4e5c8214a0baf664f4f0444680e
+            ir.id: test_multisection_state
+            text: |-
+              Hydraulic pressure is not more than 15 MPa.
+              Unit is safe.
+              Keep the access panel fully tight.
+            mappings.0.ir_node_ids: [pressure_state]
+            mappings.0.features.source_spans.0.quote: Hydraulic pressure is not more than 15 MPa.
+            mappings.1.ir_node_ids: [safe_state]
+            mappings.1.features.source_spans.0.quote: The unit is safe.
+            mappings.2.ir_node_ids: [keep_panel]
+            mappings.2.features.source_spans.0.quote: Keep the access panel fully tight.
+            metadata.frontend: offline-replay
+            validation.status: accepted
+      - argv:
+          - ste-compiler
+          - compile-source
+          - data/end_to_end/adversarial_reference_sequence.txt
+          - --ir-fixture
+          - data/end_to_end/adversarial_reference_sequence.ir.yaml
+          - --json
+        expected:
+          exit_code: 0
+          stdout_json_paths:
+            schema_version: compile-source-v1
+            source.id: adversarial_reference_sequence.txt
+            source.sha256: 76b3e3a5d7fee55ec600888ebc1a56376fae9ab1d6dc178140903713b17382bd
+            ir.id: adversarial_reference_sequence
+            text: |-
+              Open the access panel before the test.
+              Inspect the pump.
+
+              Cause: Open the access panel before the test.
+              Effect: Inspect the pump.
+            mappings.0.ir_node_ids: [open_panel]
+            mappings.0.features.source_spans.0.quote: Open the access panel before the test.
+            mappings.1.ir_node_ids: [inspect_pump]
+            mappings.1.features.source_spans.0.quote: Inspect the pump.
+            mappings.2.ir_node_ids: [open_panel_causes_inspection, open_panel]
+            mappings.2.features.source_spans.0.quote: >-
+              Opening the access panel causes inspection of the pump.
+            mappings.2.features.causal_role: cause
+            mappings.3.ir_node_ids: [open_panel_causes_inspection, inspect_pump]
+            mappings.3.features.source_spans.0.quote: >-
+              Opening the access panel causes inspection of the pump.
+            mappings.3.features.causal_role: effect
             metadata.frontend: offline-replay
             validation.status: accepted
 

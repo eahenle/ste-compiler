@@ -87,7 +87,10 @@ frontend, verifies the complete source SHA-256 and every quoted source span agai
 offsets, realizes controlled text, and runs the validators. Replay is deliberately identified as
 `offline-replay`; it demonstrates the full compiler boundary without claiming that a model
 extracted the gold IR. `compile-source` exposes the same workflow for an explicit raw-source and
-IR-fixture pair.
+IR-fixture pair. The package includes three MIT-licensed replay pairs: the hydraulic warning,
+Corpus V2's multi-section state/procedure record, and Corpus V2's reference/causal sequence. The
+latter two preserve the corpus source bytes and IR verbatim and are exercised from both source and
+installed-wheel catalogs.
 
 `build-demonstration-corpus` reconstructs a licensed, frozen dataset release from packaged
 construction inputs. Version 1 is the default wheel-bundled smoke sample; `--version 2` selects the

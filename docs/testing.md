@@ -72,9 +72,9 @@ reading, and distribution reproduction all run there.
 
 macOS 14 and Windows Server 2022 run the Python 3.12 distribution and installed portable-catalog
 gate. This proves package construction, installation outside the checkout, CLI and module entry
-points, and packaged resources. macOS runs the default seven credential-free scenarios and nine
+points, and packaged resources. macOS runs the default seven credential-free scenarios and eleven
 commands, including the POSIX benchmark-reproduction scenario. Windows applies the manifest's
-explicit `win32` override and runs the six portable scenarios and their seven commands. It does not
+explicit `win32` override and runs the six portable scenarios and their nine commands. It does not
 claim full neural training coverage on either platform. Windows also does not support the
 explicitly POSIX-only symbolic-corpus export, hardened artifact-bundle publication, benchmark
 report publication, or reference-release publication paths. Those exclusions are enforced by the
@@ -90,6 +90,12 @@ placeholder.
 Coverage does not establish model quality, semantic correctness by itself, or suitability for a
 production use case. Those claims require the repository's separate deterministic contracts and
 versioned evaluation evidence.
+
+The raw-source replay tests additionally bind the two Corpus V2-derived examples to their exact
+MIT-licensed source bytes and IR records. They assert complete deterministic output IR and metadata,
+controlled text, every mapping's node IDs and source-span provenance, accepted validation, and
+failure after a one-byte source mutation. The wheel test executes both pairs from an installed
+package outside the source checkout.
 
 Ordinary package tests remain network-free. The dedicated dependency matrix is the exception: it
 uses the network without credentials to query OSV vulnerability data and download only
@@ -109,8 +115,9 @@ Hypothesis exercises bounded, deterministic invariants at the package's strictes
 boundaries. Each property explicitly enables Hypothesis's derandomized mode, which disables the
 example database and derives a repeatable case sequence from the test definition:
 
-- semantic IR JSON/YAML round trips, nested unknown-field rejection, and invalid causal-graph
-  mutations;
+- semantic IR JSON/YAML round trips, schema-derived required-field deletion and defaulted-field
+  omission at every document-reachable nested model boundary, direct `Measurement` coverage,
+  unknown fields, invalid field constraints, and invalid causal-graph mutations;
 - lossless exact-whitespace symbolic plans, document-specific allowlists, and mutated or
   unauthorized symbols;
 - demonstration-corpus V2 snapshot identity plus tampered, truncated, and extra release entries;
