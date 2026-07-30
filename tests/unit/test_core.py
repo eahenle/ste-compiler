@@ -71,6 +71,24 @@ def test_terminology_normalization(terms):
     assert terms.get("old_pressure").id == "hydraulic_pressure"
 
 
+def test_resource_loaders_require_utf8_for_non_ascii_data(monkeypatch):
+    original_read_text = Path.read_text
+    requested_encodings: list[str | None] = []
+
+    def record_encoding(path: Path, *args, **kwargs):
+        encoding = kwargs.get("encoding", args[0] if args else None)
+        requested_encodings.append(encoding)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", record_encoding)
+
+    terms = TerminologyRegistry.load(ROOT / "data/demonstration_corpus/v2/terminology.yaml")
+    Vocabulary.load(ROOT / "data/demo_vocabulary.yaml")
+
+    assert terms.get("cafe_area").canonical_form == "café area"
+    assert requested_encodings == ["utf-8", "utf-8"]
+
+
 def test_vocabulary_and_symbolic_lexicalizer(vocab, terms):
     assert vocab.contains("make") and not vocab.contains("commence")
     lexicalizer = SymbolicLexicalizer(vocab, terms)

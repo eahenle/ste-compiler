@@ -17,7 +17,7 @@ class TerminologyRegistry:
 
     @classmethod
     def load(cls, path: Path) -> "TerminologyRegistry":
-        return cls(TerminologyData.model_validate(yaml.safe_load(path.read_text())))
+        return cls(TerminologyData.model_validate(yaml.safe_load(path.read_text(encoding="utf-8"))))
 
     def get(self, term_id: str) -> Term:
         visited: set[str] = set()
@@ -61,7 +61,7 @@ class Vocabulary:
 
     @classmethod
     def load(cls, path: Path) -> "Vocabulary":
-        return cls(VocabularyData.model_validate(yaml.safe_load(path.read_text())))
+        return cls(VocabularyData.model_validate(yaml.safe_load(path.read_text(encoding="utf-8"))))
 
     def contains(self, word: str) -> bool:
         return word.casefold() in self.words
