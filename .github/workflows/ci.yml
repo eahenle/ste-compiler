@@ -185,6 +185,8 @@ jobs:
           uv venv --python 3.12 .dependency-audit/license-environment
           uv pip install \
             --python .dependency-audit/license-environment/bin/python \
+            --index https://download.pytorch.org/whl/cpu \
+            --index-strategy unsafe-best-match \
             --require-hashes \
             --requirement .dependency-audit/all.requirements.txt
           uv run --locked --group dependency-audit pip-licenses \

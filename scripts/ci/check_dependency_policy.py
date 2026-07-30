@@ -375,7 +375,17 @@ def _check_vulnerabilities(arguments: argparse.Namespace, policy: Policy) -> str
                 )
             else:
                 used.add(suppression)
-    unused = set(policy.vulnerability_suppressions) - used
+    dependency_names = {item.name for item in dependencies}
+    applicable = (
+        set(policy.vulnerability_suppressions)
+        if arguments.profile == "all"
+        else {
+            suppression
+            for suppression in policy.vulnerability_suppressions
+            if suppression.package in dependency_names
+        }
+    )
+    unused = applicable - used
     violations.extend(
         f"unused vulnerability suppression: {item.package}=={item.version} {item.subject}"
         for item in sorted(unused, key=lambda item: (item.package, item.version, item.subject))

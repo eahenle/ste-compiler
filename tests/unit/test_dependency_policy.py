@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts/ci/check_dependency_policy.py"
@@ -51,6 +52,7 @@ def _run_vulnerabilities(
     *,
     policy: object | None = None,
     scanner_exit_code: int = 0,
+    profile: str = "core",
 ) -> subprocess.CompletedProcess[str]:
     policy_path = tmp_path / "policy.json"
     report_path = tmp_path / "audit.json"
@@ -68,7 +70,7 @@ def _run_vulnerabilities(
             "--scanner-exit-code",
             str(scanner_exit_code),
             "--profile",
-            "core",
+            profile,
             "--as-of",
             AS_OF,
         ],
@@ -264,6 +266,49 @@ def test_vulnerability_suppressions_expire_and_cannot_go_stale(
     assert message in result.stderr
 
 
+def test_profile_specific_suppression_is_enforced_only_where_package_is_present(
+    tmp_path: Path,
+) -> None:
+    policy = _policy()
+    policy["vulnerability_suppressions"] = [
+        {
+            "package": "neural-package",
+            "version": "1.0",
+            "vulnerability_id": "PYSEC-2099-1",
+            "reason": "Synthetic profile-scoping fixture.",
+            "expires": "2026-07-30",
+        }
+    ]
+
+    core = _run_vulnerabilities(
+        tmp_path,
+        _audit_report(("core-package", "1.0", [])),
+        policy=policy,
+        profile="core",
+    )
+    all_without_neural = _run_vulnerabilities(
+        tmp_path,
+        _audit_report(("core-package", "1.0", [])),
+        policy=policy,
+        profile="all",
+    )
+    all_with_neural = _run_vulnerabilities(
+        tmp_path,
+        _audit_report(
+            ("core-package", "1.0", []),
+            ("neural-package", "1.0", [_vulnerability()]),
+        ),
+        policy=policy,
+        scanner_exit_code=1,
+        profile="all",
+    )
+
+    assert core.returncode == 0
+    assert all_without_neural.returncode == 1
+    assert "unused vulnerability suppression" in all_without_neural.stderr
+    assert all_with_neural.returncode == 0
+
+
 def test_reviewed_complete_license_inventory_passes(tmp_path: Path) -> None:
     expected = _audit_report(
         ("example-one", "1.0", []),
@@ -445,3 +490,20 @@ def test_policy_rejects_redundant_license_exception(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "must not duplicate an allowed license expression" in result.stderr
+
+
+def test_license_inventory_install_is_hash_locked_across_reviewed_indexes() -> None:
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    steps = workflow["jobs"]["dependency-policy"]["steps"]
+    install = next(
+        step for step in steps if step["name"] == "Build isolated all-extras license inventory"
+    )
+    command = install["run"]
+
+    assert "--index https://download.pytorch.org/whl/cpu" in command
+    assert "--index-strategy unsafe-best-match" in command
+    assert "--require-hashes" in command
+    assert "--requirement .dependency-audit/all.requirements.txt" in command

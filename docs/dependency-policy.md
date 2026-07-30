@@ -18,6 +18,10 @@ missing, malformed, truncated, or contradictory report cannot be interpreted as 
 
 The all-extras requirements are also installed by hash into a fresh target environment.
 `pip-licenses==5.5.5` inventories that environment without including its own tool dependencies.
+The installer declares both PyPI and the PyTorch CPU index needed for Linux's locked `torch` local
+version. uv must consider matching versions across both indexes because `torch` also exists on
+PyPI; this normally riskier multi-index strategy remains constrained here by exact versions and
+mandatory artifact hashes exported from the reviewed lock.
 The checker requires its canonical package/version set to equal the all-extras vulnerability
 inventory exactly before it evaluates licenses. Both tools are exact direct dependencies in the
 locked `dependency-audit` dependency group. GitHub Actions and `uv` are pinned by full commit or
@@ -51,8 +55,10 @@ narrowly bound to:
 - an ISO expiration date.
 
 Expired entries fail. Entries that no longer match a report also fail, which prevents stale
-blanket suppressions. A license exception can override a denial only for its exact
-package/version/expression tuple. An exception for an already allowed expression is rejected.
+blanket suppressions. Profile-specific vulnerability jobs ignore suppressions for packages outside
+their own inventory; the `all` profile is the authoritative stale-suppression gate and requires
+every configured suppression to match. A license exception can override a denial only for its
+exact package/version/expression tuple. An exception for an already allowed expression is rejected.
 
 Do not suppress a fixable vulnerability merely to restore CI. Prefer updating the lock. A
 suppression is appropriate only when the advisory is demonstrably inapplicable or no safe version
