@@ -80,10 +80,11 @@ installed-wheel, neural smoke, or distribution-reproducibility jobs.
 makes at most `N + 1` proposal attempts and sends machine-readable validation feedback after the
 first failure. Construction rejects booleans, non-integers, and negative retry limits.
 
-`TimeoutError` and `ConnectionError` are outside that retry boundary. The frontend makes one call
-and propagates the same exception unchanged, regardless of its configured validation retries. A
-future live-provider adapter can add a rate-limit, backoff, or transport retry policy, but the
-current provider-neutral frontend does not invent one.
+Exceptions raised by the provider itself, including `ValueError`, `TimeoutError`, and
+`ConnectionError`, are outside that retry boundary. The frontend makes one call and propagates the
+same exception unchanged, regardless of its configured validation retries. A future live-provider
+adapter can add a rate-limit, backoff, or transport retry policy, but the current provider-neutral
+frontend does not invent one.
 
 Because transport exceptions are propagated unchanged, provider adapters must emit sanitized
 messages that contain no credentials or sensitive source text. The adversarial tests verify that

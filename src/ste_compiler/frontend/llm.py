@@ -42,10 +42,13 @@ class LLMFrontend:
     def parse(self, source: str, *, source_id: str | None = None) -> Document:
         feedback = None
         for attempt in range(self.retries + 1):
+            proposal = self.provider.extract_ir(
+                source,
+                Document.model_json_schema(),
+                feedback,
+            )
             try:
-                doc = Document.model_validate(
-                    self.provider.extract_ir(source, Document.model_json_schema(), feedback)
-                )
+                doc = Document.model_validate(proposal)
                 statements = [statement for sec in doc.sections for statement in sec.statements]
                 if any(not statement.source_spans for statement in statements):
                     raise ValueError("all extracted claims must include quoted source spans")

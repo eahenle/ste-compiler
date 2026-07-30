@@ -71,13 +71,13 @@ def test_malformed_provider_outputs_exhaust_only_the_bounded_validation_attempts
     assert CREDENTIAL_SENTINEL not in exposed
 
 
-TRANSPORT_ERRORS = st.sampled_from([TimeoutError, ConnectionError])
+PROVIDER_ERRORS = st.sampled_from([TimeoutError, ConnectionError, ValueError])
 
 
 @settings(max_examples=10, deadline=None, derandomize=True)
-@given(error_type=TRANSPORT_ERRORS, configured_retries=st.integers(min_value=0, max_value=5))
-def test_transport_failures_propagate_once_without_frontend_added_sensitive_context(
-    error_type: type[TimeoutError] | type[ConnectionError],
+@given(error_type=PROVIDER_ERRORS, configured_retries=st.integers(min_value=0, max_value=5))
+def test_provider_failures_propagate_once_without_frontend_added_sensitive_context(
+    error_type: type[Exception],
     configured_retries: int,
 ) -> None:
     provider_error = error_type("provider unavailable")
