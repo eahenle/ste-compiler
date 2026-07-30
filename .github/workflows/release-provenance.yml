@@ -1,0 +1,122 @@
+name: Release provenance
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-provenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Reproducible release build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      mode: ${{ steps.identity.outputs.mode }}
+    env:
+      HF_HUB_OFFLINE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Check out exact source and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: release-provenance
+      - name: Validate source identity and release gate
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode="dry-run"
+          tag_args=()
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            mode="tag"
+            tag_args=(--tag "${GITHUB_REF_NAME}")
+          fi
+          uv run --locked --python 3.12 --extra dev \
+            python scripts/release/release_contract.py validate-ref \
+            --root "${GITHUB_WORKSPACE}" \
+            --mode "${mode}" \
+            --commit "${GITHUB_SHA}" \
+            "${tag_args[@]}" \
+            --allowed-signers .github/release/trusted-tag-signers \
+            --output "${RUNNER_TEMP}/release-identity.json"
+          echo "mode=${mode}" >> "${GITHUB_OUTPUT}"
+      - name: Build and verify reproducible distributions
+        run: >-
+          uv run --locked --python 3.12 --extra dev
+          python scripts/ci/distribution_smoke.py
+          --release-output release/distributions
+      - name: Generate SPDX JSON SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: release/distributions
+          format: spdx-json
+          output-file: release/ste-compiler.spdx.json
+          syft-version: v1.50.0
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Finalize canonical manifest and checksums
+        run: >-
+          uv run --locked --python 3.12 --extra dev
+          python scripts/release/release_contract.py finalize
+          --release-root release
+          --identity "${RUNNER_TEMP}/release-identity.json"
+      - name: Verify final checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+      - name: Upload verification bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ste-compiler-release-${{ github.sha }}
+          path: release
+          if-no-files-found: error
+          retention-days: 14
+
+  attest:
+    name: Attest signed-tag artifacts
+    needs: build
+    if: needs.build.outputs.mode == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ste-compiler-release-${{ github.sha }}
+          path: release
+      - name: Attest build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/distributions/*
+      - name: Attest SPDX SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/distributions/*
+          sbom-path: release/ste-compiler.spdx.json

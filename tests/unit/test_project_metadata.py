@@ -24,6 +24,7 @@ def test_required_open_source_policy_files_are_present_and_complete():
         "CONTRIBUTING.md",
         "LICENSE",
         "SECURITY.md",
+        "docs/release-build-provenance.md",
         "docs/release-policy.md",
         "src/ste_compiler/py.typed",
     ]

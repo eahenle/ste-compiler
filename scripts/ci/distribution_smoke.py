@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -34,6 +36,7 @@ SDIST_SUFFIXES = (
     "/src/ste_compiler/py.typed",
     "/datasets/demonstration-corpus-1/manifest.json",
     "/datasets/demonstration-corpus-2/manifest.json",
+    "/docs/release-build-provenance.md",
     "/docs/v1-implementation-plan.md",
     "/examples/__init__.py",
     "/examples/custom_resources.py",
@@ -42,6 +45,7 @@ SDIST_SUFFIXES = (
     "/examples/resources/custom_terminology.yaml",
     "/examples/resources/custom_vocabulary.yaml",
     "/scripts/ci/distribution_smoke.py",
+    "/scripts/release/release_contract.py",
     "/tests/integration/test_executable_examples.py",
 )
 
@@ -254,7 +258,40 @@ assert catalog_payload["command_count"] == sum(
     )
 
 
+def _publish_verified_distributions(
+    distributions: tuple[Path, Path],
+    output: Path,
+) -> tuple[Path, Path]:
+    if output.exists():
+        raise RuntimeError("release output directory must not already exist")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.mkdir()
+    try:
+        copied = (
+            output / distributions[0].name,
+            output / distributions[1].name,
+        )
+        for source, destination in zip(distributions, copied, strict=True):
+            shutil.copyfile(source, destination)
+    except Exception:
+        shutil.rmtree(output)
+        raise
+    return copied
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--release-output",
+        type=Path,
+        help="New directory that receives the verified wheel and source distribution.",
+    )
+    return parser
+
+
 def main() -> None:
+    args = _parser().parse_args()
+    release_output = args.release_output.resolve() if args.release_output is not None else None
     environment = {
         **os.environ,
         "SOURCE_DATE_EPOCH": _source_date_epoch(),
@@ -269,7 +306,18 @@ def main() -> None:
         if _sha256(sdist_wheel) != _sha256(first[0]):
             raise RuntimeError("wheel rebuilt from sdist differs from the direct wheel")
         _smoke_installed_wheel(sdist_wheel, temporary_root)
-    print(json.dumps({"distributions": checksums, "status": "verified"}, sort_keys=True))
+        if release_output is not None:
+            _publish_verified_distributions(first, release_output)
+    print(
+        json.dumps(
+            {
+                "distributions": checksums,
+                "release_output": str(release_output) if release_output is not None else None,
+                "status": "verified",
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":
