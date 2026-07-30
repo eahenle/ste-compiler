@@ -108,6 +108,103 @@ jobs:
           uv run --locked --python 3.12 --all-extras
           python scripts/ci/check_coverage.py coverage.json
 
+  dependency-policy:
+    name: Dependencies (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UV_PYTHON_DOWNLOADS: never
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: core
+            export-arguments: ""
+          - profile: dev
+            export-arguments: "--extra dev"
+          - profile: neural
+            export-arguments: "--extra neural"
+          - profile: encoder-training
+            export-arguments: "--extra encoder-training"
+          - profile: all
+            export-arguments: "--all-extras"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.25"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: dependency-${{ matrix.profile }}
+      - name: Export the locked dependency profile
+        shell: bash
+        run: |
+          mkdir -p .dependency-audit
+          uv export \
+            --locked \
+            --no-dev \
+            --no-emit-project \
+            ${{ matrix.export-arguments }} \
+            --output-file ".dependency-audit/${{ matrix.profile }}.requirements.txt" \
+            > /dev/null
+      - name: Query vulnerability data and enforce policy
+        shell: bash
+        run: |
+          set +e
+          uv run --locked --group dependency-audit pip-audit \
+            --require-hashes \
+            --disable-pip \
+            --strict \
+            --vulnerability-service=osv \
+            --desc=on \
+            --aliases=on \
+            --progress-spinner=off \
+            --format=json \
+            --output=".dependency-audit/${{ matrix.profile }}.vulnerabilities.json" \
+            --requirement=".dependency-audit/${{ matrix.profile }}.requirements.txt"
+          scanner_exit_code=$?
+          set -e
+          audit_date="$(date -u +%F)"
+          uv run --locked --group dependency-audit \
+            python scripts/ci/check_dependency_policy.py vulnerabilities \
+            --policy policy/dependency-audit-policy.json \
+            --report ".dependency-audit/${{ matrix.profile }}.vulnerabilities.json" \
+            --scanner-exit-code "${scanner_exit_code}" \
+            --profile "${{ matrix.profile }}" \
+            --as-of "${audit_date}"
+      - name: Build isolated all-extras license inventory
+        if: matrix.profile == 'all'
+        shell: bash
+        run: |
+          uv venv --python 3.12 .dependency-audit/license-environment
+          uv pip install \
+            --python .dependency-audit/license-environment/bin/python \
+            --index https://download.pytorch.org/whl/cpu \
+            --index-strategy unsafe-best-match \
+            --require-hashes \
+            --requirement .dependency-audit/all.requirements.txt
+          uv run --locked --group dependency-audit pip-licenses \
+            --python .dependency-audit/license-environment/bin/python \
+            --from=mixed \
+            --with-system \
+            --ignore-packages ste-compiler \
+            --format=json \
+            --output-file=.dependency-audit/all.licenses.json
+          audit_date="$(date -u +%F)"
+          uv run --locked --group dependency-audit \
+            python scripts/ci/check_dependency_policy.py licenses \
+            --policy policy/dependency-audit-policy.json \
+            --report .dependency-audit/all.licenses.json \
+            --expected-audit-report .dependency-audit/all.vulnerabilities.json \
+            --profile all \
+            --as-of "${audit_date}"
+
   decoder-lora-smoke:
     name: Decoder LoRA offline smoke
     runs-on: ubuntu-24.04

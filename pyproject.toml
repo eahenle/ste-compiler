@@ -61,6 +61,12 @@ encoder-training = [
   "transformers>=4.45,<6",
 ]
 
+[dependency-groups]
+dependency-audit = [
+  "pip-audit==2.10.0",
+  "pip-licenses==5.5.5",
+]
+
 [project.scripts]
 ste-compiler = "ste_compiler.cli:app"
 

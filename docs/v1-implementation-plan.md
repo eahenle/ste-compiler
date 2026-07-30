@@ -394,8 +394,9 @@ Status: the schema, causal-graph, exact-symbolic-plan, demonstration-corpus V2 i
 provider-output, and provider transport-failure slice is implemented in `tests/property/`.
 `LLMFrontend` currently retries only schema/provenance failures; transport errors propagate after
 one call, so transport retry and redaction policies remain responsibilities of a future live
-provider adapter. Coverage thresholds, cross-platform CI, dependency/license checks, and release
-signing remain separate Phase 7 gates.
+provider adapter. Exact-ratio coverage thresholds and a hash-locked five-profile vulnerability and
+license-policy matrix are implemented. Cross-platform CI, minimum neural dependency coverage, and
+release signing remain separate Phase 7 gates.
 
 ### Open-source release deliverables
 
