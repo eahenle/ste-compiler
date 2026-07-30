@@ -316,8 +316,10 @@ def _validate_release_layout(root: Path, identity: ReleaseIdentity) -> None:
 def finalize_release(release_root: Path, identity_path: Path) -> tuple[Path, Path]:
     """Write canonical build metadata and checksums after SBOM generation."""
 
+    if release_root.is_symlink():
+        raise ReleaseContractError("release root must be a real existing directory")
     release_root = release_root.resolve()
-    if not release_root.is_dir() or release_root.is_symlink():
+    if not release_root.is_dir():
         raise ReleaseContractError("release root must be a real existing directory")
     identity = read_identity(identity_path)
     manifest_path = release_root / "release-build.json"

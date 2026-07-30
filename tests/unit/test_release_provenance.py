@@ -291,6 +291,34 @@ def test_finalize_release_rejects_symbolic_link_entries(tmp_path: Path) -> None:
         finalize_release(release, identity_path)
 
 
+def test_finalize_release_rejects_symbolic_link_root(tmp_path: Path) -> None:
+    release = tmp_path / "release"
+    distributions = release / "distributions"
+    distributions.mkdir(parents=True)
+    (distributions / "ste_compiler-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+    (distributions / "ste_compiler-0.1.0.tar.gz").write_bytes(b"sdist")
+    (release / "ste-compiler.spdx.json").write_text(
+        '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3"}\n'
+    )
+    linked_release = tmp_path / "linked-release"
+    linked_release.symlink_to(release, target_is_directory=True)
+    identity_path = tmp_path / "identity.json"
+    write_identity(
+        ReleaseIdentity(
+            schema_version=IDENTITY_SCHEMA,
+            mode="dry-run",
+            version="0.1.0",
+            commit="a" * 40,
+            source_date_epoch=1729,
+            tag=None,
+        ),
+        identity_path,
+    )
+
+    with pytest.raises(ReleaseContractError, match="release root must be a real"):
+        finalize_release(linked_release, identity_path)
+
+
 def test_finalize_release_rejects_distribution_version_mismatch(tmp_path: Path) -> None:
     release = tmp_path / "release"
     distributions = release / "distributions"
