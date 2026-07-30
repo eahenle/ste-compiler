@@ -861,16 +861,32 @@ def _remove_private_stage(
 def _remove_published_candidates(
     parent_descriptor: int,
     output_name: str,
+    stage_descriptor: int,
     archive_names: tuple[str, ...],
 ) -> None:
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-    descriptor = os.open(output_name, flags, dir_fd=parent_descriptor)
+    try:
+        named = os.stat(
+            output_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        opened = os.fstat(stage_descriptor)
+    except OSError:
+        return
+    if not stat.S_ISDIR(named.st_mode) or (named.st_dev, named.st_ino) != (
+        opened.st_dev,
+        opened.st_ino,
+    ):
+        return
     try:
         for name in archive_names:
-            os.unlink(name, dir_fd=descriptor)
-    finally:
-        os.close(descriptor)
-    os.rmdir(output_name, dir_fd=parent_descriptor)
+            os.unlink(name, dir_fd=stage_descriptor)
+    except OSError:
+        return
+    try:
+        os.rmdir(output_name, dir_fd=parent_descriptor)
+    except OSError:
+        pass
 
 
 def build_candidate_directory(
@@ -988,6 +1004,19 @@ def build_candidate_directory(
                     output.name,
                 )
                 published = True
+                published_output = os.stat(
+                    output.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+                opened_output = os.fstat(stage_descriptor)
+                if not stat.S_ISDIR(published_output.st_mode) or (
+                    published_output.st_dev,
+                    published_output.st_ino,
+                ) != (opened_output.st_dev, opened_output.st_ino):
+                    raise ReleaseCandidateError(
+                        "published candidate directory changed before verification"
+                    )
                 published_parent = os.stat(output_parent, follow_symlinks=False)
                 if (
                     published_parent.st_dev,
@@ -1003,12 +1032,13 @@ def build_candidate_directory(
                     )
             except BaseException:
                 if published:
-                    os.close(stage_descriptor)
                     _remove_published_candidates(
                         parent_descriptor,
                         output.name,
+                        stage_descriptor,
                         archive_names,
                     )
+                    os.close(stage_descriptor)
                 else:
                     _remove_private_stage(
                         parent_descriptor,

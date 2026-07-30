@@ -41,8 +41,10 @@ Generation uses the freshly rebuilt dataset. Every generated report byte must eq
 The destination must not exist, its path must not contain symbolic-link ancestors, and its existing
 real parent must be outside the source worktree. Private stages are created through an open
 descriptor for that parent, and the parent identity is checked before and after publication.
-Publication uses an atomic platform no-replace operation; a concurrently created destination is
-preserved and the private stage is removed.
+Publication uses an atomic platform no-replace operation, keeps the renamed stage descriptor open,
+and requires the final output name to resolve to that exact directory before returning. A
+concurrently created or substituted destination is preserved and never removed as cleanup for the
+private stage.
 
 Library callers use:
 

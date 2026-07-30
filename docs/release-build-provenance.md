@@ -67,8 +67,10 @@ deterministically inventories both candidates, both distributions, and the SBOM;
 additionally binds that manifest without recursively attempting to checksum itself. Finalization
 and verification keep no-follow descriptors open for every single-link regular subject, stream
 each subject into one size-and-digest snapshot, and recheck both descriptor and path identity before
-accepting the result. Candidate validation, manifest construction, and `SHA256SUMS` therefore
-cannot silently refer to different path states.
+accepting the result. Candidate archives are size-bounded and captured as part of those same
+snapshots; semantic verification runs against private materializations of the captured bytes rather
+than reopening their original paths. Candidate validation, manifest construction, and
+`SHA256SUMS` therefore cannot silently refer to different path states.
 
 ## Manual dry-run
 

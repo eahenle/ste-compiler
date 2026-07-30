@@ -10,6 +10,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import tomllib
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
@@ -30,6 +31,7 @@ COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 IDENTITY_SCHEMA = "ste-release-build-identity-v1"
 MANIFEST_SCHEMA = "ste-release-build-manifest-v1"
+MAX_CANDIDATE_ARCHIVE_BYTES = 64 * 1024 * 1024
 CANDIDATE_ARCHIVE_TEMPLATES = (
     "ste-compiler-{version}-dataset-demonstration-corpus-2.tar",
     "ste-compiler-{version}-report-ste-compiler-pipeline-fixture-1.tar",
@@ -333,6 +335,7 @@ def _snapshot_regular_file(
     *,
     label: str,
     capture: bool = False,
+    max_bytes: int | None = None,
 ) -> Iterator[_FileSnapshot]:
     if not hasattr(os, "O_NOFOLLOW"):
         raise ReleaseContractError("release file snapshots require O_NOFOLLOW support")
@@ -346,12 +349,16 @@ def _snapshot_regular_file(
         _require_single_link_regular(opened, label=label)
         if opened != before:
             raise ReleaseContractError(f"{label} changed before it could be opened")
+        if max_bytes is not None and opened.size > max_bytes:
+            raise ReleaseContractError(f"{label} exceeds the size limit")
         digest = hashlib.sha256()
         chunks: list[bytes] | None = [] if capture else None
         size = 0
         while chunk := os.read(descriptor, 1024 * 1024):
             digest.update(chunk)
             size += len(chunk)
+            if max_bytes is not None and size > max_bytes:
+                raise ReleaseContractError(f"{label} exceeds the size limit")
             if chunks is not None:
                 chunks.append(chunk)
         data = b"".join(chunks) if chunks is not None else None
@@ -409,11 +416,32 @@ def _candidate_archive_names(identity: ReleaseIdentity) -> tuple[str, ...]:
     )
 
 
-def _verify_candidate_contract(path: Path, identity: ReleaseIdentity) -> None:
+def _verify_candidate_contract(
+    path: Path,
+    identity: ReleaseIdentity,
+    captured: dict[str, bytes] | None = None,
+) -> None:
     try:
         from scripts.release.release_candidates import verify_candidate_directory
 
-        verify_candidate_directory(path, identity)
+        if captured is None:
+            verify_candidate_directory(path, identity)
+            return
+        expected_names = _candidate_archive_names(identity)
+        if set(captured) != set(expected_names):
+            raise ReleaseContractError("captured release candidates have an unexpected inventory")
+        with tempfile.TemporaryDirectory(
+            prefix="ste-release-contract-candidates-",
+        ) as temporary:
+            materialized = Path(temporary).resolve() / "candidates"
+            materialized.mkdir()
+            for name in expected_names:
+                _write_new_regular_file(
+                    materialized / name,
+                    captured[name],
+                    label=f"captured release candidate {name!r}",
+                )
+            verify_candidate_directory(materialized, identity)
     except (ImportError, OSError, RuntimeError, ValueError) as error:
         raise ReleaseContractError(f"release candidates failed verification: {error}") from error
 
@@ -509,20 +537,37 @@ def finalize_release(release_root: Path, identity_path: Path) -> tuple[Path, Pat
     subject_paths = _validate_release_layout(release_root, identity)
 
     with ExitStack() as snapshots:
-        subjects = tuple(
-            snapshots.enter_context(
-                _snapshot_regular_file(
-                    path,
-                    label=f"release artifact {path.relative_to(release_root).as_posix()!r}",
-                    capture=path.name == "ste-compiler.spdx.json",
+        subject_list: list[_FileSnapshot] = []
+        for path in subject_paths:
+            subject_relative = path.relative_to(release_root)
+            candidate = subject_relative.parts[0] == "candidates"
+            subject_list.append(
+                snapshots.enter_context(
+                    _snapshot_regular_file(
+                        path,
+                        label=f"release artifact {subject_relative.as_posix()!r}",
+                        capture=candidate or path.name == "ste-compiler.spdx.json",
+                        max_bytes=MAX_CANDIDATE_ARCHIVE_BYTES if candidate else None,
+                    )
                 )
             )
-            for path in subject_paths
-        )
+        subjects = tuple(subject_list)
         subject_by_path = {
             snapshot.path.relative_to(release_root).as_posix(): snapshot for snapshot in subjects
         }
-        _verify_candidate_contract(release_root / "candidates", identity)
+        captured_candidates = {
+            snapshot.path.name: _captured_data(
+                snapshot,
+                label=f"release candidate {snapshot.path.name!r}",
+            )
+            for snapshot in subjects
+            if snapshot.path.parent.name == "candidates"
+        }
+        _verify_candidate_contract(
+            release_root / "candidates",
+            identity,
+            captured_candidates,
+        )
         for snapshot in subjects:
             _confirm_snapshot(
                 snapshot,
@@ -742,16 +787,21 @@ def verify_release_bundle(
             )
 
         subject_paths = _verified_release_subject_paths(root, identity)
-        subjects = tuple(
-            snapshots.enter_context(
-                _snapshot_regular_file(
-                    path,
-                    label=f"release artifact {path.relative_to(root).as_posix()!r}",
-                    capture=path.name == "ste-compiler.spdx.json",
+        subject_list = []
+        for path in subject_paths:
+            subject_relative = path.relative_to(root)
+            candidate = subject_relative.parts[0] == "candidates"
+            subject_list.append(
+                snapshots.enter_context(
+                    _snapshot_regular_file(
+                        path,
+                        label=f"release artifact {subject_relative.as_posix()!r}",
+                        capture=candidate or path.name == "ste-compiler.spdx.json",
+                        max_bytes=MAX_CANDIDATE_ARCHIVE_BYTES if candidate else None,
+                    )
                 )
             )
-            for path in subject_paths
-        )
+        subjects = tuple(subject_list)
         checksums_snapshot = snapshots.enter_context(
             _snapshot_regular_file(
                 checksums_path,
@@ -766,7 +816,19 @@ def verify_release_bundle(
             raise ReleaseContractError(
                 "release build manifest artifact inventory does not match the release bundle"
             )
-        _verify_candidate_contract(root / "candidates", identity)
+        captured_candidates = {
+            snapshot.path.name: _captured_data(
+                snapshot,
+                label=f"release candidate {snapshot.path.name!r}",
+            )
+            for snapshot in subjects
+            if snapshot.path.parent.name == "candidates"
+        }
+        _verify_candidate_contract(
+            root / "candidates",
+            identity,
+            captured_candidates,
+        )
         for relative_path, expected_size, expected_digest in artifacts:
             snapshot = subject_by_path[relative_path]
             if snapshot.size != expected_size:

@@ -45,7 +45,7 @@ def _accept_synthetic_candidate_archives(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         release_contract_module,
         "_verify_candidate_contract",
-        lambda _path, _identity: None,
+        lambda _path, _identity, _captured=None: None,
     )
 
 
@@ -418,9 +418,15 @@ def test_release_contract_snapshots_each_subject_once(
         *,
         label: str,
         capture: bool = False,
+        max_bytes: int | None = None,
     ) -> Iterator[Any]:
         snapshot_counts[path] += 1
-        with original_snapshot(path, label=label, capture=capture) as snapshot:
+        with original_snapshot(
+            path,
+            label=label,
+            capture=capture,
+            max_bytes=max_bytes,
+        ) as snapshot:
             yield snapshot
 
     monkeypatch.setattr(
@@ -461,7 +467,7 @@ def test_candidate_contract_is_verified_before_and_after_finalization(
     monkeypatch.setattr(
         release_contract_module,
         "_verify_candidate_contract",
-        lambda path, identity: calls.append((path, identity)),
+        lambda path, identity, _captured=None: calls.append((path, identity)),
     )
 
     finalize_release(release, identity_path)
@@ -475,6 +481,34 @@ def test_candidate_contract_is_verified_before_and_after_finalization(
         (release.resolve() / "candidates", identity),
         (release.resolve() / "candidates", identity),
     ]
+
+
+def test_release_contract_semantically_verifies_captured_candidate_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release, identity_path = _release_inputs(tmp_path)
+    candidate_root = release / "candidates"
+    expected = {path.name: path.read_bytes() for path in candidate_root.iterdir()}
+    observed: dict[str, bytes] = {}
+
+    def capture_verification(
+        _path: Path,
+        _identity: ReleaseIdentity,
+        captured: dict[str, bytes] | None = None,
+    ) -> None:
+        assert captured is not None
+        observed.update(captured)
+
+    monkeypatch.setattr(
+        release_contract_module,
+        "_verify_candidate_contract",
+        capture_verification,
+    )
+
+    finalize_release(release, identity_path)
+
+    assert observed == expected
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "symlink", "hardlink"])
@@ -551,7 +585,11 @@ def test_verify_release_bundle_rechecks_candidate_identity_and_cross_links(
     candidate = release / ("candidates/ste-compiler-0.1.0-dataset-demonstration-corpus-2.tar")
     candidate.write_bytes(b"hostile replacement")
 
-    def reject_tampered_candidates(_path: Path, _identity: ReleaseIdentity) -> None:
+    def reject_tampered_candidates(
+        _path: Path,
+        _identity: ReleaseIdentity,
+        _captured: dict[str, bytes] | None = None,
+    ) -> None:
         raise ReleaseContractError("candidate identity or cross-link does not match")
 
     monkeypatch.setattr(

@@ -945,6 +945,40 @@ def test_builder_rejects_output_parent_swap_without_redirecting_writes(
     assert list(displaced.iterdir()) == []
 
 
+def test_builder_rejects_published_name_swap_without_deleting_replacement(
+    tmp_path: Path,
+    identity: ReleaseIdentity,
+    source_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "candidates"
+    displaced = tmp_path / "displaced-candidates"
+    real_rename = candidates._rename_no_replace
+    replacements = {
+        _dataset_name(identity): b"replacement dataset",
+        _report_name(identity): b"replacement report",
+    }
+
+    def swap_published_name(
+        parent_descriptor: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        real_rename(parent_descriptor, source_name, destination_name)
+        output.rename(displaced)
+        output.mkdir()
+        for name, data in replacements.items():
+            (output / name).write_bytes(data)
+
+    monkeypatch.setattr(candidates, "_rename_no_replace", swap_published_name)
+
+    with pytest.raises(ReleaseCandidateError, match="changed before verification"):
+        build_candidate_directory(source_repository, identity, output)
+
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == replacements
+    verify_candidate_directory(displaced, identity)
+
+
 def test_build_rejects_existing_output_without_modifying_it(
     tmp_path: Path,
     identity: ReleaseIdentity,
