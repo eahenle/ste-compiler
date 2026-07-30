@@ -68,6 +68,20 @@ def test_deterministic_factory_adds_config_identity_without_changing_default_met
     }
 
 
+def test_deterministic_factory_rejects_local_artifact_locators(tmp_path):
+    config = DeterministicRealizerConfigV1(
+        schema_version="ste-realizer-config-v1",
+        architecture="deterministic",
+    )
+
+    with pytest.raises(ValueError, match="does not accept local artifact locators"):
+        factory.build_realizer(config, artifact_bundle=tmp_path / "bundle")
+    with pytest.raises(ValueError, match="does not accept local artifact locators"):
+        factory.build_realizer(config, model_snapshot=tmp_path / "snapshot")
+
+    factory.build_realizer(config).prepare()
+
+
 def test_encoder_decoder_factory_maps_fields_and_forces_cache_only(
     monkeypatch,
     vocab,
@@ -112,6 +126,19 @@ def test_encoder_decoder_factory_maps_fields_and_forces_cache_only(
     assert result.metadata["artifact_mode"] == "offline-cache-only"
     assert result.metadata["realizer_config_sha256"] == realizer_config_sha256(config)
     assert result.metadata["model_revision"] == MODEL_REVISION
+
+
+def test_hub_encoder_decoder_factory_rejects_local_locators(tmp_path):
+    config = EncoderDecoderRealizerConfigV1(
+        schema_version="ste-realizer-config-v1",
+        architecture="encoder-decoder",
+        checkpoint=_identity("org/encoder"),
+    )
+
+    with pytest.raises(ValueError, match="does not accept local locators"):
+        factory.build_realizer(config, artifact_bundle=tmp_path / "bundle")
+    with pytest.raises(ValueError, match="does not accept local locators"):
+        factory.build_realizer(config, model_snapshot=tmp_path / "snapshot")
 
 
 def test_encoder_local_bundle_factory_requires_and_maps_untrusted_locator(
@@ -230,6 +257,25 @@ def test_decoder_factory_is_lazy_maps_fields_and_forces_cache_only(
     assert result.metadata["realizer_config_sha256"] == realizer_config_sha256(config)
     assert result.metadata["base_model_revision"] == MODEL_REVISION
     assert result.metadata["adapter_revision"] == ADAPTER_REVISION
+
+
+def test_hub_decoder_factory_rejects_local_locators_and_protocol_mismatch(tmp_path):
+    config = DecoderOnlyLoRARealizerConfigV1(
+        schema_version="ste-realizer-config-v1",
+        architecture="decoder-only-lora",
+        base_model=_identity("org/decoder"),
+        adapter=_identity("org/decoder-adapter", ADAPTER_REVISION),
+        prompt_profile=DECODER_PROMPT_PROFILE,
+    )
+
+    with pytest.raises(ValueError, match="does not accept local locators"):
+        factory.build_realizer(config, artifact_bundle=tmp_path / "bundle")
+    with pytest.raises(ValueError, match="does not accept local locators"):
+        factory.build_realizer(config, model_snapshot=tmp_path / "snapshot")
+
+    mismatched = config.model_copy(update={"prompt_profile": "other-protocol"})
+    with pytest.raises(ValueError, match="prompt profile does not match"):
+        factory.build_realizer(mismatched)
 
 
 def test_decoder_local_bundle_factory_requires_both_locators_and_loads_lazily(

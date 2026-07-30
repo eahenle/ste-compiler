@@ -22,6 +22,10 @@ uv run --extra dev mypy src
 uv run --extra dev pytest -q
 ```
 
+Before opening a pull request, run the coverage gate documented in
+[`docs/testing.md`](docs/testing.md) when the change touches executable Python. CI runs the complete
+offline suite with all optional dependencies and enforces the maintained line and branch floors.
+
 Use the architecture-specific optional dependency set documented by a neural-training change.
 Neural tests must run offline after their fixture preparation and must not silently download model
 artifacts.

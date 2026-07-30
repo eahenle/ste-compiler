@@ -978,6 +978,17 @@ def test_lexical_and_structural_diagnostics(vocab, terms):
     assert lexical[0].model_dump_json()
 
 
+def test_structural_diagnostics_cover_causal_passive_and_paragraph_limits():
+    diagnostics = StructuralValidator(max_paragraph_sentences=2).validate(
+        "Cause: The valve was closed. Open the valve. Stop the pump."
+    )
+
+    assert {diagnostic.code for diagnostic in diagnostics} == {
+        "PARAGRAPH_TOO_LONG",
+        "PASSIVE_VOICE",
+    }
+
+
 def test_terminology_schema_rejects_empty_canonical_form(terms):
     data = terms.data.model_dump()
     data["terms"][0]["canonical_form"] = ""
@@ -1185,6 +1196,7 @@ def test_unicode_casefold_matching_requires_original_character_boundaries():
     assert whole_casefold_spans("ß", "s") == ()
     assert whole_casefold_spans("XSTRASSE", "strasse") == ()
     assert whole_casefold_spans("STRASSE_y", "strasse") == ()
+    assert whole_casefold_spans("text", "") == ()
 
 
 def test_symbolizer_uses_original_span_for_unicode_casefold_expansion(vocab, terms):

@@ -2320,3 +2320,70 @@ def test_concurrent_output_and_parent_swap_clean_up_only_verified_parent(
     assert not (attacker_parent / "report").exists()
     assert not list(relocated_parent.glob(".ste-benchmark-report-*"))
     assert not list(attacker_parent.glob(".ste-benchmark-report-*"))
+
+
+def test_realizer_failure_prevents_validator_execution():
+    record = json.loads(PREDICTIONS.read_text().splitlines()[2])
+    record["validator"] = json.loads(PREDICTIONS.read_text().splitlines()[0])["validator"]
+
+    with pytest.raises(
+        ValidationError,
+        match="validator must not run after a realizer failure",
+    ):
+        PredictionRecordV1.model_validate(record)
+
+
+def test_successful_upstream_stages_require_validator_execution():
+    record = json.loads(PREDICTIONS.read_text().splitlines()[0])
+    record["validator"] = json.loads(PREDICTIONS.read_text().splitlines()[1])["validator"]
+
+    with pytest.raises(
+        ValidationError,
+        match="validator must run after successful upstream stages",
+    ):
+        PredictionRecordV1.model_validate(record)
+
+
+def test_successful_prediction_rejects_a_failure_code():
+    record = json.loads(PREDICTIONS.read_text().splitlines()[0])
+    record["failure_code"] = "frontend.schema_invalid"
+
+    with pytest.raises(
+        ValidationError,
+        match="successful predictions cannot have a failure code",
+    ):
+        PredictionRecordV1.model_validate(record)
+
+
+def test_fixture_system_rejects_model_artifact_identity():
+    specification = json.loads(SPECIFICATION.read_text())
+    specification["systems"][0]["artifact_manifest_sha256"] = "0" * 64
+
+    with pytest.raises(
+        ValidationError,
+        match="deterministic fixtures must not claim a model artifact identity",
+    ):
+        BenchmarkSpecV1.model_validate(specification)
+
+
+def test_stage_cleanup_does_not_remove_replacement_directory(tmp_path):
+    parent_descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    stage_name, stage_descriptor = evidence_module._create_stage(parent_descriptor)
+    original = tmp_path / "original-stage"
+    (tmp_path / stage_name).rename(original)
+    replacement = tmp_path / stage_name
+    replacement.mkdir()
+    try:
+        evidence_module._cleanup_stage(
+            parent_descriptor,
+            stage_name,
+            stage_descriptor,
+            (),
+        )
+    finally:
+        os.close(stage_descriptor)
+        os.close(parent_descriptor)
+
+    assert replacement.is_dir()
+    replacement.rmdir()
+    original.rmdir()
