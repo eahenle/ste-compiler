@@ -34,8 +34,10 @@ A public release requires:
    offline execution smoke from a clean checkout;
 3. an updated changelog and version-coherent citation metadata;
 4. immutable checksums and provenance for included data, reports, and neural artifacts;
-5. license and intended-use review; and
-6. a clean, signed tag created from the reviewed release commit.
+5. exact, independently verified dataset and report candidate archives bound to the same release
+   identity and to each other;
+6. license and intended-use review; and
+7. a clean, signed tag created from the reviewed release commit.
 
 Package-index publication should use trusted publishing and attach build provenance. The current
 [release build provenance workflow](release-build-provenance.md) deliberately stops before package
@@ -53,10 +55,13 @@ network access blocked, rebuilds that wheel byte-for-byte from the generated sou
 runs the packaged demo, and reconstructs and verifies corpus version 2.
 
 With `--release-output`, that same gate copies only the verified wheel and source distribution into
-a new output directory. The release workflow then creates an SPDX JSON SBOM, a canonical
-`ste-release-build-manifest-v1` inventory, and `SHA256SUMS`. GitHub build and SBOM attestations are
-limited to a successfully verified signed-version-tag run; manual dry-runs do not receive release
-attestations.
+a new output directory. The release workflow separately builds the versioned Corpus V2 dataset and
+pipeline-fixture report candidates offline, verifies their release identity and cross-links, then
+creates an SPDX JSON SBOM, a canonical `ste-release-build-manifest-v1` inventory, and
+`SHA256SUMS`. The read-only trusted workflow rebuilds and byte-compares the candidates before the
+privileged job creates distribution provenance, distribution SPDX, and candidate build-provenance
+attestations. That privileged job has no checkout or shell execution. Manual dry-runs do not
+receive attestations, and the workflow still does not publish any artifact.
 
 Compatibility CI repeats that installed-distribution boundary on Linux, macOS, and Windows and
 tests both the lowest declared direct dependencies and the highest currently compatible

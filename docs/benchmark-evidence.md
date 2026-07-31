@@ -35,6 +35,14 @@ The output contains:
 Running the command twice with the same inputs produces identical bytes. The test suite compares a
 fresh report with `data/benchmark/v1/expected-report`.
 
+The non-publishing release workflow packages that exact fixture report as
+`ste-compiler-<version>-report-ste-compiler-pipeline-fixture-1.tar`. Its candidate manifest repeats
+the release identity and binds the Corpus V2 dataset candidate, benchmark inputs, generated report
+files, and hashes. The release contract re-verifies those cross-links before and after finalization,
+and the trusted workflow rebuilds and byte-compares both candidate archives before candidate
+build-provenance attestation. This does not change the report's `deterministic_fixture_only` claim
+scope or publish it as measured evidence.
+
 ## Frozen inputs and cross-binding
 
 `benchmark-spec.json` freezes:
