@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -36,7 +35,6 @@ ROOT = Path(__file__).parents[2]
 WORKFLOW = ROOT / ".github/workflows/release-provenance.yml"
 ATTESTATION_WORKFLOW = ROOT / ".github/workflows/release-attestation.yml"
 SCHEDULED_WORKFLOW = ROOT / ".github/workflows/scheduled-verification.yml"
-TRUSTED_SIGNERS = ROOT / ".github/release/trusted-tag-signers"
 ACTION_PIN = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
@@ -152,7 +150,6 @@ def test_manual_dry_run_binds_clean_head_and_version_without_tag(tmp_path: Path)
         mode="dry-run",
         commit=commit,
         tag=None,
-        allowed_signers=tmp_path / "not-required-for-dry-run",
     )
 
     assert identity.schema_version == IDENTITY_SCHEMA
@@ -173,7 +170,6 @@ def test_release_ref_rejects_dirty_source_and_version_mismatch(tmp_path: Path) -
             mode="dry-run",
             commit=commit,
             tag=None,
-            allowed_signers=tmp_path / "unused",
         )
 
     (root / "untracked").unlink()
@@ -189,88 +185,13 @@ def test_release_ref_rejects_dirty_source_and_version_mismatch(tmp_path: Path) -
             mode="dry-run",
             commit=_run(root, "git", "rev-parse", "HEAD"),
             tag=None,
-            allowed_signers=tmp_path / "unused",
         )
 
 
-@pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="ssh-keygen is required")
-def test_signed_tag_requires_annotated_allowed_ssh_signature(tmp_path: Path) -> None:
-    root = _repository(tmp_path)
-    private_key = tmp_path / "release-signing-key"
-    _run(
-        tmp_path,
-        "ssh-keygen",
-        "-q",
-        "-t",
-        "ed25519",
-        "-N",
-        "",
-        "-C",
-        "release@example.com",
-        "-f",
-        str(private_key),
-    )
-    allowed_signers = root / "trusted-tag-signers"
-    public_key = private_key.with_suffix(".pub").read_text(encoding="utf-8").strip()
-    allowed_signers.write_text(
-        f'release@example.com namespaces="git" {public_key}\n',
-        encoding="utf-8",
-    )
-    _run(root, "git", "add", "trusted-tag-signers")
-    _run(root, "git", "commit", "-m", "authorize release signer")
-    commit = _run(root, "git", "rev-parse", "HEAD")
-    _run(root, "git", "config", "gpg.format", "ssh")
-    _run(root, "git", "config", "user.signingkey", str(private_key))
-    _run(root, "git", "tag", "-s", "v0.1.0", "-m", "v0.1.0")
-
-    identity = validate_release_ref(
-        root,
-        mode="tag",
-        commit=commit,
-        tag="v0.1.0",
-        allowed_signers=allowed_signers,
-    )
-    assert identity.mode == "tag"
-    assert identity.tag == "v0.1.0"
-
-    unauthorized_key = tmp_path / "unauthorized-key"
-    _run(
-        tmp_path,
-        "ssh-keygen",
-        "-q",
-        "-t",
-        "ed25519",
-        "-N",
-        "",
-        "-C",
-        "other@example.com",
-        "-f",
-        str(unauthorized_key),
-    )
-    unauthorized = tmp_path / "unauthorized-signers"
-    unauthorized.write_text(
-        (
-            'other@example.com namespaces="git" '
-            f"{unauthorized_key.with_suffix('.pub').read_text(encoding='utf-8').strip()}\n"
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(ReleaseContractError, match="command failed"):
-        validate_release_ref(
-            root,
-            mode="tag",
-            commit=commit,
-            tag="v0.1.0",
-            allowed_signers=unauthorized,
-        )
-
-
-def test_tag_mode_rejects_lightweight_tag_and_disabled_signer_policy(tmp_path: Path) -> None:
+def test_tag_mode_rejects_lightweight_tag_and_accepts_annotated(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     commit = _run(root, "git", "rev-parse", "HEAD")
     _run(root, "git", "tag", "v0.1.0")
-    signers = tmp_path / "signers"
-    signers.write_text("# intentionally disabled\n", encoding="utf-8")
 
     with pytest.raises(ReleaseContractError, match="must be annotated"):
         validate_release_ref(
@@ -278,19 +199,18 @@ def test_tag_mode_rejects_lightweight_tag_and_disabled_signer_policy(tmp_path: P
             mode="tag",
             commit=commit,
             tag="v0.1.0",
-            allowed_signers=signers,
         )
 
     _run(root, "git", "tag", "-d", "v0.1.0")
     _run(root, "git", "tag", "-a", "v0.1.0", "-m", "unsigned annotated tag")
-    with pytest.raises(ReleaseContractError, match="disabled until trusted-tag-signers"):
-        validate_release_ref(
-            root,
-            mode="tag",
-            commit=commit,
-            tag="v0.1.0",
-            allowed_signers=signers,
-        )
+    identity = validate_release_ref(
+        root,
+        mode="tag",
+        commit=commit,
+        tag="v0.1.0",
+    )
+    assert identity.mode == "tag"
+    assert identity.tag == "v0.1.0"
 
 
 def test_finalize_release_writes_canonical_inventory_and_checksums(tmp_path: Path) -> None:
@@ -755,7 +675,6 @@ def test_direct_script_finalizes_and_verifies_real_candidate_archives(
         mode="dry-run",
         commit=commit,
         tag=None,
-        allowed_signers=tmp_path / "unused-signers",
     )
     identity_path = tmp_path / "identity.json"
     write_identity(identity, identity_path)
@@ -1042,9 +961,6 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     assert "refs/remotes/origin/${default_branch}" in identity_gate
     assert 'default_commit="$(git rev-parse "${policy_ref}")"' in identity_gate
     assert '[[ "${GITHUB_SHA}" != "${default_commit}" ]]' in identity_gate
-    assert "git show" in identity_gate
-    assert '"${policy_ref}:.github/release/trusted-tag-signers"' in identity_gate
-    assert '--allowed-signers "${allowed_signers}"' in identity_gate
     uses = [
         step["uses"] for job in workflow["jobs"].values() for step in job["steps"] if "uses" in step
     ]
@@ -1139,8 +1055,6 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
     assert 'Path("trusted-release/candidates")' in attestation_raw
     assert "untrusted-release/candidates/$(basename" in attestation_raw
     assert "enable-cache: false" in attestation_raw
-    assert '"${{ github.event.workflow_run.head_sha }}" != "${GITHUB_SHA}"' in attestation_raw
-    assert "--allowed-signers .github/release/trusted-tag-signers" in attestation_raw
     assert [step["name"] for step in attest_job["steps"]] == [
         "Download immutable trusted verification bundle",
         "Attest distribution build provenance",
@@ -1179,12 +1093,3 @@ def test_release_workflow_is_immutable_least_privilege_and_nonpublishing() -> No
         "gh workflow run release-provenance.yml --ref <reviewed-branch-or-tag>" in provenance_docs
     )
     assert "branch-or-commit" not in provenance_docs
-
-
-def test_repository_signer_policy_is_explicitly_closed_pending_authorization() -> None:
-    configured = [
-        line
-        for line in TRUSTED_SIGNERS.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    assert configured == []

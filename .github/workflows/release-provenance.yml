@@ -47,7 +47,6 @@ jobs:
           set -euo pipefail
           mode="dry-run"
           tag_args=()
-          allowed_signers=".github/release/trusted-tag-signers"
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             mode="tag"
             tag_args=(--tag "${GITHUB_REF_NAME}")
@@ -61,10 +60,6 @@ jobs:
               echo "release tag commit is not the current default-branch commit" >&2
               exit 1
             fi
-            allowed_signers="${RUNNER_TEMP}/trusted-tag-signers"
-            git show \
-              "${policy_ref}:.github/release/trusted-tag-signers" \
-              > "${allowed_signers}"
           fi
           uv run --locked --python 3.12 --extra dev \
             python scripts/release/release_contract.py validate-ref \
@@ -72,7 +67,6 @@ jobs:
             --mode "${mode}" \
             --commit "${GITHUB_SHA}" \
             "${tag_args[@]}" \
-            --allowed-signers "${allowed_signers}" \
             --output "${RUNNER_TEMP}/release-identity.json"
       - name: Build and verify offline release candidates
         shell: bash

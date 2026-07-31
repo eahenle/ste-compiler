@@ -400,13 +400,13 @@ after one call, so transport retry and redaction policies remain responsibilitie
 provider adapter. Exact-ratio coverage thresholds, a hash-locked five-profile vulnerability and
 license-policy matrix, the Linux/macOS/Windows portable distribution matrix, lowest-direct/current
 all-extras resolution, and weekly checked-in artifact/example verification are implemented.
-A least-privilege signed-tag/manual-dry-run provenance workflow also emits canonical checksums and
+A least-privilege tag/manual-dry-run provenance workflow also emits canonical checksums and
 an SPDX SBOM. It now builds exact Corpus V2 dataset and pipeline-fixture report candidates, binds
 them into the release manifest and checksums, and has its read-only trusted verifier rebuild,
 re-verify, and byte-compare both archives using default-branch code over the exact release source.
 The privileged job retains distribution provenance and SPDX attestations, adds candidate-only
 build provenance, and has no checkout or shell execution. External published-model verification,
-release-signer authorization, authorized GitHub release attachment, and trusted package-index
+release governance and authorized GitHub release attachment, and trusted package-index
 publishing remain closed Phase 7 gates.
 
 ### Open-source release deliverables
