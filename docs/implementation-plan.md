@@ -12,11 +12,11 @@ evaluation, documentation, and release roadmap is in
 6. Document architecture, assumptions, security boundaries, neural/LoRA extension paths, limitations, and experiment design; run formatting, typing, linting, and tests.
 
 Release hardening now includes a deterministic offline coverage gate, dependency vulnerability and
-license policy, signed-tag/manual-dry-run release provenance, Linux/macOS/Windows
+license policy, manual-dry-run/tag release provenance, Linux/macOS/Windows
 installed-distribution coverage, lowest-direct/current all-extras dependency resolution, and
 weekly checked-in artifact/example verification. The Python 3.12 all-extras suite must maintain at
 least 88% line and 76% branch coverage; see [`testing.md`](testing.md). External artifact
-publication, release-signer authorization, and trusted package publication remain tracked in the
+publication, release governance, and trusted package publication remain tracked in the
 [V1 end-to-end implementation plan](v1-implementation-plan.md).
 
 ## Milestone two

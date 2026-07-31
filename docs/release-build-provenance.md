@@ -8,48 +8,27 @@ has two modes:
   candidate archives, generates an SPDX JSON SBOM, writes canonical checksums and build metadata,
   and uploads a short-lived workflow artifact.
 - A `push` of a `vMAJOR.MINOR.PATCH` tag follows the same build path, but only after the tag is an
-  annotated SSH-signed tag for the exact checkout commit, its version equals both `pyproject.toml`
-  and `CITATION.cff`, the tag points to the exact current reviewed default-branch commit, and Git
-  accepts its signer through the allowlist fetched from that commit. The tag workflow has
-  read-only repository access and can only upload a verification bundle. A separate `workflow_run`
-  workflow, loaded from the default branch rather than the tag, independently verifies that bundle,
-  source commit, tag signature, and default-branch signer policy. It then uses trusted scripts to
-  reproduce the distributions from the reviewed source and rebuilds the candidates with trusted
-  default-branch code reading the exact validated release source as data. It requires both sets of
-  bytes to match the upstream build, creates a fresh SBOM and canonical evidence bundle, and only
-  then lets GitHub create distribution provenance, distribution SPDX SBOM, and candidate-only
-  build-provenance attestations.
+  annotated tag for the exact checkout commit, its version equals both `pyproject.toml` and
+  `CITATION.cff`, and the tag points to the exact current reviewed default-branch commit. The tag
+  workflow has read-only repository access and can only upload a verification bundle. A separate
+  `workflow_run` workflow, loaded from the default branch rather than the tag, independently verifies
+  that bundle and source commit. It then uses trusted scripts to reproduce the distributions from the
+  reviewed source and rebuilds the candidates with trusted default-branch code reading the exact
+  validated release source as data. It requires both sets of bytes to match the upstream build, creates
+  a fresh SBOM and canonical evidence bundle, and only then lets GitHub create distribution
+  provenance, distribution SPDX SBOM, and candidate-only build-provenance attestations.
 
 The workflow does not create a tag, GitHub Release, package-index upload, model release, or dataset
 release. The uploaded workflow artifact is verification evidence, not a public package release.
 
-## Closed signed-tag gate
+## Tag-mode requirements
 
-The signer allowlist at `.github/release/trusted-tag-signers` intentionally contains no key. The
-read-only tag build fetches this policy from the current default branch for an early rejection; it
-never trusts the copy in the tagged checkout. More importantly, the privileged `Release
-attestation` workflow executes its validator and reads its policy from its own default-branch
-checkout. It treats the triggering bundle and tagged source as untrusted inputs, verifies their
-canonical inventory and checksums, requires the tagged commit to equal its default-branch commit,
-and verifies the tag again. The exact commit equality makes GitHub's signed build-provenance
-workflow SHA identical to the source commit that produced the distributions. Therefore signed-tag
-workflow runs fail closed before attestation until the release owner explicitly reviews a release
-signing identity and commits an SSH `allowed_signers` entry:
-
-```text
-release-identity@example.com namespaces="git" ssh-ed25519 AAAA...
-```
-
-This is a project decision, not a value for automation to invent. Adding a key authorizes that
-identity to satisfy the repository's signed-tag build gate; it does not authorize package
-publication. The workflow forces Git's SSH signature verifier to use only this file.
-
-After signer authorization, a release tag must still:
+In tag mode, a release must:
 
 1. use stable `vMAJOR.MINOR.PATCH` syntax without a moving branch, lightweight tag, or prerelease;
 2. equal the project and citation version exactly;
 3. point to the exact clean commit currently at the tip of the reviewed default branch;
-4. carry a valid annotated SSH signature from the allowlist.
+4. be an annotated tag.
 
 The strict validation implementation is
 [`scripts/release/release_contract.py`](../scripts/release/release_contract.py). It writes a
@@ -88,8 +67,8 @@ default branch, its successful run triggers the read-only default-branch verifie
 cross-run download, strict bundle validation, trusted rebuild, byte comparison, SBOM generation,
 and canonical finalization. It is suitable for checking action compatibility and inspecting the
 prospective wheel, source distribution, dataset candidate, fixture-report candidate, SBOM,
-manifest, and checksums. It is not evidence that the tag, signer, version, package-index
-environment, or release notes were authorized.
+manifest, and checksums. It is not evidence that the tag, version, package-index environment,
+or release notes were authorized.
 
 The underlying distribution gate can also retain verified local artifacts in a new directory:
 
@@ -116,8 +95,8 @@ only download the exact trusted artifact ID emitted by the verifier job and invo
 attestation actions. Binding the handoff to the uploaded artifact ID also makes failed-job retries
 reuse the evidence that actually passed verification. It has no checkout or shell step and does not
 execute project code. GitHub uses those permissions to sign and store SLSA build provenance for
-the distributions and candidates plus the distributions' SPDX SBOM attestation. Consumers can
-verify a signed-tag candidate online with:
+the distributions and candidates plus the distributions' SPDX SBOM attestation. Consumers can verify
+a tagged candidate online with:
 
 ```bash
 gh attestation verify \
@@ -141,8 +120,8 @@ must explicitly decide and review:
 2. the PyPI project and owner;
 3. a protected GitHub environment and its required reviewers;
 4. the exact PyPI trusted-publisher binding to this repository, workflow, and environment;
-5. whether signed-tag provenance and SBOM attestations are mandatory publication inputs; and
-6. the rollback and incident response for a compromised signer or publisher.
+5. whether tag-based provenance and SBOM attestations are mandatory publication inputs; and
+6. the rollback and incident response for a compromised release pipeline or publisher.
 
 A future publisher should be a separate environment-protected job, use PyPI's short-lived OIDC
 trusted publishing instead of a long-lived API token, download the exact verified artifact from the

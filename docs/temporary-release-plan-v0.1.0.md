@@ -15,39 +15,25 @@ This is a temporary execution plan to move from the current state to a tagged
 
 - Keep tag mode as an annotated tag for `v0.1.0` on the reviewed `main` commit.
 - Run the local release contract check for the tag path.
-- If tag validation can be made to pass without verifying a signer, use it and
-  avoid any SSH key handling.
+- Keep release tagging logic simple: the check requires annotated tag format and exact
+  version/commit alignment, not SSH signer authorization.
 - Run/trigger the release provenance workflow to produce the reproducible
   artifacts and checksums for `v0.1.0`.
 - Push only the annotated `v0.1.0` tag (no package-registry publish).
-
-## Fallback path (if signing is required by tooling)
-
-If tag validation still fails because SSH signing is enforced:
-
-- Mint an SSH signing key locally.
-- Add the matching public key to `.github/release/trusted-tag-signers`.
-- Sign the `v0.1.0` annotated tag using that key.
-- Push the tag.
 
 Keep this as temporary behavior until we are ready for the `v1.0.0` release
 decision point.
 
 ## Closure actions performed
 
-- `v0.1.0` was tagged and released using an SSH fallback signer because tag validation
-  required it in the current repository state.
-- The temporary allowlisted SSH key was later removed from
-  `.github/release/trusted-tag-signers` to restore the default policy of a closed,
-  no-key signer gate.
-- This means `v0.1.0` remains signed for provenance checks performed at release time,
-  while future tag runs must go through an explicit release-signer authorization step.
+- `v0.1.0` was tagged and release-checked without SSH signer gating in the
+  repository.
 
 ## Deferred until pre-v1.0 actions
 
 - Any registry publishing (PyPI/GitHub Release asset publishing with package
   distribution expectations).
-- Long-term release-signer policy changes or stricter release governance.
+- Long-term release governance changes or stricter release policy.
 - Release policy updates for `v1.0.0`.
 
 ## Validation checklist

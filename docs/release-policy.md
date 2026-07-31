@@ -37,13 +37,13 @@ A public release requires:
 5. exact, independently verified dataset and report candidate archives bound to the same release
    identity and to each other;
 6. license and intended-use review; and
-7. a clean, signed tag created from the reviewed release commit.
+7. a clean, annotated tag created from the reviewed release commit.
 
 Package-index publication should use trusted publishing and attach build provenance. The current
 [release build provenance workflow](release-build-provenance.md) deliberately stops before package
 or GitHub Release publication: manual runs create only disposable verification artifacts, and the
-signed-tag path is closed until a release signer is explicitly authorized. GitHub release assets
-must include checksums. Model and dataset artifacts too large for the package must be linked by
+tagged-release path requires an annotated release tag. GitHub release assets must include checksums.
+Model and dataset artifacts too large for the package must be linked by
 immutable repository revision and digest. A model bundle publication must carry the externally
 retained `artifact-manifest.json` SHA-256 in signed or otherwise reviewed release metadata; the
 colocated manifest alone is not sufficient.

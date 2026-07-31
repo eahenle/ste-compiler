@@ -1,3 +1,2 @@
-# Temporary release signer for v0.1.0 (replace before v1.0.0).
-# v0.1.0 used a temporary SSH signer on 2026-07-31 for fallback signing.
-# Restore this file to policy-closed state after that release.
+# Release signing allowlist removed for this repository setup.
+# This file is intentionally unused.

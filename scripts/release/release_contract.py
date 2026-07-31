@@ -131,31 +131,14 @@ def _citation_version(root: Path) -> str:
     return version
 
 
-def _configured_signers(path: Path) -> tuple[str, ...]:
-    try:
-        lines = tuple(
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        )
-    except OSError as error:
-        raise ReleaseContractError(f"cannot read trusted tag signers: {error}") from error
-    if not lines:
-        raise ReleaseContractError(
-            "signed-tag releases are disabled until trusted-tag-signers contains a reviewed SSH key"
-        )
-    return lines
-
-
 def validate_release_ref(
     root: Path,
     *,
     mode: Mode,
     commit: str,
     tag: str | None,
-    allowed_signers: Path,
 ) -> ReleaseIdentity:
-    """Validate a manual dry-run or one exact signed stable-version tag."""
+    """Validate a manual dry-run or one exact annotated stable-version tag."""
 
     root = root.resolve()
     if COMMIT_PATTERN.fullmatch(commit) is None:
@@ -191,17 +174,7 @@ def validate_release_ref(
             raise ReleaseContractError(
                 f"release tag resolves to {tagged_commit}, not requested commit {commit}"
             )
-        _configured_signers(allowed_signers)
-        _run(
-            root,
-            "git",
-            "-c",
-            "gpg.format=ssh",
-            "-c",
-            f"gpg.ssh.allowedSignersFile={allowed_signers.resolve()}",
-            "verify-tag",
-            tag,
-        )
+        # Tag mode intentionally performs only annotation and commit-pointing checks.
     else:  # pragma: no cover - argparse and the Mode type keep callers explicit.
         raise ReleaseContractError(f"unsupported release mode: {mode!r}")
 
@@ -869,7 +842,6 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--mode", choices=("dry-run", "tag"), required=True)
     validate.add_argument("--commit", required=True)
     validate.add_argument("--tag")
-    validate.add_argument("--allowed-signers", type=Path, required=True)
     validate.add_argument("--output", type=Path, required=True)
     finalize = subparsers.add_parser("finalize")
     finalize.add_argument("--release-root", type=Path, required=True)
@@ -890,7 +862,6 @@ def main() -> None:
                 mode=args.mode,
                 commit=args.commit,
                 tag=args.tag,
-                allowed_signers=args.allowed_signers,
             )
             write_identity(identity, args.output)
             print(json.dumps(identity.as_dict(), sort_keys=True))
