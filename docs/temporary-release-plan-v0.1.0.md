@@ -33,6 +33,16 @@ If tag validation still fails because SSH signing is enforced:
 Keep this as temporary behavior until we are ready for the `v1.0.0` release
 decision point.
 
+## Closure actions performed
+
+- `v0.1.0` was tagged and released using an SSH fallback signer because tag validation
+  required it in the current repository state.
+- The temporary allowlisted SSH key was later removed from
+  `.github/release/trusted-tag-signers` to restore the default policy of a closed,
+  no-key signer gate.
+- This means `v0.1.0` remains signed for provenance checks performed at release time,
+  while future tag runs must go through an explicit release-signer authorization step.
+
 ## Deferred until pre-v1.0 actions
 
 - Any registry publishing (PyPI/GitHub Release asset publishing with package
