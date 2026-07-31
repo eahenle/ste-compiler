@@ -22,6 +22,19 @@ uv run --extra dev mypy src
 uv run --extra dev pytest -q
 ```
 
+Alternatively, once installed, pre-commit runs the equivalent local checks:
+
+```bash
+pre-commit install
+pre-commit run --all-files
+```
+
+If you are using `uv`, you can install pre-commit once with:
+
+```bash
+uvx --from pre-commit pre-commit install
+```
+
 Before opening a pull request, run the coverage gate documented in
 [`docs/testing.md`](docs/testing.md) when the change touches executable Python. CI runs the complete
 offline suite with all optional dependencies and enforces the maintained line and branch floors.

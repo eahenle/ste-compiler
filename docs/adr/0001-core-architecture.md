@@ -14,4 +14,3 @@ Use strict Pydantic semantic models, an original versioned vocabulary/terminolog
 * Demonstration rules are illustrative and incomplete. Passing them is not ASD-STE100 compliance.
 * Alignment metadata is sufficient for this deterministic milestone but not a sole trust mechanism for future models.
 * Warnings and cautions retain typed hazards even while the initial surface grammar remains intentionally small.
-

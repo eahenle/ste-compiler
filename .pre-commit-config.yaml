@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: end-of-file-fixer
+        exclude: ^(data/end_to_end/.*\.txt|src/ste_compiler/py\.typed)$
+      - id: trailing-whitespace
+        exclude: ^(data/end_to_end/.*\.txt|src/ste_compiler/py\.typed)$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-format
+      - id: ruff
+
+  - repo: local
+    hooks:
+      - id: mypy-src
+        name: mypy src
+        entry: uv run --locked --extra dev mypy src
+        language: system
+        types: [python]
+        pass_filenames: false

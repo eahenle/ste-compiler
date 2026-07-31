@@ -16,6 +16,13 @@ uv run --locked --extra dev mypy src
 uv run --locked --extra dev pytest -q -m "not neural"
 ```
 
+If you use pre-commit locally, install and run it with:
+
+```bash
+uvx --from pre-commit pre-commit install
+uvx --from pre-commit pre-commit run --all-files
+```
+
 The dedicated Python 3.12 coverage job installs every optional dependency group and runs the
 complete suite in offline mode:
 
