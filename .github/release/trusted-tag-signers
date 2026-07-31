@@ -1,3 +1,2 @@
-# Signed-tag builds are deliberately disabled until the release owner reviews and adds an SSH
-# allowed-signers entry. Format:
-# release-identity@example.com namespaces="git" ssh-ed25519 AAAA...
+# Temporary release signer for v0.1.0 (replace before v1.0.0).
+release-identity@ste-compiler.example.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILDNndKhvVS5zgJ7du81H0q/DKp5yNNY/ZpNae3kDK3U ste-compiler-release-v0.1.0
