@@ -358,7 +358,7 @@ def build_corpus_release(
         typer.Option(help="Empty output directory for the reconstructed release."),
     ] = None,
     version: Annotated[
-        Literal["1", "2"],
+        Literal["1", "2", "3"],
         typer.Option(help="Versioned demonstration-corpus construction to build."),
     ] = "1",
 ) -> None:

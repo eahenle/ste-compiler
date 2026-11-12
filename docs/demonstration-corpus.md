@@ -85,3 +85,10 @@ the project’s neural smoke paths, but they are not enough to establish model q
 makes the benchmark shape and acceptance gates executable. Its reproducible release candidate now
 exists, but benchmark-scale source expansion and an authorized downloadable GitHub release
 attachment remain before Phase 1 is complete.
+
+## Additive Corpus 3
+
+[Corpus 3](demonstration-corpus-v3-spec.md) expands the synthetic contract benchmark to 64
+records with frozen 32/8/12/12 splits, 40 new examples and at least ten additional semantic
+feature compositions. Build it with `ste-compiler build-demonstration-corpus --version 3`.
+Versions 1 and 2 remain unchanged, and the CLI default remains version 1.

@@ -478,7 +478,9 @@ def read_training_release(
                 )
             _validate_source_spans(record)
             feature_terminology = (
-                terminology if manifest.dataset_version == "demonstration-corpus-2" else None
+                terminology
+                if manifest.dataset_version in {"demonstration-corpus-2", "demonstration-corpus-3"}
+                else None
             )
             if (
                 document_features(record.ir, record.source.text, feature_terminology)

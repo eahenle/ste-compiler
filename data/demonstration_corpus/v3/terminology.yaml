@@ -1,0 +1,67 @@
+version: demonstration-corpus-2
+license: MIT; original demonstration terminology, not ASD-STE100 terminology
+terms:
+- id: hydraulic_pressure
+  canonical_form: hydraulic pressure
+  definition: Pressure in the synthetic demonstration hydraulic system.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [system pressure]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: approved
+  version: 1
+- id: shutoff_valve
+  canonical_form: shutoff valve
+  definition: A synthetic valve that stops fluid flow.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [stop valve]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: approved
+  version: 1
+- id: access_panel
+  canonical_form: access panel
+  definition: A synthetic removable equipment panel.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [service panel]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: approved
+  version: 1
+- id: cafe_area
+  canonical_form: café area
+  definition: A synthetic maintenance area used to exercise Unicode terminology.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [cafe area]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: approved
+  version: 1
+- id: power_supply
+  canonical_form: power supply
+  definition: A synthetic source of electrical power for demonstration equipment.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [electrical supply]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: approved
+  version: 1
+- id: service_door
+  canonical_form: service door
+  definition: A synthetic equipment door used for maintenance access.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [access door]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: approved
+  version: 1
+- id: legacy_panel
+  canonical_form: legacy panel
+  definition: A deprecated synthetic term retained to test replacement resolution.
+  domain: demonstration
+  allowed_roles: [technical_noun]
+  aliases: [old panel]
+  source: {type: glossary, reference: demonstration-corpus-2}
+  status: deprecated
+  version: 1
+  replacement_term_id: access_panel
