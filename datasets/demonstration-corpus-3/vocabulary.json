@@ -1,0 +1,1567 @@
+{
+  "entries": [
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "tolerance",
+      "meaning_id": "demo.tolerance",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "a",
+      "meaning_id": "demo.a",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "after",
+      "meaning_id": "demo.after",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "and",
+      "meaning_id": "demo.and",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "are",
+      "meaning_id": "demo.are",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "at",
+      "meaning_id": "demo.at",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "before",
+      "meaning_id": "demo.before",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "bolt",
+      "meaning_id": "demo.bolt",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "cable",
+      "meaning_id": "demo.cable",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "caution",
+      "meaning_id": "demo.caution",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "check",
+      "meaning_id": "demo.check",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "clean",
+      "meaning_id": "demo.clean",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "close",
+      "meaning_id": "demo.close",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "connect",
+      "meaning_id": "demo.connect",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "continue",
+      "meaning_id": "demo.continue",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "cover",
+      "meaning_id": "demo.cover",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "damage",
+      "meaning_id": "demo.damage",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "disconnect",
+      "meaning_id": "demo.disconnect",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "do",
+      "meaning_id": "demo.do",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "door",
+      "meaning_id": "demo.door",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "electrical",
+      "meaning_id": "demo.electrical",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "effect",
+      "meaning_id": "demo.effect",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "engine",
+      "meaning_id": "demo.engine",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "equipment",
+      "meaning_id": "demo.equipment",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "except",
+      "meaning_id": "demo.except",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "fire",
+      "meaning_id": "demo.fire",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "fluid",
+      "meaning_id": "demo.fluid",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "for",
+      "meaning_id": "demo.for",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "from",
+      "meaning_id": "demo.from",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "fully",
+      "meaning_id": "demo.fully",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "ground",
+      "meaning_id": "demo.ground",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "guard",
+      "meaning_id": "demo.guard",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "has",
+      "meaning_id": "demo.has",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "have",
+      "meaning_id": "demo.have",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "hydraulic",
+      "meaning_id": "demo.hydraulic",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "if",
+      "meaning_id": "demo.if",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "in",
+      "meaning_id": "demo.in",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "install",
+      "meaning_id": "demo.install",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "is",
+      "meaning_id": "demo.is",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "keep",
+      "meaning_id": "demo.keep",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "less",
+      "meaning_id": "demo.less",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "make",
+      "meaning_id": "demo.make",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "maximum",
+      "meaning_id": "demo.maximum",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "minimum",
+      "meaning_id": "demo.minimum",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "more",
+      "meaning_id": "demo.more",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "must",
+      "meaning_id": "demo.must",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "no",
+      "meaning_id": "demo.no",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "not",
+      "meaning_id": "demo.not",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "note",
+      "meaning_id": "demo.note",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "of",
+      "meaning_id": "demo.of",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "off",
+      "meaning_id": "demo.off",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "on",
+      "meaning_id": "demo.on",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "open",
+      "meaning_id": "demo.open",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "operate",
+      "meaning_id": "demo.operate",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "operator",
+      "meaning_id": "demo.operator",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "panel",
+      "meaning_id": "demo.panel",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "pressure",
+      "meaning_id": "demo.pressure",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "prevent",
+      "meaning_id": "demo.prevent",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "pump",
+      "meaning_id": "demo.pump",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "remove",
+      "meaning_id": "demo.remove",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "replace",
+      "meaning_id": "demo.replace",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "set",
+      "meaning_id": "demo.set",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "start",
+      "meaning_id": "demo.start",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "stop",
+      "meaning_id": "demo.stop",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "sure",
+      "meaning_id": "demo.sure",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "system",
+      "meaning_id": "demo.system",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "than",
+      "meaning_id": "demo.than",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "that",
+      "meaning_id": "demo.that",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "the",
+      "meaning_id": "demo.the",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "then",
+      "meaning_id": "demo.then",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "tight",
+      "meaning_id": "demo.tight",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "tighten",
+      "meaning_id": "demo.tighten",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "to",
+      "meaning_id": "demo.to",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "tool",
+      "meaning_id": "demo.tool",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "unit",
+      "meaning_id": "demo.unit",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "until",
+      "meaning_id": "demo.until",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "use",
+      "meaning_id": "demo.use",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "valve",
+      "meaning_id": "demo.valve",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "warning",
+      "meaning_id": "demo.warning",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "when",
+      "meaning_id": "demo.when",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "with",
+      "meaning_id": "demo.with",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "zero",
+      "meaning_id": "demo.zero",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "attach",
+      "meaning_id": "demo.attach",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "can",
+      "meaning_id": "demo.can",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "contains",
+      "meaning_id": "demo.contains",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "cool",
+      "meaning_id": "demo.cool",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "hot",
+      "meaning_id": "demo.hot",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "injury",
+      "meaning_id": "demo.injury",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [
+        "occurs"
+      ],
+      "lemma": "occur",
+      "meaning_id": "demo.occur",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "oil",
+      "meaning_id": "demo.oil",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "power",
+      "meaning_id": "demo.power",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "release",
+      "meaning_id": "demo.release",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "remains",
+      "meaning_id": "demo.remains",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "safe",
+      "meaning_id": "demo.safe",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "switch",
+      "meaning_id": "demo.switch",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "temperature",
+      "meaning_id": "demo.temperature",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "wait",
+      "meaning_id": "demo.wait",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "wear",
+      "meaning_id": "demo.wear",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "air",
+      "meaning_id": "demo.air",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "apply",
+      "meaning_id": "demo.apply",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "area",
+      "meaning_id": "demo.area",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "assembly",
+      "meaning_id": "demo.assembly",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "automatic",
+      "meaning_id": "demo.automatic",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "away",
+      "meaning_id": "demo.away",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "cause",
+      "meaning_id": "demo.cause",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "component",
+      "meaning_id": "demo.component",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "control",
+      "meaning_id": "demo.control",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "correct",
+      "meaning_id": "demo.correct",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "decrease",
+      "meaning_id": "demo.decrease",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "drain",
+      "meaning_id": "demo.drain",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "during",
+      "meaning_id": "demo.during",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "each",
+      "meaning_id": "demo.each",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "end",
+      "meaning_id": "demo.end",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "ensure",
+      "meaning_id": "demo.ensure",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "enter",
+      "meaning_id": "demo.enter",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "equal",
+      "meaning_id": "demo.equal",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "examine",
+      "meaning_id": "demo.examine",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "failure",
+      "meaning_id": "demo.failure",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "fastener",
+      "meaning_id": "demo.fastener",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "filter",
+      "meaning_id": "demo.filter",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "first",
+      "meaning_id": "demo.first",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "fuel",
+      "meaning_id": "demo.fuel",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "give",
+      "meaning_id": "demo.give",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "high",
+      "meaning_id": "demo.high",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "hold",
+      "meaning_id": "demo.hold",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "increase",
+      "meaning_id": "demo.increase",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "indicator",
+      "meaning_id": "demo.indicator",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "inspect",
+      "meaning_id": "demo.inspect",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "left",
+      "meaning_id": "demo.left",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "level",
+      "meaning_id": "demo.level",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "limit",
+      "meaning_id": "demo.limit",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "lock",
+      "meaning_id": "demo.lock",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "low",
+      "meaning_id": "demo.low",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "manual",
+      "meaning_id": "demo.manual",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "measure",
+      "meaning_id": "demo.measure",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "motor",
+      "meaning_id": "demo.motor",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "move",
+      "meaning_id": "demo.move",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "necessary",
+      "meaning_id": "demo.necessary",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "normal",
+      "meaning_id": "demo.normal",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "only",
+      "meaning_id": "demo.only",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "position",
+      "meaning_id": "demo.position",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "pull",
+      "meaning_id": "demo.pull",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "push",
+      "meaning_id": "demo.push",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "right",
+      "meaning_id": "demo.right",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "seal",
+      "meaning_id": "demo.seal",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "second",
+      "meaning_id": "demo.second",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "slowly",
+      "meaning_id": "demo.slowly",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "specified",
+      "meaning_id": "demo.specified",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "supply",
+      "meaning_id": "demo.supply",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "test",
+      "meaning_id": "demo.test",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "turn",
+      "meaning_id": "demo.turn",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "unlock",
+      "meaning_id": "demo.unlock",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "verify",
+      "meaning_id": "demo.verify",
+      "parts_of_speech": [
+        "demo"
+      ]
+    },
+    {
+      "example": null,
+      "forbidden_confusions": [],
+      "inflections": [],
+      "lemma": "water",
+      "meaning_id": "demo.water",
+      "parts_of_speech": [
+        "demo"
+      ]
+    }
+  ],
+  "license": "MIT; original demonstration vocabulary, not ASD-STE100 vocabulary",
+  "structural_tokens": [
+    ".",
+    ",",
+    ":"
+  ],
+  "units": [
+    "Pa",
+    "kPa",
+    "MPa",
+    "V",
+    "A",
+    "mm",
+    "cm",
+    "m",
+    "s",
+    "min",
+    "degree",
+    "degrees"
+  ],
+  "version": "demo-3"
+}

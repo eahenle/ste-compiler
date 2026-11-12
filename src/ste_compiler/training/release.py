@@ -105,6 +105,8 @@ V2_REQUIRED_FEATURES = REQUIRED_FEATURES | frozenset(
         "terminology.deprecated_reference",
     }
 )
+V3_RECORD_COUNT = 64
+V3_SPLIT_COUNTS = {"train": 32, "validation": 8, "test": 12, "adversarial": 12}
 V2_RECORD_COUNT = 24
 V2_SPLIT_COUNTS = {
     "train": 12,
@@ -435,27 +437,35 @@ def validate_release_profile(
     """Validate version-specific frozen split and feature requirements."""
 
     required_features = (
-        V2_REQUIRED_FEATURES if dataset_version == "demonstration-corpus-2" else REQUIRED_FEATURES
+        V2_REQUIRED_FEATURES
+        if dataset_version in {"demonstration-corpus-2", "demonstration-corpus-3"}
+        else REQUIRED_FEATURES
     )
     missing_features = sorted(required_features - observed_features)
     if missing_features:
         raise ValueError(
             "demonstration corpus is missing required features: " + ", ".join(missing_features)
         )
-    if dataset_version == "demonstration-corpus-2":
+    if dataset_version in {"demonstration-corpus-2", "demonstration-corpus-3"}:
+        expected_count = (
+            V3_RECORD_COUNT if dataset_version == "demonstration-corpus-3" else V2_RECORD_COUNT
+        )
+        expected_splits = (
+            V3_SPLIT_COUNTS if dataset_version == "demonstration-corpus-3" else V2_SPLIT_COUNTS
+        )
         record_count = sum(split_counts.values())
-        if record_count != V2_RECORD_COUNT:
+        if record_count != expected_count:
             raise ValueError(
-                f"demonstration-corpus-2 requires exactly {V2_RECORD_COUNT} records; "
+                f"{dataset_version} requires exactly {expected_count} records; "
                 f"received {record_count}"
             )
-        if split_counts != V2_SPLIT_COUNTS:
+        if split_counts != expected_splits:
             details = ", ".join(
                 f"{split}={split_counts.get(split, 0)} (expected {count})"
-                for split, count in V2_SPLIT_COUNTS.items()
+                for split, count in expected_splits.items()
                 if split_counts.get(split) != count
             )
-            raise ValueError("demonstration-corpus-2 split counts are not frozen: " + details)
+            raise ValueError(f"{dataset_version} split counts are not frozen: " + details)
     return required_features
 
 
@@ -516,7 +526,7 @@ def _dataset_card(
     scope = (
         "This synthetic benchmark-contract demonstration exercises expanded terminology and "
         "source-boundary coverage. It is not a statistical model-quality benchmark."
-        if construction.dataset_version == "demonstration-corpus-2"
+        if construction.dataset_version in {"demonstration-corpus-2", "demonstration-corpus-3"}
         else "This small, synthetic corpus demonstrates auditable technical-source to semantic-IR "
         "to controlled-text workflows."
     )
@@ -617,7 +627,9 @@ def build_demonstration_corpus(
         features = document_features(
             document,
             source_record.source_text,
-            terminology if construction.dataset_version == "demonstration-corpus-2" else None,
+            terminology
+            if construction.dataset_version in {"demonstration-corpus-2", "demonstration-corpus-3"}
+            else None,
         )
         for feature in features:
             coverage[feature] += 1

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -351,6 +352,71 @@ assert result.exit_code == 0, result.output
             *command,
             "verify-demonstration-corpus",
             str(demonstration_corpus_v2),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    demonstration_corpus_v3 = tmp_path / "demonstration-corpus-3"
+    subprocess.run(
+        [
+            *command,
+            "build-demonstration-corpus",
+            "--version",
+            "3",
+            "--output",
+            str(demonstration_corpus_v3),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    release_manifest_v3 = json.loads((demonstration_corpus_v3 / "manifest.json").read_text())
+    assert release_manifest_v3["dataset_version"] == "demonstration-corpus-3"
+    assert release_manifest_v3["record_count"] == 64
+    subprocess.run(
+        [
+            *command,
+            "verify-demonstration-corpus",
+            str(demonstration_corpus_v3),
+        ],
+        cwd=tmp_path,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    selection_v3 = {
+        "dataset_version": "demonstration-corpus-3",
+        **{
+            key + "_sha256": hashlib.sha256(
+                (demonstration_corpus_v3 / name).read_bytes()
+            ).hexdigest()
+            for key, name in [
+                ("manifest", "manifest.json"),
+                ("train", "train.jsonl"),
+                ("validation", "validation.jsonl"),
+            ]
+        },
+    }
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json,sys; from ste_compiler.training import CorpusSelectionV1, read_training_release; "
+                "from pathlib import Path; "
+                "s=read_training_release(Path(sys.argv[1]), CorpusSelectionV1(**json.loads(sys.argv[2]))); "
+                "assert s.manifest.record_count == 64"
+            ),
+            str(demonstration_corpus_v3),
+            json.dumps(selection_v3),
         ],
         cwd=tmp_path,
         env=clean_env,

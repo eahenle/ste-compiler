@@ -164,9 +164,10 @@ def test_demonstration_corpus_v2_is_a_valid_hash_pinned_training_release():
     assert len(snapshot.validation) == 4
 
 
-def test_hash_pinned_reader_enforces_v2_required_feature_profile(tmp_path):
+@pytest.mark.parametrize("version", [2, 3])
+def test_hash_pinned_reader_enforces_required_feature_profile(tmp_path, version):
     release = tmp_path / "release"
-    shutil.copytree(V2_RELEASE, release)
+    shutil.copytree(ROOT / f"datasets/demonstration-corpus-{version}", release)
     records = [json.loads(line) for line in (release / "train.jsonl").read_text().splitlines()]
     deprecated = next(
         record for record in records if record["record_id"] == "train_deprecated_panel"
@@ -219,7 +220,7 @@ def test_hash_pinned_reader_enforces_v2_required_feature_profile(tmp_path):
     )
     (release / "checksums.sha256").write_text(checksums)
     selection = CorpusSelectionV1(
-        dataset_version="demonstration-corpus-2",
+        dataset_version=f"demonstration-corpus-{version}",
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         train_sha256=train_artifact["sha256"],
         validation_sha256=next(
