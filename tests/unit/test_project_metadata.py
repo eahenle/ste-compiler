@@ -99,7 +99,7 @@ def test_compatibility_workflow_covers_platform_and_dependency_profiles():
     assert resolution["timeout-minutes"] == "30"
     assert platform["strategy"]["matrix"]["runner"] == [
         "ubuntu-24.04",
-        "macos-14",
+        "macos-15-intel",
         "windows-2022",
     ]
     assert resolution["strategy"]["matrix"]["resolution"] == [
