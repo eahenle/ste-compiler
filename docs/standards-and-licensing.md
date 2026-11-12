@@ -4,8 +4,7 @@ Checked against the official ASD STEMG site on 2026-07-27: the current publicati
 
 Consequently this repository does not reproduce the standard, its rules, or its dictionary. `data/demo_vocabulary.yaml` and `data/demo_terminology.yaml` are newly authored, small MIT-licensed demonstration resources. All implemented rules are described only as STE-inspired. Users are responsible for licensing any replacement resources and for independent compliance review.
 
-`datasets/demonstration-corpus-1`, `datasets/demonstration-corpus-2`, and their construction inputs
-are also original, synthetic examples authored for this repository under the MIT license. Each
-release contains a machine-readable license inventory and resource snapshots. They are
-demonstration data, not derivatives of ASD-STE100 or claims that either corpus is sufficient for
-production training.
+The three demonstration corpora and their construction inputs consist of original, synthetic
+technical examples authored independently of ASD-STE100 and released under the MIT license. Each
+release contains a machine-readable license inventory and resource snapshots. Production training
+requires separate evidence of data adequacy. See the [corpus guide](demonstration-corpus.md).

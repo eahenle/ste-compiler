@@ -42,6 +42,8 @@ ste-compiler build-demonstration-corpus --output demonstration-corpus
 ste-compiler verify-demonstration-corpus demonstration-corpus
 ste-compiler build-demonstration-corpus --version 2 --output demonstration-corpus-2
 ste-compiler verify-demonstration-corpus demonstration-corpus-2
+ste-compiler build-demonstration-corpus --version 3 --output demonstration-corpus-3
+ste-compiler verify-demonstration-corpus demonstration-corpus-3
 ste-compiler benchmark-report \
   data/benchmark/v1/benchmark-spec.json \
   data/benchmark/v1/failure-taxonomy.json \
@@ -92,11 +94,14 @@ Corpus V2's multi-section state/procedure record, and Corpus V2's reference/caus
 latter two preserve the corpus source bytes and IR verbatim and are exercised from both source and
 installed-wheel catalogs.
 
-`build-demonstration-corpus` reconstructs a licensed, frozen dataset release from packaged
-construction inputs. Version 1 is the default wheel-bundled smoke sample; `--version 2` selects the
-expanded benchmark-contract demonstration. `verify-demonstration-corpus` independently
-reconstructs either release and requires byte-for-byte identity. See
-[the corpus guide](docs/demonstration-corpus.md).
+`build-demonstration-corpus` reconstructs frozen, MIT-licensed dataset releases from packaged
+construction inputs. Corpus 1 is the default 12-record smoke sample. Corpus 2 is the 24-record
+benchmark-contract demonstration used by the `benchmark-report` example above. Corpus 3 is a
+64-record synthetic benchmark for testing the dataset contract and held-out semantic compositions.
+Model-quality and ASD-STE100 compliance claims require independent evidence.
+`verify-demonstration-corpus` independently reconstructs any of the three releases and requires
+byte-for-byte identity. See [the corpus guide](docs/demonstration-corpus.md) and
+[the Corpus 3 specification](docs/demonstration-corpus-v3-spec.md).
 
 The optional `.[encoder-training]` extra supplies a deterministic offline CPU smoke trainer for a
 pinned encoder-decoder model and tokenizer. It performs complete tokenizer and overflow preflight,
